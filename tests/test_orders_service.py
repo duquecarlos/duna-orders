@@ -3,8 +3,17 @@ from decimal import Decimal
 
 import pytest
 
-from duna_orders.domain.models import Order, OrderItem, Product, StockMovement
+from duna_orders.domain.models import (
+    DraftItemRequest,
+    DraftOrderRequest,
+    Order,
+    OrderItem,
+    Product,
+    StockMovement,
+)
 from duna_orders.services.exceptions import (
+    EmptyDraftError,
+    InactiveProductError,
     InsufficientStockError,
     InvalidOrderStateError,
     OrderNotFoundError,
@@ -20,13 +29,17 @@ ORDER_ID = "ord_test"
 
 def make_product(
     product_id: str = PRODUCT_ID,
+    product_name: str = "Empanada",
+    unit_price: Decimal = Decimal("3000"),
     current_stock: Decimal = Decimal("10"),
+    active: bool = True,
 ) -> Product:
     return Product(
         product_id=product_id,
-        product_name="Empanada",
-        unit_price=Decimal("3000"),
+        product_name=product_name,
+        unit_price=unit_price,
         current_stock=current_stock,
+        active=active,
     )
 
 
@@ -58,6 +71,22 @@ def make_order(
     )
 
 
+def make_draft_request(
+    items: list[DraftItemRequest] | None = None,
+    customer_name: str = "Cliente Test",
+) -> DraftOrderRequest:
+    if items is None:
+        items = [
+            DraftItemRequest(product_id=PRODUCT_ID, quantity=Decimal("2")),
+        ]
+
+    return DraftOrderRequest(
+        raw_message="Buenas, quiero hacer un pedido",
+        customer_name=customer_name,
+        items=items,
+    )
+
+
 def seed_storage(
     *,
     product: Product | None = None,
@@ -65,8 +94,162 @@ def seed_storage(
 ) -> InMemoryStorage:
     storage = InMemoryStorage()
     storage.upsert_product(product or make_product())
-    storage.create_order(order or make_order())
+
+    if order is not None:
+        storage.create_order(order)
+    else:
+        storage.create_order(make_order())
+
     return storage
+
+
+def test_create_draft_happy_path():
+    storage = InMemoryStorage()
+    storage.upsert_product(
+        make_product(
+            product_id="prd_pollo",
+            product_name="Pollo entero",
+            unit_price=Decimal("25000"),
+        )
+    )
+    storage.upsert_product(
+        make_product(
+            product_id="prd_gaseosa",
+            product_name="Gaseosa 1.5L",
+            unit_price=Decimal("6500"),
+        )
+    )
+
+    service = OrderService(storage)
+    request = DraftOrderRequest(
+        raw_message="Buenas, me regala 2 pollos y 3 gaseosas",
+        customer_name="Cliente Test",
+        items=[
+            DraftItemRequest(product_id="prd_pollo", quantity=Decimal("2")),
+            DraftItemRequest(product_id="prd_gaseosa", quantity=Decimal("3")),
+        ],
+    )
+
+    order = service.create_draft(request)
+
+    assert order.order_id.startswith("ord_")
+    assert order.status == "draft"
+    assert len(order.items) == 2
+    assert order.subtotal == Decimal("69500")
+    assert order.delivery_fee == Decimal("0")
+    assert order.total == Decimal("69500")
+
+
+def test_create_draft_raises_on_empty_items():
+    storage = InMemoryStorage()
+    service = OrderService(storage)
+
+    request = make_draft_request(items=[])
+
+    with pytest.raises(EmptyDraftError):
+        service.create_draft(request)
+
+
+def test_create_draft_raises_when_all_quantities_zero():
+    storage = InMemoryStorage()
+    storage.upsert_product(make_product())
+    service = OrderService(storage)
+
+    request = make_draft_request(
+        items=[
+            DraftItemRequest(product_id=PRODUCT_ID, quantity=Decimal("0")),
+        ]
+    )
+
+    with pytest.raises(EmptyDraftError):
+        service.create_draft(request)
+
+
+def test_create_draft_raises_on_unknown_product():
+    storage = InMemoryStorage()
+    service = OrderService(storage)
+
+    request = make_draft_request(
+        items=[
+            DraftItemRequest(
+                product_id="prd_does_not_exist",
+                quantity=Decimal("1"),
+            ),
+        ]
+    )
+
+    with pytest.raises(ProductNotFoundError):
+        service.create_draft(request)
+
+
+def test_create_draft_raises_on_inactive_product():
+    storage = InMemoryStorage()
+    storage.upsert_product(make_product(active=False))
+    service = OrderService(storage)
+
+    request = make_draft_request()
+
+    with pytest.raises(InactiveProductError):
+        service.create_draft(request)
+
+
+def test_create_draft_snapshots_are_immutable():
+    storage = InMemoryStorage()
+    storage.upsert_product(
+        make_product(
+            product_name="Pollo entero",
+            unit_price=Decimal("25000"),
+        )
+    )
+
+    service = OrderService(storage)
+    order = service.create_draft(make_draft_request())
+
+    updated_product = make_product(
+        product_name="Pollo grande",
+        unit_price=Decimal("30000"),
+    )
+    storage.upsert_product(updated_product)
+
+    saved_order = storage.get_order(order.order_id)
+
+    assert saved_order is not None
+    assert saved_order.items[0].product_name_snapshot == "Pollo entero"
+    assert saved_order.items[0].unit_price_snapshot == Decimal("25000")
+
+
+def test_create_draft_computes_subtotal_and_total_correctly():
+    storage = InMemoryStorage()
+    storage.upsert_product(
+        make_product(
+            product_id="prd_pollo",
+            product_name="Pollo entero",
+            unit_price=Decimal("25000"),
+        )
+    )
+    storage.upsert_product(
+        make_product(
+            product_id="prd_gaseosa",
+            product_name="Gaseosa 1.5L",
+            unit_price=Decimal("6500"),
+        )
+    )
+
+    service = OrderService(storage)
+    request = DraftOrderRequest(
+        raw_message="Buenas, me regala 2 pollos y 3 gaseosas",
+        customer_name="Cliente Test",
+        items=[
+            DraftItemRequest(product_id="prd_pollo", quantity=Decimal("2")),
+            DraftItemRequest(product_id="prd_gaseosa", quantity=Decimal("3")),
+        ],
+    )
+
+    order = service.create_draft(request)
+
+    assert order.subtotal == Decimal("69500")
+    assert order.delivery_fee == Decimal("0")
+    assert order.total == Decimal("69500")
 
 
 def test_confirm_order_happy_path():

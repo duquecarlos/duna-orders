@@ -40,3 +40,13 @@ class InsufficientStockError(ServiceError):
         self.product_id = product_id
         self.requested = requested
         self.available = available
+
+class EmptyDraftError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__("Draft order must contain at least one item with quantity > 0")
+
+
+class InactiveProductError(ServiceError):
+    def __init__(self, product_id: str) -> None:
+        super().__init__(f"Product {product_id} is inactive and cannot be ordered")
+        self.product_id = product_id

@@ -26,3 +26,89 @@ Why:
 
 Trade-off:
 This adds a small abstraction early, but keeps the MVP testable and makes the future Sheets/Postgres migration cleaner.
+
+## M1.3 — confirm_order as the first service method
+
+Decision:
+Implement OrderService with confirm_order as its single public method.
+No draft creation service yet, no separate validator service.
+
+Why:
+- confirm_order is where the system's hardest invariants live: state
+  transition, stock validation, audit-log append. Build it first, in
+  isolation.
+- Draft creation today is a passthrough to storage.create_order; wrapping
+  it adds no value until validation/parsing enters the picture.
+- Validation belongs inside confirm_order as a precondition, not as
+  a separate service.
+
+Failure model (deliberate):
+- Order of operations: validate → append stock movements → update product
+  stock cache → update order status LAST.
+- If anything fails mid-flow, the order stays "draft" and the operation
+  is safely retryable.
+- Stock movement IDs are deterministic per (order_id, product_id) so the
+  M1.2 duplicate-id guard makes retries idempotent.
+
+Stock policy:
+- Strict at confirm time: raise InsufficientStockError if any item exceeds
+  current stock. The UI can offer remediation. Easy to relax later.
+
+Trade-off:
+We accept that without DB transactions, partial-failure recovery relies
+on idempotent retries and deterministic IDs. Documented here so the
+Sheets implementation later doesn't try to invent its own scheme.
+
+### M1.3 — Note on field naming
+
+During M1.3, four fields were renamed for readability:
+- stock_current → current_stock
+- qty → quantity
+- qty_delta → quantity_delta
+- (reverted) related_order_id → reference_id, kept generic to support
+  future restock and adjustment movement types.
+
+Renames retroactively updated M1.1 and M1.2 files. Future milestones should
+keep retroactive renames in their own commit, separate from new logic.
+
+### M1.3 — Note on enum scope discipline
+
+ORDER_STATUSES and STOCK_REASONS were trimmed back to four values each
+after expanding to six during implementation. The added values
+("reviewed", "prepared", "manual_adjustment", "correction",
+"cancelled_order_reversal") had no consuming code and risked confusing
+the UI and the storage migration later. Going forward, every enum
+addition must ship alongside the code that uses it.
+
+### M1.4 — Note on new_id signature
+
+new_id now accepts ID prefixes directly (e.g., new_id("prd"), new_id("ord"))
+instead of entity names ("product", "order"). All call sites use prefixes.
+Tests and services updated in sync.
+
+## M1.5 — Draft creation as a service method
+
+Decision:
+Move draft order construction from the Streamlit page (M1.4 shortcut) into
+OrderService.create_draft, with DraftOrderRequest as the typed input contract.
+
+Why:
+- Removes the temporary UI-touching-storage call from M1.4 before more
+  callers (parser, future pages) replicate the pattern.
+- DraftOrderRequest is the same shape the LLM parser will produce in M2.
+  Defining it now means M2 is a clean handoff: parser produces request,
+  service consumes it, UI passes it through.
+- Service owns ID generation, snapshot resolution, and total computation.
+  UI only collects user input.
+
+Validation policy (intentional):
+- create_draft validates: at least one item with qty > 0; each product
+  exists; each product is active.
+- create_draft does NOT validate stock. Stock validation remains the
+  responsibility of confirm_order, where it has been since M1.3.
+  Drafts can over-promise; confirms cannot.
+
+Trade-off:
+DraftOrderRequest adds one small model, but it becomes the canonical
+contract for "what an order looks like before persistence" — usable by
+both the manual UI and the future parser without translation.

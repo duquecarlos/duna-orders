@@ -1,7 +1,17 @@
 from datetime import datetime
+from decimal import Decimal
 
-from duna_orders.domain.models import Order, StockMovement, utc_now
+from duna_orders.domain.models import (
+    DraftOrderRequest,
+    Order,
+    OrderItem,
+    StockMovement,
+    utc_now,
+)
+from duna_orders.ids import new_id
 from duna_orders.services.exceptions import (
+    EmptyDraftError,
+    InactiveProductError,
     InsufficientStockError,
     InvalidOrderStateError,
     OrderNotFoundError,
@@ -13,6 +23,59 @@ from duna_orders.storage.base import StorageInterface
 class OrderService:
     def __init__(self, storage: StorageInterface) -> None:
         self._storage = storage
+
+    def create_draft(self, request: DraftOrderRequest) -> Order:
+        positive_items = [item for item in request.items if item.quantity > 0]
+
+        if not positive_items:
+            raise EmptyDraftError()
+
+        order_id = new_id("ord")
+        order_items: list[OrderItem] = []
+
+        for item_request in positive_items:
+            product = self._storage.get_product(item_request.product_id)
+
+            if product is None:
+                raise ProductNotFoundError(item_request.product_id)
+
+            if not product.active:
+                raise InactiveProductError(item_request.product_id)
+
+            line_total = item_request.quantity * product.unit_price
+
+            order_items.append(
+                OrderItem(
+                    order_item_id=new_id("oit"),
+                    order_id=order_id,
+                    product_id=product.product_id,
+                    product_name_snapshot=product.product_name,
+                    unit_snapshot=product.unit,
+                    quantity=item_request.quantity,
+                    unit_price_snapshot=product.unit_price,
+                    line_total=line_total,
+                    validation_status="ok",
+                )
+            )
+
+        subtotal = sum((item.line_total for item in order_items), Decimal("0"))
+        delivery_fee = Decimal("0")
+        total = subtotal + delivery_fee
+
+        order = Order(
+            order_id=order_id,
+            customer_id=None,
+            customer_name_snapshot=request.customer_name,
+            customer_phone_snapshot=request.customer_phone,
+            raw_message=request.raw_message,
+            status="draft",
+            items=order_items,
+            subtotal=subtotal,
+            delivery_fee=delivery_fee,
+            total=total,
+        )
+
+        return self._storage.create_order(order)
 
     def confirm_order(
         self,

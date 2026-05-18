@@ -120,3 +120,18 @@ class StockMovement(BaseModel):
     reference_id: str | None = None
     notes: str | None = None
     created_by: str | None = None
+
+class DraftItemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: str
+    quantity: Decimal
+
+
+class DraftOrderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    raw_message: str
+    customer_name: str
+    customer_phone: str | None = None
+    items: list[DraftItemRequest]

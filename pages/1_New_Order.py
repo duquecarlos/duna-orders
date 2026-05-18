@@ -2,9 +2,11 @@ from decimal import Decimal
 
 import streamlit as st
 
-from duna_orders.domain.models import Order, OrderItem, Product
+from duna_orders.domain.models import DraftItemRequest, DraftOrderRequest, Product
 from duna_orders.ids import new_id
 from duna_orders.services.exceptions import (
+    EmptyDraftError,
+    InactiveProductError,
     InsufficientStockError,
     InvalidOrderStateError,
     OrderNotFoundError,
@@ -113,54 +115,26 @@ has_selected_items = any(qty > 0 for qty in selected_quantities.values())
 can_create_draft = bool(raw_message.strip()) and bool(customer_name.strip()) and has_selected_items
 
 if st.button("Crear borrador", disabled=not can_create_draft):
-    order_id = new_id("ord")
-    items: list[OrderItem] = []
-
-    for product in products:
-        qty = selected_quantities[product.product_id]
-
-        if qty <= 0:
-            continue
-
-        quantity = Decimal(str(qty))
-        line_total = quantity * product.unit_price
-
-        items.append(
-            OrderItem(
-                order_item_id=new_id("oit"),
-                order_id=order_id,
-                product_id=product.product_id,
-                product_name_snapshot=product.product_name,
-                unit_snapshot=product.unit,
-                quantity=quantity,
-                unit_price_snapshot=product.unit_price,
-                line_total=line_total,
-                validation_status="ok",
-            )
-        )
-
-    subtotal = sum((item.line_total for item in items), Decimal("0"))
-
-    order = Order(
-        order_id=order_id,
-        customer_id=None,
-        customer_name_snapshot=customer_name.strip(),
+    request = DraftOrderRequest(
         raw_message=raw_message.strip(),
-        status="draft",
-        items=items,
-        subtotal=subtotal,
-        delivery_fee=Decimal("0"),
-        total=subtotal,
+        customer_name=customer_name.strip(),
+        items=[
+            DraftItemRequest(
+                product_id=product_id,
+                quantity=Decimal(str(qty)),
+            )
+            for product_id, qty in selected_quantities.items()
+            if qty > 0
+        ],
     )
 
-    # TEMP M1.4: UI calls storage.create_order directly.
-    # Becomes OrderService.create_draft when the parser is added (M2).
-    storage.create_order(order)
-
-    st.session_state.draft_order_id = order.order_id
-    st.session_state.last_success_message = None
-    st.rerun()
-
+    try:
+        order = order_service.create_draft(request)
+        st.session_state.draft_order_id = order.order_id
+        st.session_state.last_success_message = None
+        st.rerun()
+    except (EmptyDraftError, ProductNotFoundError, InactiveProductError) as error:
+        st.error(str(error))
 if st.session_state.draft_order_id:
     st.divider()
     st.subheader("Borrador actual")
