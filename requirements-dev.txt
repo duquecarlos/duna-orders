@@ -1,0 +1,4 @@
+pytest>=8.3
+pytest-mock>=3.14
+ruff>=0.6
+ipython
