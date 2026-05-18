@@ -1,8 +1,13 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from duna_orders.domain.models import Customer, Order, Product, StockMovement
-
+from duna_orders.domain.models import (
+    Customer,
+    Order,
+    ParseLogEntry,
+    Product,
+    StockMovement,
+)
 
 class StorageInterface(ABC):
     @abstractmethod
@@ -61,6 +66,10 @@ class StorageInterface(ABC):
 
     @abstractmethod
     def append_stock_movement(self, movement: StockMovement) -> StockMovement:
+        pass
+
+    @abstractmethod
+    def append_parse_log(self, entry: ParseLogEntry) -> ParseLogEntry:
         pass
 
     @abstractmethod

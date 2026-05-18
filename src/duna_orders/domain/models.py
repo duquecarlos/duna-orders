@@ -135,3 +135,25 @@ class DraftOrderRequest(BaseModel):
     customer_name: str
     customer_phone: str | None = None
     items: list[DraftItemRequest]
+
+class ParseResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request: DraftOrderRequest
+    warnings: list[str] = []
+    model: str
+    latency_ms: int
+    raw_response: str
+
+
+class ParseLogEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    parse_id: str
+    created_at: datetime = Field(default_factory=utc_now)
+    raw_message: str
+    parsed_json: str
+    model: str
+    latency_ms: int
+    success: bool
+    error: str | None = None

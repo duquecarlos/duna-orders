@@ -1,6 +1,13 @@
 from datetime import datetime
 
-from duna_orders.domain.models import Customer, Order, Product, StockMovement, utc_now
+from duna_orders.domain.models import (
+    Customer,
+    Order,
+    ParseLogEntry,
+    Product,
+    StockMovement,
+    utc_now,
+)
 from duna_orders.storage.base import StorageInterface
 
 
@@ -10,7 +17,7 @@ class InMemoryStorage(StorageInterface):
         self._customers: dict[str, Customer] = {}
         self._orders: dict[str, Order] = {}
         self._stock_movements: list[StockMovement] = []
-
+        self._parse_logs: list[ParseLogEntry] = []
     def list_products(self, *, active_only: bool = True) -> list[Product]:
         products = list(self._products.values())
 
@@ -136,3 +143,12 @@ class InMemoryStorage(StorageInterface):
             ]
 
         return [movement.model_copy(deep=True) for movement in movements]
+    
+    def append_parse_log(self, entry: ParseLogEntry) -> ParseLogEntry:
+        if any(existing.parse_id == entry.parse_id for existing in self._parse_logs):
+            raise ValueError(f"Parse log {entry.parse_id} already exists")
+
+        persisted = entry.model_copy(deep=True)
+        self._parse_logs.append(persisted)
+
+        return persisted.model_copy(deep=True) 

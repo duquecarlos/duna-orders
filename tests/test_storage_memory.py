@@ -3,7 +3,15 @@ from decimal import Decimal
 
 import pytest
 
-from duna_orders.domain.models import Customer, Order, OrderItem, Product, StockMovement
+from duna_orders.domain.models import (
+    Customer,
+    Order,
+    OrderItem,
+    ParseLogEntry,
+    Product,
+    StockMovement,
+)
+from duna_orders.ids import new_id
 from duna_orders.storage.memory import InMemoryStorage
 
 
@@ -231,3 +239,38 @@ def test_list_orders_filters_by_status_and_since():
         "ord_new_draft",
         "ord_confirmed",
     }
+
+def test_append_parse_log_persists_entry():
+    storage = InMemoryStorage()
+    entry = ParseLogEntry(
+        parse_id=new_id("prs"),
+        raw_message="me regala 2 pollos",
+        parsed_json='{"items":[]}',
+        model="test-model",
+        latency_ms=120,
+        success=True,
+        error=None,
+    )
+
+    storage.append_parse_log(entry)
+
+    assert len(storage._parse_logs) == 1
+    assert storage._parse_logs[0].parse_id == entry.parse_id
+
+
+def test_append_parse_log_raises_on_duplicate_id():
+    storage = InMemoryStorage()
+    entry = ParseLogEntry(
+        parse_id="prs_fixed_id",
+        raw_message="x",
+        parsed_json="{}",
+        model="m",
+        latency_ms=0,
+        success=False,
+        error="err",
+    )
+
+    storage.append_parse_log(entry)
+
+    with pytest.raises(ValueError):
+        storage.append_parse_log(entry)
