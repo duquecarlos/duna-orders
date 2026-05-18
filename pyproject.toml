@@ -14,3 +14,7 @@ target-version = "py313"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+    "live_api: requires ANTHROPIC_API_KEY env var; not run by default",
+]
+addopts = "-m 'not live_api'"
