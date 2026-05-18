@@ -83,7 +83,7 @@ def test_confirm_order_happy_path():
     assert len(movements) == 1
     assert movements[0].quantity_delta == Decimal("-2")
     assert movements[0].reason == "sale"
-    assert movements[0].related_order_id == ORDER_ID
+    assert movements[0].reference_id == ORDER_ID
     assert product is not None
     assert product.current_stock == Decimal("8")
 
@@ -140,7 +140,7 @@ def test_confirm_order_is_idempotent_on_retry():
         product_id=PRODUCT_ID,
         quantity_delta=Decimal("-2"),
         reason="sale",
-        related_order_id=ORDER_ID,
+        reference_id=ORDER_ID,
     )
 
     storage.append_stock_movement(partial_movement)

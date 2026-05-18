@@ -3,13 +3,12 @@ CUSTOMERS_TAB = "customers"
 ORDERS_TAB = "orders"
 ORDER_ITEMS_TAB = "order_items"
 STOCK_MOVEMENTS_TAB = "stock_movements"
+PARSE_LOG_TAB = "parse_log"
 
 
 ORDER_STATUSES = (
     "draft",
-    "reviewed",
     "confirmed",
-    "prepared",
     "delivered",
     "cancelled",
 )
@@ -18,9 +17,7 @@ ORDER_STATUSES = (
 STOCK_REASONS = (
     "sale",
     "restock",
-    "manual_adjustment",
-    "correction",
-    "cancelled_order_reversal",
+    "adjustment",
     "reversal",
 )
 
@@ -87,8 +84,18 @@ TABS = {
         "product_id",
         "quantity_delta",
         "reason",
-        "related_order_id",
+        "reference_id",
         "notes",
         "created_by",
+    ],
+    PARSE_LOG_TAB: [
+        "parse_id",
+        "created_at",
+        "raw_message",
+        "parsed_json",
+        "model",
+        "latency_ms",
+        "success",
+        "error",
     ],
 }

@@ -7,19 +7,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 OrderStatus = Literal[
     "draft",
-    "reviewed",
     "confirmed",
-    "prepared",
     "delivered",
     "cancelled",
 ]
-
 StockReason = Literal[
     "sale",
     "restock",
-    "manual_adjustment",
-    "correction",
-    "cancelled_order_reversal",
+    "adjustment",
     "reversal",
 ]
 
@@ -122,6 +117,6 @@ class StockMovement(BaseModel):
     quantity_delta: Decimal
     reason: StockReason
 
-    related_order_id: str | None = None
+    reference_id: str | None = None
     notes: str | None = None
     created_by: str | None = None

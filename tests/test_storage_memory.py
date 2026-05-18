@@ -71,7 +71,7 @@ def make_stock_movement(
         product_id=product_id,
         quantity_delta=quantity_delta,
         reason=reason,
-        related_order_id="ord_test",
+        reference_id="ord_test",
     )
 
 

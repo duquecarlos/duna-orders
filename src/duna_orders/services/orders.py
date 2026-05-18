@@ -59,7 +59,7 @@ class OrderService:
                 product_id=product.product_id,
                 quantity_delta=-item.quantity,
                 reason="sale",
-                related_order_id=order_id,
+                reference_id=order_id,
             )
 
             try:
