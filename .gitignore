@@ -1,0 +1,9 @@
+.venv/
+.env
+credentials/*
+!credentials/.gitkeep
+__pycache__/
+*.pyc
+.pytest_cache/
+.streamlit/secrets.toml
+.DS_Store
