@@ -21,6 +21,7 @@ STOCK_REASONS = (
     "manual_adjustment",
     "correction",
     "cancelled_order_reversal",
+    "reversal",
 )
 
 
@@ -58,6 +59,7 @@ TABS = {
         "customer_phone_snapshot",
         "raw_message",
         "status",
+        "confirmed_at",
         "subtotal",
         "delivery_fee",
         "total",

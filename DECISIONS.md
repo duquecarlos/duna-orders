@@ -13,3 +13,16 @@ Why:
 
 Trade-off:
 This adds a little structure upfront, but prevents the MVP from becoming a fragile Streamlit script.
+
+## M1.2 — Storage contract and in-memory backend
+
+Decision:
+Define a StorageInterface and implement InMemoryStorage before connecting Google Sheets.
+
+Why:
+- Services should depend on a storage contract, not directly on Google Sheets.
+- InMemoryStorage lets us build and test order/inventory logic without credentials, internet, or spreadsheet side effects.
+- Returning deep copies prevents hidden mutation bugs while developing services.
+
+Trade-off:
+This adds a small abstraction early, but keeps the MVP testable and makes the future Sheets/Postgres migration cleaner.

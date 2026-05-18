@@ -20,6 +20,7 @@ StockReason = Literal[
     "manual_adjustment",
     "correction",
     "cancelled_order_reversal",
+    "reversal",
 ]
 
 ValidationStatus = Literal[
@@ -96,6 +97,7 @@ class Order(BaseModel):
 
     raw_message: str
     status: OrderStatus = "draft"
+    confirmed_at: datetime | None = None
 
     items: list[OrderItem] = Field(default_factory=list)
 
