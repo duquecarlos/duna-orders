@@ -3,6 +3,21 @@ name = "duna-orders"
 version = "0.1.0"
 description = "WhatsApp-native order control system for small businesses (pilot MVP)"
 requires-python = ">=3.11"
+dependencies = [
+    "anthropic",
+    "gspread",
+    "google-auth",
+    "pydantic",
+    "pydantic-settings",
+    "streamlit",
+    "tenacity",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-mock",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
