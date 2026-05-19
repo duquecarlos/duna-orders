@@ -1,4 +1,25 @@
 # Changelog
+## M3.1 — Parse log prompt versioning
+
+### Delivered
+
+- Added `PROMPT_VERSION` in `src/duna_orders/parsing/prompts.py`.
+- Added `prompt_version` to `ParseLogEntry`.
+- Added `prompt_version` to the `parse_log` sheet schema.
+- Updated `ParsingService` to persist the prompt version on both successful and failed parse attempts.
+- Updated `GoogleSheetsStorage` parse log serialization for the new field.
+- Updated tests and smoke script constructors for `ParseLogEntry`.
+
+### Verified
+
+- `python -m compileall src tests scripts` → OK.
+- `pytest tests/ -v` → `30 passed, 13 deselected`.
+- Live Google Sheets validation passed after manually migrating the test spreadsheet `parse_log` header.
+- Google Sheets smoke script passed after the header migration.
+
+### Notes
+
+`prompt_version` is now part of parser auditability. Any future prompt change should update `PROMPT_VERSION` so parse logs can be tied back to the exact prompt version that produced them.
 
 ## M3 — Storage contract and live Google Sheets validation
 

@@ -5,49 +5,6 @@
 This roadmap tracks future work for Duna Orders. It is not a changelog and does not describe completed milestones.
 
 
-
-\## Before pilot data
-
-
-
-These items must be resolved before writing real pilot/client data to a production spreadsheet.
-
-
-
-\### Add prompt versioning to parse logs
-
-
-
-Add explicit parser prompt version tracking.
-
-
-
-Expected changes:
-
-
-
-\- Add a `PROMPT\_VERSION` constant near the parser prompt definition.
-
-\- Add `prompt\_version` to `ParseLogEntry`.
-
-\- Add `prompt\_version` to the `parse\_log` sheet headers.
-
-\- Update `ParsingService` to persist the prompt version.
-
-\- Update storage tests and live Sheets validation.
-
-\- Apply a one-time header update to any existing test spreadsheet.
-
-
-
-Reason:
-
-
-
-Parser output needs auditability. If a parse result is wrong or changes after prompt edits, the stored log should show which prompt version produced it.
-
-
-
 \## High priority
 
 
