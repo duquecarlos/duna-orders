@@ -3,7 +3,7 @@ from duna_orders.ids import new_id
 from duna_orders.parsing.base import ParserInterface
 from duna_orders.parsing.exceptions import ParserError
 from duna_orders.storage.base import StorageInterface
-
+from duna_orders.parsing.prompts import PROMPT_VERSION
 
 class ParsingService:
     """Orchestrates parser invocation and parse_log persistence."""
@@ -22,6 +22,7 @@ class ParsingService:
                     raw_message=raw_message,
                     parsed_json="",
                     model=self._parser.model_name,
+                    prompt_version=PROMPT_VERSION,
                     latency_ms=0,
                     success=False,
                     error=str(error),
@@ -35,6 +36,7 @@ class ParsingService:
                 raw_message=raw_message,
                 parsed_json=result.request.model_dump_json(),
                 model=result.model,
+                prompt_version=PROMPT_VERSION,
                 latency_ms=result.latency_ms,
                 success=True,
                 error=None,

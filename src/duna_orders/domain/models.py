@@ -148,7 +148,7 @@ class ParseResult(BaseModel):
 
 class ParseLogEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
+    prompt_version: str
     parse_id: str
     created_at: datetime = Field(default_factory=utc_now)
     raw_message: str

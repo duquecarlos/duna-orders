@@ -108,10 +108,11 @@ def make_parse_log_entry(
         raw_message="me regala 2 pollos",
         parsed_json='{"items":[]}',
         model="test-model",
+        prompt_version="test-prompt-v1",
         latency_ms=120,
         success=True,
         error=None,
-    )
+)
 
 
 def _matching_products(storage: StorageInterface, product_id: str) -> list[Product]:

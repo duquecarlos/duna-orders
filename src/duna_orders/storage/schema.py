@@ -94,6 +94,7 @@ TABS = {
         "raw_message",
         "parsed_json",
         "model",
+        "prompt_version",
         "latency_ms",
         "success",
         "error",

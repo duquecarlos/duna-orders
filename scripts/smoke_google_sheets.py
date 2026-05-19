@@ -274,10 +274,11 @@ def _check_parse_log(storage: GoogleSheetsStorage, run_token: str) -> None:
         raw_message="Smoke parse",
         parsed_json='{"items":[]}',
         model="smoke-model",
+        prompt_version="smoke-prompt-v1",
         latency_ms=123,
         success=True,
         error=None,
-    )
+)
 
     saved = storage.append_parse_log(entry)
 

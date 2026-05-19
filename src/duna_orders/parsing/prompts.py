@@ -1,6 +1,6 @@
 from duna_orders.domain.models import Product
 
-
+PROMPT_VERSION = "2026-05-19.1"
 SYSTEM_PROMPT = """
 Eres un parser de pedidos de WhatsApp para pequeños negocios en Colombia.
 
