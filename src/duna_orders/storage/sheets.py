@@ -27,6 +27,7 @@ from duna_orders.storage.schema import (
     CUSTOMERS_TAB,
     ORDER_ITEMS_TAB,
     ORDERS_TAB,
+    PARSE_LOG_TAB,
     PRODUCTS_TAB,
     STOCK_MOVEMENTS_TAB,
     TABS,
@@ -355,6 +356,31 @@ class GoogleSheetsStorage(StorageInterface):
                 "created_by": self._empty_to_none(record["created_by"]),
             }
         )
+    def _parse_log_entry_to_row(self, entry: ParseLogEntry) -> list[Any]:
+        return [
+            entry.parse_id,
+            self._datetime_text(entry.created_at),
+            entry.raw_message,
+            entry.parsed_json,
+            entry.model,
+            entry.latency_ms,
+            "true" if entry.success else "false",
+            self._optional_text(entry.error),
+        ]
+
+    def _parse_log_entry_from_record(self, record: dict[str, Any]) -> ParseLogEntry:
+        return ParseLogEntry.model_validate(
+            {
+                "parse_id": record["parse_id"],
+                "created_at": self._to_datetime(record["created_at"]),
+                "raw_message": record["raw_message"],
+                "parsed_json": record["parsed_json"],
+                "model": record["model"],
+                "latency_ms": int(record["latency_ms"]),
+                "success": self._to_bool(record["success"]),
+                "error": self._empty_to_none(record["error"]),
+            }
+        )
     def list_products(self, *, active_only: bool = True) -> list[Product]:
         products = [self._product_from_record(record) for record in self._records(PRODUCTS_TAB)]
 
@@ -560,7 +586,23 @@ class GoogleSheetsStorage(StorageInterface):
         return movement.model_copy(deep=True)
 
     def append_parse_log(self, entry: ParseLogEntry) -> ParseLogEntry:
-        raise NotImplementedError
+        row_index = self._find_row_index(
+            tab_name=PARSE_LOG_TAB,
+            id_column="parse_id",
+            id_value=entry.parse_id,
+        )
+
+        if row_index is not None:
+            raise ValueError(f"Parse log already exists: {entry.parse_id}")
+
+        row = self._parse_log_entry_to_row(entry)
+
+        try:
+            self._worksheet(PARSE_LOG_TAB).append_row(row)
+        except gspread.exceptions.GSpreadException as error:
+            raise StorageBackendError(str(error)) from error
+
+        return entry.model_copy(deep=True)
 
     def list_stock_movements(
         self,
