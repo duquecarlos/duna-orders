@@ -28,6 +28,7 @@ from duna_orders.storage.schema import (
     ORDER_ITEMS_TAB,
     ORDERS_TAB,
     PRODUCTS_TAB,
+    STOCK_MOVEMENTS_TAB,
     TABS,
 )
 
@@ -328,6 +329,32 @@ class GoogleSheetsStorage(StorageInterface):
                 "created_by": self._empty_to_none(record["created_by"]),
             }
         )
+    
+    def _stock_movement_to_row(self, movement: StockMovement) -> list[Any]:
+        return [
+            movement.stock_movement_id,
+            self._datetime_text(movement.created_at),
+            movement.product_id,
+            self._decimal_text(movement.quantity_delta),
+            movement.reason,
+            self._optional_text(movement.reference_id),
+            self._optional_text(movement.notes),
+            self._optional_text(movement.created_by),
+        ]
+
+    def _stock_movement_from_record(self, record: dict[str, Any]) -> StockMovement:
+        return StockMovement.model_validate(
+            {
+                "stock_movement_id": record["stock_movement_id"],
+                "created_at": self._to_datetime(record["created_at"]),
+                "product_id": record["product_id"],
+                "quantity_delta": self._to_decimal(record["quantity_delta"]),
+                "reason": record["reason"],
+                "reference_id": self._empty_to_none(record["reference_id"]),
+                "notes": self._empty_to_none(record["notes"]),
+                "created_by": self._empty_to_none(record["created_by"]),
+            }
+        )
     def list_products(self, *, active_only: bool = True) -> list[Product]:
         products = [self._product_from_record(record) for record in self._records(PRODUCTS_TAB)]
 
@@ -512,7 +539,25 @@ class GoogleSheetsStorage(StorageInterface):
         return updated_order.model_copy(deep=True)
     
     def append_stock_movement(self, movement: StockMovement) -> StockMovement:
-        raise NotImplementedError
+        row_index = self._find_row_index(
+            tab_name=STOCK_MOVEMENTS_TAB,
+            id_column="stock_movement_id",
+            id_value=movement.stock_movement_id,
+        )
+
+        if row_index is not None:
+            raise ValueError(
+                f"Stock movement already exists: {movement.stock_movement_id}"
+            )
+
+        row = self._stock_movement_to_row(movement)
+
+        try:
+            self._worksheet(STOCK_MOVEMENTS_TAB).append_row(row)
+        except gspread.exceptions.GSpreadException as error:
+            raise StorageBackendError(str(error)) from error
+
+        return movement.model_copy(deep=True)
 
     def append_parse_log(self, entry: ParseLogEntry) -> ParseLogEntry:
         raise NotImplementedError
@@ -522,4 +567,16 @@ class GoogleSheetsStorage(StorageInterface):
         *,
         product_id: str | None = None,
     ) -> list[StockMovement]:
-        raise NotImplementedError
+        movements = [
+            self._stock_movement_from_record(record)
+            for record in self._records(STOCK_MOVEMENTS_TAB)
+        ]
+
+        if product_id is not None:
+            movements = [
+                movement
+                for movement in movements
+                if movement.product_id == product_id
+            ]
+
+        return movements
