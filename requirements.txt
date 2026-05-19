@@ -1,6 +1,4 @@
 streamlit>=1.39
-gspread>=6.1
-google-auth>=2.34
 pandas>=2.2
 pydantic>=2.8
 pydantic-settings>=2.4
@@ -9,3 +7,5 @@ anthropic>=0.40
 openai>=1.50
 python-ulid>=2.7
 tenacity>=9.0
+gspread==6.2.1
+google-auth==2.53.0

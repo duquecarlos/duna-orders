@@ -16,5 +16,6 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 markers = [
     "live_api: requires ANTHROPIC_API_KEY env var; not run by default",
+    "live_sheets: requires GOOGLE_SHEETS_TEST_SPREADSHEET_ID and service account credentials; not run by default",
 ]
-addopts = "-m 'not live_api'"
+addopts = "-m 'not live_api and not live_sheets'"
