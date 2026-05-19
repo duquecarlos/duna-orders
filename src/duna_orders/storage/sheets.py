@@ -11,9 +11,11 @@ from gspread.utils import rowcol_to_a1
 from duna_orders.domain.models import (
     Customer,
     Order,
+    OrderItem,
     ParseLogEntry,
     Product,
     StockMovement,
+    utc_now,
 )
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.exceptions import (
@@ -21,8 +23,13 @@ from duna_orders.storage.exceptions import (
     StorageBackendError,
     StorageConfigError,
 )
-from duna_orders.storage.schema import CUSTOMERS_TAB, PRODUCTS_TAB, TABS
-
+from duna_orders.storage.schema import (
+    CUSTOMERS_TAB,
+    ORDER_ITEMS_TAB,
+    ORDERS_TAB,
+    PRODUCTS_TAB,
+    TABS,
+)
 
 class GoogleSheetsStorage(StorageInterface):
     def __init__(
@@ -233,7 +240,94 @@ class GoogleSheetsStorage(StorageInterface):
                 "last_order_at": self._optional_datetime(record["last_order_at"]),
             }
         )
-    
+    def _order_item_to_row(self, item: OrderItem) -> list[Any]:
+        return [
+            item.order_item_id,
+            item.order_id,
+            self._optional_text(item.product_id),
+            item.product_name_snapshot,
+            item.unit_snapshot,
+            self._decimal_text(item.quantity),
+            self._decimal_text(item.unit_price_snapshot),
+            self._decimal_text(item.line_total),
+            item.validation_status,
+            self._optional_text(item.notes),
+        ]
+
+    def _order_item_from_record(self, record: dict[str, Any]) -> OrderItem:
+        return OrderItem.model_validate(
+            {
+                "order_item_id": record["order_item_id"],
+                "order_id": record["order_id"],
+                "product_id": self._empty_to_none(record["product_id"]),
+                "product_name_snapshot": record["product_name_snapshot"],
+                "unit_snapshot": record["unit_snapshot"],
+                "quantity": self._to_decimal(record["quantity"]),
+                "unit_price_snapshot": self._to_decimal(record["unit_price_snapshot"]),
+                "line_total": self._to_decimal(record["line_total"]),
+                "validation_status": record["validation_status"],
+                "notes": self._empty_to_none(record["notes"]),
+            }
+        )
+
+    def _order_to_row(self, order: Order) -> list[Any]:
+        return [
+            order.order_id,
+            self._datetime_text(order.created_at),
+            self._datetime_text(order.updated_at),
+            self._optional_text(order.customer_id),
+            self._optional_text(order.customer_name_snapshot),
+            self._optional_text(order.customer_phone_snapshot),
+            order.raw_message,
+            order.status,
+            self._optional_text(
+                self._datetime_text(order.confirmed_at)
+                if order.confirmed_at is not None
+                else None
+            ),
+            self._decimal_text(order.subtotal),
+            self._decimal_text(order.delivery_fee),
+            self._decimal_text(order.total),
+            self._optional_text(order.delivery_date),
+            self._optional_text(order.delivery_address),
+            self._optional_text(order.notes),
+            self._optional_text(order.confirmation_message),
+            self._optional_text(order.created_by),
+        ]
+
+    def _order_from_record(
+        self,
+        record: dict[str, Any],
+        items: list[OrderItem],
+    ) -> Order:
+        return Order.model_validate(
+            {
+                "order_id": record["order_id"],
+                "created_at": self._to_datetime(record["created_at"]),
+                "updated_at": self._to_datetime(record["updated_at"]),
+                "customer_id": self._empty_to_none(record["customer_id"]),
+                "customer_name_snapshot": self._empty_to_none(
+                    record["customer_name_snapshot"]
+                ),
+                "customer_phone_snapshot": self._empty_to_none(
+                    record["customer_phone_snapshot"]
+                ),
+                "raw_message": record["raw_message"],
+                "status": record["status"],
+                "confirmed_at": self._optional_datetime(record["confirmed_at"]),
+                "items": items,
+                "subtotal": self._to_decimal(record["subtotal"]),
+                "delivery_fee": self._to_decimal(record["delivery_fee"]),
+                "total": self._to_decimal(record["total"]),
+                "delivery_date": self._empty_to_none(record["delivery_date"]),
+                "delivery_address": self._empty_to_none(record["delivery_address"]),
+                "notes": self._empty_to_none(record["notes"]),
+                "confirmation_message": self._empty_to_none(
+                    record["confirmation_message"]
+                ),
+                "created_by": self._empty_to_none(record["created_by"]),
+            }
+        )
     def list_products(self, *, active_only: bool = True) -> list[Product]:
         products = [self._product_from_record(record) for record in self._records(PRODUCTS_TAB)]
 
@@ -319,10 +413,34 @@ class GoogleSheetsStorage(StorageInterface):
         return customer.model_copy(deep=True)
 
     def create_order(self, order: Order) -> Order:
-        raise NotImplementedError
+        existing_row = self._find_row_index(
+            tab_name=ORDERS_TAB,
+            id_column="order_id",
+            id_value=order.order_id,
+        )
+
+        if existing_row is not None:
+            raise ValueError(f"Order already exists: {order.order_id}")
+
+        item_rows = [self._order_item_to_row(item) for item in order.items]
+        order_row = self._order_to_row(order)
+
+        try:
+            if item_rows:
+                self._worksheet(ORDER_ITEMS_TAB).append_rows(item_rows)
+
+            self._worksheet(ORDERS_TAB).append_row(order_row)
+        except gspread.exceptions.GSpreadException as error:
+            raise StorageBackendError(str(error)) from error
+
+        return order.model_copy(deep=True)
 
     def get_order(self, order_id: str) -> Order | None:
-        raise NotImplementedError
+        for order in self.list_orders():
+            if order.order_id == order_id:
+                return order
+
+        return None
 
     def list_orders(
         self,
@@ -330,7 +448,28 @@ class GoogleSheetsStorage(StorageInterface):
         status: str | None = None,
         since: datetime | None = None,
     ) -> list[Order]:
-        raise NotImplementedError
+        item_records = self._records(ORDER_ITEMS_TAB)
+        items_by_order_id: dict[str, list[OrderItem]] = {}
+
+        for record in item_records:
+            item = self._order_item_from_record(record)
+            items_by_order_id.setdefault(item.order_id, []).append(item)
+
+        orders = [
+            self._order_from_record(
+                record,
+                items_by_order_id.get(record["order_id"], []),
+            )
+            for record in self._records(ORDERS_TAB)
+        ]
+
+        if status is not None:
+            orders = [order for order in orders if order.status == status]
+
+        if since is not None:
+            orders = [order for order in orders if order.created_at >= since]
+
+        return orders
 
     def update_order_status(
         self,
@@ -338,8 +477,40 @@ class GoogleSheetsStorage(StorageInterface):
         status: str,
         confirmed_at: datetime | None = None,
     ) -> Order:
-        raise NotImplementedError
+        order = self.get_order(order_id)
 
+        if order is None:
+            raise KeyError(f"Order not found: {order_id}")
+
+        updates: dict[str, Any] = {
+            "status": status,
+            "updated_at": utc_now(),
+        }
+
+        if confirmed_at is not None:
+            updates["confirmed_at"] = confirmed_at
+
+        updated_order = order.model_copy(update=updates, deep=True)
+        row = self._order_to_row(updated_order)
+
+        row_index = self._find_row_index(
+            tab_name=ORDERS_TAB,
+            id_column="order_id",
+            id_value=order_id,
+        )
+
+        if row_index is None:
+            raise KeyError(f"Order not found: {order_id}")
+
+        try:
+            start = rowcol_to_a1(row_index, 1)
+            end = rowcol_to_a1(row_index, len(TABS[ORDERS_TAB]))
+            self._worksheet(ORDERS_TAB).update(f"{start}:{end}", [row])
+        except gspread.exceptions.GSpreadException as error:
+            raise StorageBackendError(str(error)) from error
+
+        return updated_order.model_copy(deep=True)
+    
     def append_stock_movement(self, movement: StockMovement) -> StockMovement:
         raise NotImplementedError
 
