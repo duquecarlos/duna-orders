@@ -2,7 +2,7 @@ import json
 import time
 
 from anthropic import Anthropic
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from duna_orders.config import settings
 from duna_orders.domain.models import DraftOrderRequest, ParseResult, Product
@@ -13,6 +13,29 @@ from duna_orders.parsing.exceptions import (
     ParserOutputError,
 )
 from duna_orders.parsing.prompts import SYSTEM_PROMPT, build_user_prompt
+
+
+def _extract_json_text(raw_response: str) -> str:
+    text = raw_response.strip()
+
+    if text.startswith("```"):
+        lines = text.splitlines()
+
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+
+        text = "\n".join(lines).strip()
+
+    start = text.find("{")
+    end = text.rfind("}")
+
+    if start == -1 or end == -1 or end <= start:
+        return text
+
+    return text[start : end + 1]
 
 
 class AnthropicParser(ParserInterface):
@@ -30,6 +53,7 @@ class AnthropicParser(ParserInterface):
         return self._model
 
     @retry(
+        retry=retry_if_exception_type(ParserAPIError),
         stop=stop_after_attempt(2),
         wait=wait_exponential(multiplier=1, min=1, max=4),
         reraise=True,
@@ -56,9 +80,10 @@ class AnthropicParser(ParserInterface):
 
         latency_ms = int((time.perf_counter() - start) * 1000)
         raw_response = response.content[0].text
+        json_text = _extract_json_text(raw_response)
 
         try:
-            parsed = json.loads(raw_response)
+            parsed = json.loads(json_text)
             request = DraftOrderRequest.model_validate(parsed["request"])
             warnings = parsed.get("warnings", [])
         except Exception as error:
