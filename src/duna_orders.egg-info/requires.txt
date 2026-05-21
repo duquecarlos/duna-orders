@@ -1,0 +1,11 @@
+anthropic
+gspread
+google-auth
+pydantic
+pydantic-settings
+streamlit
+tenacity
+
+[dev]
+pytest
+pytest-mock

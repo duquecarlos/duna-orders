@@ -9,35 +9,6 @@ This roadmap tracks future work for Duna Orders. It is not a changelog and does 
 
 
 
-\### GoogleSheetsStorage resilience
-
-
-
-Add a resilience layer for transient Google Sheets failures.
-
-
-
-Scope:
-
-
-
-\- Retry 429 and 5xx responses with exponential backoff.
-
-\- Keep hard failures visible after retry exhaustion.
-
-\- Avoid hiding schema/header errors behind retries.
-
-\- Add focused tests for retryable vs non-retryable errors.
-
-
-
-Reason:
-
-
-
-Live tests already exposed Google Sheets read quota limits. Tests currently mitigate this with `LIVE\_SHEETS\_TEST\_DELAY\_S`, but production storage has no retry/backoff. Transient Google API failures currently surface directly to the caller.
-
-
 
 \## Medium priority
 
@@ -111,31 +82,6 @@ Current order workflow supports customer snapshots, but a pilot business may nee
 
 \## Low priority / cleanup
 
-
-
-\### gspread update argument order
-
-
-
-Migrate `worksheet.update(...)` calls to the newer argument order.
-
-
-
-Affected areas:
-
-
-
-\- `upsert\_product`
-
-\- `update\_order\_status`
-
-
-
-Reason:
-
-
-
-Current calls work but emit deprecation warnings. This should be cleaned before the old argument order is removed by `gspread`.
 
 
 

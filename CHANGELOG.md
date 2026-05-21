@@ -1,4 +1,49 @@
 # Changelog
+## M4.1 — Google Sheets storage resilience
+
+### Delivered
+
+- Added a central `_run_gspread(...)` execution boundary in `GoogleSheetsStorage`.
+- Added retry handling for transient Google Sheets API failures:
+  - HTTP 429 quota errors
+  - HTTP 5xx server errors
+- Kept non-transient errors non-retryable:
+  - storage configuration errors
+  - authentication errors
+  - schema/header mismatches
+  - duplicate-ID contract errors
+  - missing-ID contract errors
+- Routed Sheets reads, writes, updates, worksheet lookups, and bootstrap API calls through the retry boundary.
+- Migrated `worksheet.update(...)` calls to the current `gspread` argument order.
+
+### Added
+- M4.2 Step 1: extended the demo order flow domain model with Colombian restaurant fields for fulfillment, payment, delivery zone, packaging fee, customer notes, product availability days, and item modifications.
+- Added Google Sheets schema support and serialization/deserialization for the new product, order, and order item fields.
+- Documented the required M4.2 Google Sheets header migration in `MIGRATIONS.md`.
+
+### Changed
+- Updated `OrderService.create_draft` to carry item modifications and fulfillment/payment metadata into draft orders.
+- Updated order total calculation to include `packaging_fee` in addition to subtotal and delivery fee.
+- Updated storage contract tests, order service tests, and Google Sheets smoke checks for the new fields.
+
+### Verified
+- `python -m compileall src tests scripts`
+- `pytest tests/ -v` → 30 passed, 13 deselected.
+- Manual test spreadsheet header migration completed.
+- `pytest -m live_sheets -v` → 12 passed, 33 deselected.
+- `python scripts/smoke_google_sheets.py` → All smoke checks passed.
+
+### Verified
+
+- `python -m compileall src tests scripts` → OK.
+- `pytest tests/ -v` → passed.
+- `pytest -m live_sheets -v` → passed.
+- `python scripts/smoke_google_sheets.py` → passed.
+
+### Notes
+
+Retry/backoff improves resilience against transient Google API failures, but it does not turn Google Sheets into a transactional backend. Database-backed storage remains the long-term migration path through `StorageInterface`.
+
 ## M3.1 — Parse log prompt versioning
 
 ### Delivered

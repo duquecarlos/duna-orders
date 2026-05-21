@@ -2,7 +2,10 @@ import json
 import os
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
+
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 import gspread
 from google.auth.exceptions import GoogleAuthError
@@ -33,6 +36,30 @@ from duna_orders.storage.schema import (
     TABS,
 )
 
+T = TypeVar("T")
+
+
+def _is_retryable_status_code(status_code: int | None) -> bool:
+    if status_code is None:
+        return False
+
+    return status_code == 429 or 500 <= status_code <= 599
+
+
+def _is_retryable_gspread_error(error: BaseException) -> bool:
+    if not isinstance(error, gspread.exceptions.APIError):
+        return False
+
+    response = getattr(error, "response", None)
+    status_code = getattr(response, "status_code", None)
+
+    try:
+        parsed_status = int(status_code) if status_code is not None else None
+    except (TypeError, ValueError):
+        parsed_status = None
+
+    return _is_retryable_status_code(parsed_status)
+
 class GoogleSheetsStorage(StorageInterface):
     def __init__(
         self,
@@ -55,7 +82,29 @@ class GoogleSheetsStorage(StorageInterface):
 
         try:
             self._client = gspread.service_account(filename=self._credentials_path)
-            self._spreadsheet = self._client.open_by_key(self._spreadsheet_id)
+        except GoogleAuthError as error:
+            raise StorageAuthError(str(error)) from error
+        except Exception as error:
+            raise StorageBackendError(str(error)) from error
+
+        self._spreadsheet = self._run_gspread(
+            lambda: self._client.open_by_key(self._spreadsheet_id)
+        )
+
+        self._bootstrap()
+
+    @retry(
+        retry=retry_if_exception(_is_retryable_gspread_error),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        stop=stop_after_attempt(4),
+        reraise=True,
+    )
+    def _execute_gspread(self, operation: Callable[[], T]) -> T:
+        return operation()
+
+    def _run_gspread(self, operation: Callable[[], T]) -> T:
+        try:
+            return self._execute_gspread(operation)
         except GoogleAuthError as error:
             raise StorageAuthError(str(error)) from error
         except gspread.exceptions.GSpreadException as error:
@@ -63,42 +112,45 @@ class GoogleSheetsStorage(StorageInterface):
         except Exception as error:
             raise StorageBackendError(str(error)) from error
 
-        self._bootstrap()
-
     def _bootstrap(self) -> None:
-        worksheets = {worksheet.title: worksheet for worksheet in self._spreadsheet.worksheets()}
+        worksheets = {
+            worksheet.title: worksheet
+            for worksheet in self._run_gspread(lambda: self._spreadsheet.worksheets())
+        }
 
         for tab_name, expected_headers in TABS.items():
             worksheet = worksheets.get(tab_name)
 
             if worksheet is None:
-                worksheet = self._spreadsheet.add_worksheet(
-                    title=tab_name,
-                    rows=1000,
-                    cols=len(expected_headers),
+                worksheet = self._run_gspread(
+                    lambda tab_name=tab_name, expected_headers=expected_headers:
+                    self._spreadsheet.add_worksheet(
+                        title=tab_name,
+                        rows=1000,
+                        cols=len(expected_headers),
+                    )
                 )
-                worksheet.append_row(expected_headers)
+                self._run_gspread(
+                    lambda worksheet=worksheet, expected_headers=expected_headers:
+                    worksheet.append_row(expected_headers)
+                )
                 continue
 
-            actual_headers = worksheet.row_values(1)
+            actual_headers = self._run_gspread(
+                lambda worksheet=worksheet: worksheet.row_values(1)
+            )
 
             if actual_headers != expected_headers:
                 raise StorageConfigError(
-                    f"Header mismatch in tab '{tab_name}'. "
+                    f"Header mismatch in tab {tab_name}. "
                     f"Expected {expected_headers}, got {actual_headers}."
                 )
 
     def _worksheet(self, tab_name: str) -> gspread.Worksheet:
-        try:
-            return self._spreadsheet.worksheet(tab_name)
-        except gspread.exceptions.GSpreadException as error:
-            raise StorageBackendError(str(error)) from error
+        return self._run_gspread(lambda: self._spreadsheet.worksheet(tab_name))
 
     def _records(self, tab_name: str) -> list[dict[str, Any]]:
-        try:
-            return self._worksheet(tab_name).get_all_records()
-        except gspread.exceptions.GSpreadException as error:
-            raise StorageBackendError(str(error)) from error
+        return self._run_gspread(lambda: self._worksheet(tab_name).get_all_records())
 
     def _find_row_index(
         self,
@@ -111,10 +163,7 @@ class GoogleSheetsStorage(StorageInterface):
         headers = TABS[tab_name]
         id_col_index = headers.index(id_column) + 1
 
-        try:
-            values = worksheet.col_values(id_col_index)
-        except gspread.exceptions.GSpreadException as error:
-            raise StorageBackendError(str(error)) from error
+        values = self._run_gspread(lambda: worksheet.col_values(id_col_index))
 
         for row_index, value in enumerate(values, start=1):
             if row_index == 1:
@@ -185,6 +234,11 @@ class GoogleSheetsStorage(StorageInterface):
             product.product_name,
             json.dumps(product.aliases, ensure_ascii=False),
             self._optional_text(product.category),
+            (
+                json.dumps(product.available_days, ensure_ascii=False)
+                if product.available_days is not None
+                else ""
+            ),
             product.unit,
             self._decimal_text(product.unit_price),
             product.active,
@@ -193,15 +247,20 @@ class GoogleSheetsStorage(StorageInterface):
             self._optional_text(product.notes),
             self._datetime_text(product.created_at),
             self._datetime_text(product.updated_at),
-        ]
+    ]
 
     def _product_from_record(self, record: dict[str, Any]) -> Product:
         return Product.model_validate(
             {
                 "product_id": record["product_id"],
                 "product_name": record["product_name"],
-                "aliases": self._json_list(record["aliases"]),
+                "aliases": json.loads(record["aliases"] or "[]"),
                 "category": self._empty_to_none(record["category"]),
+                "available_days": (
+                    json.loads(record["available_days"])
+                    if record["available_days"]
+                    else None
+                ),
                 "unit": record["unit"],
                 "unit_price": self._to_decimal(record["unit_price"]),
                 "active": self._to_bool(record["active"]),
@@ -252,6 +311,7 @@ class GoogleSheetsStorage(StorageInterface):
             self._decimal_text(item.quantity),
             self._decimal_text(item.unit_price_snapshot),
             self._decimal_text(item.line_total),
+            self._optional_text(item.modifications),
             item.validation_status,
             self._optional_text(item.notes),
         ]
@@ -267,6 +327,7 @@ class GoogleSheetsStorage(StorageInterface):
                 "quantity": self._to_decimal(record["quantity"]),
                 "unit_price_snapshot": self._to_decimal(record["unit_price_snapshot"]),
                 "line_total": self._to_decimal(record["line_total"]),
+                "modifications": self._empty_to_none(record["modifications"]),
                 "validation_status": record["validation_status"],
                 "notes": self._empty_to_none(record["notes"]),
             }
@@ -289,7 +350,12 @@ class GoogleSheetsStorage(StorageInterface):
             ),
             self._decimal_text(order.subtotal),
             self._decimal_text(order.delivery_fee),
+            self._decimal_text(order.packaging_fee),
             self._decimal_text(order.total),
+            self._optional_text(order.fulfillment_type),
+            self._optional_text(order.delivery_zone),
+            self._optional_text(order.customer_notes),
+            self._optional_text(order.payment_method),
             self._optional_text(order.delivery_date),
             self._optional_text(order.delivery_address),
             self._optional_text(order.notes),
@@ -320,7 +386,12 @@ class GoogleSheetsStorage(StorageInterface):
                 "items": items,
                 "subtotal": self._to_decimal(record["subtotal"]),
                 "delivery_fee": self._to_decimal(record["delivery_fee"]),
+                "packaging_fee": self._to_decimal(record["packaging_fee"]),
                 "total": self._to_decimal(record["total"]),
+                "fulfillment_type": self._empty_to_none(record["fulfillment_type"]),
+                "delivery_zone": self._empty_to_none(record["delivery_zone"]),
+                "customer_notes": self._empty_to_none(record["customer_notes"]),
+                "payment_method": self._empty_to_none(record["payment_method"]),
                 "delivery_date": self._empty_to_none(record["delivery_date"]),
                 "delivery_address": self._empty_to_none(record["delivery_address"]),
                 "notes": self._empty_to_none(record["notes"]),
@@ -407,15 +478,17 @@ class GoogleSheetsStorage(StorageInterface):
             id_value=product.product_id,
         )
 
-        try:
-            if row_index is None:
-                worksheet.append_row(row)
-            else:
-                start = rowcol_to_a1(row_index, 1)
-                end = rowcol_to_a1(row_index, len(TABS[PRODUCTS_TAB]))
-                worksheet.update(f"{start}:{end}", [row])
-        except gspread.exceptions.GSpreadException as error:
-            raise StorageBackendError(str(error)) from error
+        if row_index is None:
+            self._run_gspread(lambda: worksheet.append_row(row))
+        else:
+            start = rowcol_to_a1(row_index, 1)
+            end = rowcol_to_a1(row_index, len(TABS[PRODUCTS_TAB]))
+            self._run_gspread(
+                lambda: worksheet.update(
+                    values=[row],
+                    range_name=f"{start}:{end}",
+                )
+            )
 
         return product.model_copy(deep=True)
 
@@ -460,10 +533,7 @@ class GoogleSheetsStorage(StorageInterface):
 
         row = self._customer_to_row(customer)
 
-        try:
-            worksheet.append_row(row)
-        except gspread.exceptions.GSpreadException as error:
-            raise StorageBackendError(str(error)) from error
+        self._run_gspread(lambda: worksheet.append_row(row))
 
         return customer.model_copy(deep=True)
 
@@ -480,13 +550,12 @@ class GoogleSheetsStorage(StorageInterface):
         item_rows = [self._order_item_to_row(item) for item in order.items]
         order_row = self._order_to_row(order)
 
-        try:
-            if item_rows:
-                self._worksheet(ORDER_ITEMS_TAB).append_rows(item_rows)
+        if item_rows:
+            self._run_gspread(
+                lambda: self._worksheet(ORDER_ITEMS_TAB).append_rows(item_rows)
+            )
 
-            self._worksheet(ORDERS_TAB).append_row(order_row)
-        except gspread.exceptions.GSpreadException as error:
-            raise StorageBackendError(str(error)) from error
+        self._run_gspread(lambda: self._worksheet(ORDERS_TAB).append_row(order_row))
 
         return order.model_copy(deep=True)
 
@@ -557,12 +626,14 @@ class GoogleSheetsStorage(StorageInterface):
         if row_index is None:
             raise KeyError(f"Order not found: {order_id}")
 
-        try:
-            start = rowcol_to_a1(row_index, 1)
-            end = rowcol_to_a1(row_index, len(TABS[ORDERS_TAB]))
-            self._worksheet(ORDERS_TAB).update(f"{start}:{end}", [row])
-        except gspread.exceptions.GSpreadException as error:
-            raise StorageBackendError(str(error)) from error
+        start = rowcol_to_a1(row_index, 1)
+        end = rowcol_to_a1(row_index, len(TABS[ORDERS_TAB]))
+        self._run_gspread(
+            lambda: self._worksheet(ORDERS_TAB).update(
+                values=[row],
+                range_name=f"{start}:{end}",
+            )
+        )
 
         return updated_order.model_copy(deep=True)
     
@@ -580,10 +651,7 @@ class GoogleSheetsStorage(StorageInterface):
 
         row = self._stock_movement_to_row(movement)
 
-        try:
-            self._worksheet(STOCK_MOVEMENTS_TAB).append_row(row)
-        except gspread.exceptions.GSpreadException as error:
-            raise StorageBackendError(str(error)) from error
+        self._run_gspread(lambda: self._worksheet(STOCK_MOVEMENTS_TAB).append_row(row))
 
         return movement.model_copy(deep=True)
 
@@ -599,10 +667,7 @@ class GoogleSheetsStorage(StorageInterface):
 
         row = self._parse_log_entry_to_row(entry)
 
-        try:
-            self._worksheet(PARSE_LOG_TAB).append_row(row)
-        except gspread.exceptions.GSpreadException as error:
-            raise StorageBackendError(str(error)) from error
+        self._run_gspread(lambda: self._worksheet(PARSE_LOG_TAB).append_row(row))
 
         return entry.model_copy(deep=True)
 

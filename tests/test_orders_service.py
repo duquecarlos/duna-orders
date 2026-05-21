@@ -74,16 +74,34 @@ def make_order(
 def make_draft_request(
     items: list[DraftItemRequest] | None = None,
     customer_name: str = "Cliente Test",
+    customer_phone: str | None = None,
+    raw_message: str = "Buenas, quiero hacer un pedido",
+    fulfillment_type: str | None = None,
+    delivery_zone: str | None = None,
+    packaging_fee: Decimal = Decimal("0"),
+    customer_notes: str | None = None,
+    payment_method: str | None = None,
+    modifications: str | None = None,
 ) -> DraftOrderRequest:
     if items is None:
         items = [
-            DraftItemRequest(product_id=PRODUCT_ID, quantity=Decimal("2")),
+            DraftItemRequest(
+                product_id=PRODUCT_ID,
+                quantity=Decimal("2"),
+                modifications=modifications,
+            ),
         ]
 
     return DraftOrderRequest(
-        raw_message="Buenas, quiero hacer un pedido",
+        raw_message=raw_message,
         customer_name=customer_name,
+        customer_phone=customer_phone,
         items=items,
+        fulfillment_type=fulfillment_type,
+        delivery_zone=delivery_zone,
+        packaging_fee=packaging_fee,
+        customer_notes=customer_notes,
+        payment_method=payment_method,
     )
 
 
@@ -125,9 +143,21 @@ def test_create_draft_happy_path():
         raw_message="Buenas, me regala 2 pollos y 3 gaseosas",
         customer_name="Cliente Test",
         items=[
-            DraftItemRequest(product_id="prd_pollo", quantity=Decimal("2")),
-            DraftItemRequest(product_id="prd_gaseosa", quantity=Decimal("3")),
+            DraftItemRequest(
+                product_id="prd_pollo",
+                quantity=Decimal("2"),
+                modifications="sin cebolla",
+            ),
+            DraftItemRequest(
+                product_id="prd_gaseosa",
+                quantity=Decimal("3"),
+            ),
         ],
+        fulfillment_type="delivery",
+        delivery_zone="zona_demo",
+        packaging_fee=Decimal("1000"),
+        customer_notes="Sin cubiertos",
+        payment_method="nequi",
     )
 
     order = service.create_draft(request)
@@ -137,7 +167,13 @@ def test_create_draft_happy_path():
     assert len(order.items) == 2
     assert order.subtotal == Decimal("69500")
     assert order.delivery_fee == Decimal("0")
-    assert order.total == Decimal("69500")
+    assert order.packaging_fee == Decimal("1000")
+    assert order.total == Decimal("70500")
+    assert order.fulfillment_type == "delivery"
+    assert order.delivery_zone == "zona_demo"
+    assert order.customer_notes == "Sin cubiertos"
+    assert order.payment_method == "nequi"
+    assert order.items[0].modifications == "sin cebolla"
 
 
 def test_create_draft_raises_on_empty_items():

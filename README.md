@@ -464,7 +464,7 @@ If 429 still appears:
 3. Rerun once.
 4. If it repeats, increase `LIVE_SHEETS_TEST_DELAY_S`.
 
-No retry/backoff is currently implemented in `GoogleSheetsStorage`. In production use, quota or transient Google API failures surface to the caller.
+`GoogleSheetsStorage` retries transient 429 and 5xx Google API failures with exponential backoff. After retry exhaustion, the error still surfaces to the caller. `LIVE_SHEETS_TEST_DELAY_S` is still recommended for live tests because it avoids unnecessary quota pressure and keeps the suite predictable.
 
 ### Spreadsheet not found
 
@@ -517,13 +517,13 @@ True
 
 ## 10. Known limitations and deferred follow-ups
 
-### Google Sheets resilience
+### Google Sheets as pilot persistence
 
-`GoogleSheetsStorage` currently has no retry/backoff layer for 429 or 5xx errors.
+`GoogleSheetsStorage` now retries transient 429 and 5xx errors, but Google Sheets is still a pilot-oriented persistence backend.
 
-This is an explicit scope cut, not a hidden bug. Live tests mitigate quota bursts with `LIVE_SHEETS_TEST_DELAY_S=8`; production code does not. In production use, transient Google API failures currently surface to the caller.
+This is an explicit architectural trade-off. Sheets is useful for fast validation, human inspectability, and small-client pilots, but it is not a transactional database. Long-term production use should move behind the same `StorageInterface` contract into a database-backed storage implementation.
 
-This item is tracked as a follow-up.
+This item is tracked as a future backend migration follow-up.
 
 ### gspread update argument order
 

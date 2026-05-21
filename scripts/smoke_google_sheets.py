@@ -143,6 +143,8 @@ def _check_product(storage: GoogleSheetsStorage, run_token: str) -> None:
     product = Product(
         product_id=f"{run_token}prd_1",
         product_name="Smoke Product",
+        category="Entradas",
+        available_days=["monday", "tuesday", "wednesday"],
         unit_price=Decimal("1000"),
         current_stock=Decimal("20"),
         active=True,
@@ -154,6 +156,8 @@ def _check_product(storage: GoogleSheetsStorage, run_token: str) -> None:
 
     assert saved is not None
     assert saved.product_name == product.product_name
+    assert saved.category == "Entradas"
+    assert saved.available_days == ["monday", "tuesday", "wednesday"]
     assert saved.unit_price == Decimal("1000")
     assert saved.current_stock == Decimal("20")
     assert saved.active is True
@@ -190,6 +194,7 @@ def _make_order(run_token: str) -> Order:
             quantity=Decimal("2"),
             unit_price_snapshot=Decimal("1000"),
             line_total=Decimal("2000"),
+            modifications="sin cebolla",
             validation_status="ok",
         ),
         OrderItem(
@@ -201,6 +206,7 @@ def _make_order(run_token: str) -> Order:
             quantity=Decimal("3"),
             unit_price_snapshot=Decimal("1000"),
             line_total=Decimal("3000"),
+            modifications=None,
             validation_status="ok",
         ),
     ]
@@ -212,7 +218,12 @@ def _make_order(run_token: str) -> Order:
         items=items,
         subtotal=Decimal("5000"),
         delivery_fee=Decimal("0"),
-        total=Decimal("5000"),
+        packaging_fee=Decimal("1000"),
+        total=Decimal("6000"),
+        fulfillment_type="delivery",
+        delivery_zone="zona_demo",
+        customer_notes="Tocar el timbre",
+        payment_method="nequi",
     )
 
 
@@ -228,11 +239,18 @@ def _check_order(storage: GoogleSheetsStorage, run_token: str) -> None:
     assert saved.status == "draft"
     assert len(saved.items) == 2
     assert saved.subtotal == Decimal("5000")
-    assert saved.total == Decimal("5000")
+    assert saved.delivery_fee == Decimal("0")
+    assert saved.packaging_fee == Decimal("1000")
+    assert saved.total == Decimal("6000")
+    assert saved.fulfillment_type == "delivery"
+    assert saved.delivery_zone == "zona_demo"
+    assert saved.customer_notes == "Tocar el timbre"
+    assert saved.payment_method == "nequi"
     assert {item.order_item_id for item in saved.items} == {
         f"{run_token}oit_1",
         f"{run_token}oit_2",
     }
+    assert any(item.modifications == "sin cebolla" for item in saved.items)
 
 
 def _check_update_order_status(storage: GoogleSheetsStorage, run_token: str) -> None:

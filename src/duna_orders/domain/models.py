@@ -26,6 +26,24 @@ ValidationStatus = Literal[
     "needs_review",
 ]
 
+Weekday = Literal[
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+]
+
+FulfillmentType = Literal["delivery", "pickup"]
+
+PaymentMethod = Literal[
+    "nequi",
+    "daviplata",
+    "transferencia",
+    "efectivo",
+]
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -38,6 +56,7 @@ class Product(BaseModel):
     product_name: str
     aliases: list[str] = Field(default_factory=list)
     category: str | None = None
+    available_days: list[Weekday] | None = None
     unit: str = "unit"
     unit_price: Decimal
     active: bool = True
@@ -75,6 +94,7 @@ class OrderItem(BaseModel):
     unit_price_snapshot: Decimal
     line_total: Decimal
 
+    modifications: str | None = None
     validation_status: ValidationStatus = "needs_review"
     notes: str | None = None
 
@@ -98,14 +118,19 @@ class Order(BaseModel):
 
     subtotal: Decimal = Decimal("0")
     delivery_fee: Decimal = Decimal("0")
+    packaging_fee: Decimal = Decimal("0")
     total: Decimal = Decimal("0")
+
+    fulfillment_type: FulfillmentType | None = None
+    delivery_zone: str | None = None
+    customer_notes: str | None = None
+    payment_method: PaymentMethod | None = None
 
     delivery_date: str | None = None
     delivery_address: str | None = None
     notes: str | None = None
     confirmation_message: str | None = None
     created_by: str | None = None
-
 
 class StockMovement(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -121,11 +146,13 @@ class StockMovement(BaseModel):
     notes: str | None = None
     created_by: str | None = None
 
+
 class DraftItemRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     product_id: str
     quantity: Decimal
+    modifications: str | None = None
 
 
 class DraftOrderRequest(BaseModel):
@@ -135,6 +162,13 @@ class DraftOrderRequest(BaseModel):
     customer_name: str
     customer_phone: str | None = None
     items: list[DraftItemRequest]
+
+    fulfillment_type: FulfillmentType | None = None
+    delivery_zone: str | None = None
+    packaging_fee: Decimal = Decimal("0")
+    customer_notes: str | None = None
+    payment_method: PaymentMethod | None = None
+
 
 class ParseResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -148,12 +182,13 @@ class ParseResult(BaseModel):
 
 class ParseLogEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    prompt_version: str
+
     parse_id: str
     created_at: datetime = Field(default_factory=utc_now)
     raw_message: str
     parsed_json: str
     model: str
+    prompt_version: str
     latency_ms: int
     success: bool
     error: str | None = None

@@ -54,13 +54,15 @@ class OrderService:
                     quantity=item_request.quantity,
                     unit_price_snapshot=product.unit_price,
                     line_total=line_total,
+                    modifications=item_request.modifications,
                     validation_status="ok",
                 )
             )
 
         subtotal = sum((item.line_total for item in order_items), Decimal("0"))
         delivery_fee = Decimal("0")
-        total = subtotal + delivery_fee
+        packaging_fee = request.packaging_fee
+        total = subtotal + delivery_fee + packaging_fee
 
         order = Order(
             order_id=order_id,
@@ -72,9 +74,13 @@ class OrderService:
             items=order_items,
             subtotal=subtotal,
             delivery_fee=delivery_fee,
+            packaging_fee=packaging_fee,
             total=total,
+            fulfillment_type=request.fulfillment_type,
+            delivery_zone=request.delivery_zone,
+            customer_notes=request.customer_notes,
+            payment_method=request.payment_method,
         )
-
         return self._storage.create_order(order)
 
     def confirm_order(

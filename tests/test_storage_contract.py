@@ -23,6 +23,7 @@ def make_product(
     unit_price: Decimal = Decimal("3000"),
     current_stock: Decimal = Decimal("10"),
     active: bool = True,
+    available_days: list[str] | None = None,
 ) -> Product:
     return Product(
         product_id=product_id or f"{run_token}prd_test",
@@ -30,6 +31,7 @@ def make_product(
         unit_price=unit_price,
         current_stock=current_stock,
         active=active,
+        available_days=available_days,
     )
 
 
@@ -66,6 +68,7 @@ def make_order(
         quantity=Decimal("2"),
         unit_price_snapshot=Decimal("3000"),
         line_total=Decimal("6000"),
+        modifications="sin cebolla",
         validation_status="ok",
     )
 
@@ -77,7 +80,12 @@ def make_order(
         items=[item],
         subtotal=Decimal("6000"),
         delivery_fee=Decimal("0"),
-        total=Decimal("6000"),
+        packaging_fee=Decimal("1000"),
+        total=Decimal("7000"),
+        fulfillment_type="delivery",
+        delivery_zone="zona_demo",
+        customer_notes="Dejar en portería",
+        payment_method="nequi",
     )
 
 
@@ -148,6 +156,7 @@ def test_product_upsert_replaces_existing_row_and_list_active_only_default(
             product_name="B",
             unit_price=Decimal("200"),
             active=True,
+            available_days=["wednesday", "thursday", "friday"],
         )
     )
     storage.upsert_product(
@@ -174,6 +183,7 @@ def test_product_upsert_replaces_existing_row_and_list_active_only_default(
     assert len(matching) == 1
     assert matching[0].product_name == "B"
     assert matching[0].unit_price == Decimal("200")
+    assert matching[0].available_days == ["wednesday", "thursday", "friday"]
     assert product_id in active_ids
     assert inactive_id not in active_ids
     assert inactive_id in all_ids
@@ -225,6 +235,13 @@ def test_create_order_persists_items_and_status_starts_draft(
     assert saved_order.items[0].product_name_snapshot == "Empanada"
     assert saved_order.items[0].order_item_id == order.items[0].order_item_id
     assert storage.get_order(f"{token}ord_missing") is None
+    assert saved_order.packaging_fee == Decimal("1000")
+    assert saved_order.total == Decimal("7000")
+    assert saved_order.fulfillment_type == "delivery"
+    assert saved_order.delivery_zone == "zona_demo"
+    assert saved_order.customer_notes == "Dejar en portería"
+    assert saved_order.payment_method == "nequi"
+    assert saved_order.items[0].modifications == "sin cebolla"
 
 
 def test_create_order_raises_on_duplicate(storage_case: StorageCase):
