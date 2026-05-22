@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 from decimal import Decimal
 
 import streamlit as st
 
+from duna_orders.demo_catalog import load_demo_catalog
 from duna_orders.domain.models import DraftItemRequest, DraftOrderRequest, Product
-from duna_orders.ids import new_id
 from duna_orders.services.exceptions import (
     EmptyDraftError,
     InactiveProductError,
@@ -16,29 +18,35 @@ from duna_orders.services.orders import OrderService
 from duna_orders.storage.memory import InMemoryStorage
 
 
-def _seed_demo_products(storage: InMemoryStorage) -> None:
-    for name, price, stock in [
-        ("Pollo entero", "25000", 10),
-        ("Gaseosa 1.5L", "6500", 30),
-        ("Arroz 1kg", "4500", 50),
-        ("Huevos x30", "18000", 15),
-        ("Queso campesino 500g", "12000", 8),
-    ]:
-        storage.upsert_product(
-            Product(
-                product_id=new_id("prd"),
-                product_name=name,
-                unit="unidad",
-                unit_price=Decimal(price),
-                current_stock=Decimal(str(stock)),
-            )
-        )
+CATEGORY_LABELS = {
+    "entradas": "Entradas",
+    "sopas": "Sopas",
+    "platos_fuertes": "Platos fuertes",
+    "parrilla": "Parrilla",
+    "acompañamientos": "Acompañamientos",
+    "bebidas": "Bebidas",
+    "postres": "Postres",
+    "adiciones": "Adiciones",
+}
+
+CATEGORY_ORDER = list(CATEGORY_LABELS.keys())
+
+
+def _money(value: Decimal) -> str:
+    return f"${value:,.0f}".replace(",", ".")
+
+
+def _seed_catalog(storage: InMemoryStorage) -> None:
+    catalog = load_demo_catalog()
+    for product in catalog.products:
+        storage.upsert_product(product)
 
 
 def _bootstrap_session() -> None:
     if "storage" not in st.session_state:
-        st.session_state.storage = InMemoryStorage()
-        _seed_demo_products(st.session_state.storage)
+        storage = InMemoryStorage()
+        _seed_catalog(storage)
+        st.session_state.storage = storage
 
     if "order_service" not in st.session_state:
         st.session_state.order_service = OrderService(st.session_state.storage)
@@ -50,19 +58,141 @@ def _bootstrap_session() -> None:
         st.session_state.last_success_message = None
 
 
-def _money(value: Decimal) -> str:
-    return f"${value:,.0f}"
+def _products_by_category(products: list[Product]) -> dict[str, list[Product]]:
+    grouped: dict[str, list[Product]] = {category: [] for category in CATEGORY_ORDER}
+
+    for product in products:
+        category = product.category or "otros"
+        grouped.setdefault(category, []).append(product)
+
+    return grouped
 
 
-st.set_page_config(page_title="New Order", layout="wide")
+def _parse_decimal_input(value: str, *, default: Decimal = Decimal("0")) -> Decimal:
+    clean = value.strip().replace(".", "").replace(",", ".")
+    if not clean:
+        return default
+    return Decimal(clean)
 
-st.title("📥 New Order")
-st.caption(
-    "Manual workflow — paste a WhatsApp message, build the order, "
-    "review, confirm."
-)
+
+def _render_product_selector(products: list[Product]) -> dict[str, dict[str, object]]:
+    selected: dict[str, dict[str, object]] = {}
+    grouped = _products_by_category(products)
+
+    for category in CATEGORY_ORDER:
+        category_products = grouped.get(category, [])
+        if not category_products:
+            continue
+
+        with st.expander(CATEGORY_LABELS[category], expanded=category in {"platos_fuertes", "bebidas"}):
+            for product in category_products:
+                col_info, col_stock, col_qty, col_mods = st.columns([4, 1, 1, 3])
+
+                with col_info:
+                    st.write(f"**{product.product_name}**")
+                    st.caption(f"{_money(product.unit_price)} · {product.unit}")
+
+                with col_stock:
+                    st.caption("Stock")
+                    st.write(product.current_stock)
+
+                with col_qty:
+                    qty = st.number_input(
+                        "Cantidad",
+                        min_value=0,
+                        step=1,
+                        value=0,
+                        key=f"qty_{product.product_id}",
+                        label_visibility="collapsed",
+                    )
+
+                with col_mods:
+                    modifications = st.text_input(
+                        "Modificaciones",
+                        placeholder="sin cebolla, aparte...",
+                        key=f"mods_{product.product_id}",
+                        label_visibility="collapsed",
+                    )
+
+                if qty > 0:
+                    selected[product.product_id] = {
+                        "quantity": Decimal(str(qty)),
+                        "modifications": modifications.strip() or None,
+                    }
+
+    return selected
+
+
+def _render_draft(order_id: str, storage: InMemoryStorage, order_service: OrderService) -> None:
+    draft_order = storage.get_order(order_id)
+
+    if draft_order is None:
+        st.error("Draft order not found.")
+        st.session_state.draft_order_id = None
+        return
+
+    st.subheader("Borrador actual")
+
+    left, right = st.columns([2, 1])
+
+    with left:
+        st.write(f"**Cliente:** {draft_order.customer_name_snapshot or 'Sin nombre'}")
+        if draft_order.customer_phone_snapshot:
+            st.write(f"**Teléfono:** {draft_order.customer_phone_snapshot}")
+        if draft_order.fulfillment_type:
+            st.write(f"**Entrega:** `{draft_order.fulfillment_type}`")
+        if draft_order.delivery_zone:
+            st.write(f"**Zona:** {draft_order.delivery_zone}")
+        if draft_order.payment_method:
+            st.write(f"**Pago:** `{draft_order.payment_method}`")
+        if draft_order.customer_notes:
+            st.info(draft_order.customer_notes)
+
+    with right:
+        st.metric("Subtotal", _money(draft_order.subtotal))
+        st.metric("Empaque", _money(draft_order.packaging_fee))
+        st.metric("Total", _money(draft_order.total))
+
+    item_rows = [
+        {
+            "Producto": item.product_name_snapshot,
+            "Cantidad": item.quantity,
+            "Precio unitario": _money(item.unit_price_snapshot),
+            "Total línea": _money(item.line_total),
+            "Modificaciones": item.modifications or "",
+        }
+        for item in draft_order.items
+    ]
+
+    st.dataframe(item_rows, use_container_width=True, hide_index=True)
+
+    if st.button("Confirmar orden", type="primary"):
+        try:
+            confirmed_order = order_service.confirm_order(draft_order.order_id)
+            st.session_state.draft_order_id = None
+            st.session_state.last_success_message = (
+                f"Orden {confirmed_order.order_id} confirmada por {_money(confirmed_order.total)}."
+            )
+            st.rerun()
+        except (
+            InsufficientStockError,
+            ProductNotFoundError,
+            InvalidOrderStateError,
+            OrderNotFoundError,
+        ) as error:
+            st.error(str(error))
+
+
+st.set_page_config(page_title="Nueva orden", page_icon="🧾", layout="wide")
+
+st.title("🧾 Nueva orden")
+st.caption("Demo local con catálogo colombiano real — revisar borrador antes de confirmar.")
 
 with st.sidebar:
+    st.subheader("Demo")
+    st.write("Backend: `InMemoryStorage`")
+    st.write("Catálogo: `El Fogón Colombiano`")
+
     if st.button("Reset session"):
         st.session_state.clear()
         st.rerun()
@@ -75,136 +205,105 @@ order_service: OrderService = st.session_state.order_service
 if st.session_state.last_success_message:
     st.success(st.session_state.last_success_message)
 
+products = storage.list_products(active_only=True)
+
 st.subheader("Mensaje del cliente")
 
 raw_message = st.text_area(
     "WhatsApp message",
-    height=120,
-    placeholder="Buenas, me regala 2 pollos y 3 gaseosas por favor",
+    height=110,
+    placeholder=(
+        "Buenas, me regala una bandeja paisa, una limonada de coco "
+        "y una porción de aguacate. Pago por Nequi."
+    ),
 )
 
-customer_name = st.text_input("Customer name")
+col_customer, col_phone = st.columns(2)
+with col_customer:
+    customer_name = st.text_input("Customer name", placeholder="Carlos Pérez")
+with col_phone:
+    customer_phone = st.text_input("Customer phone", placeholder="3001234567")
 
+col_fulfillment, col_zone, col_payment, col_packaging = st.columns(4)
+
+with col_fulfillment:
+    fulfillment_type = st.selectbox(
+        "Fulfillment",
+        options=["delivery", "pickup", "dine_in"],
+        index=0,
+    )
+
+with col_zone:
+    delivery_zone = st.text_input("Delivery zone", placeholder="Chapinero")
+
+with col_payment:
+    payment_method = st.selectbox(
+        "Payment",
+        options=["cash", "nequi", "daviplata", "card", "transfer"],
+        index=1,
+    )
+
+with col_packaging:
+    packaging_fee_text = st.text_input("Packaging fee", value="1000")
+
+customer_notes = st.text_area(
+    "Customer notes",
+    height=80,
+    placeholder="Sin cubiertos, dejar en portería, salsa aparte...",
+)
+
+st.divider()
 st.subheader("Productos")
 
-products = storage.list_products()
-selected_quantities: dict[str, int] = {}
+selected_items = _render_product_selector(products)
+has_selected_items = bool(selected_items)
 
-for product in products:
-    col_name, col_stock, col_qty = st.columns([3, 1, 1])
-
-    with col_name:
-        st.write(product.product_name)
-        st.caption(_money(product.unit_price))
-
-    with col_stock:
-        st.write("Stock")
-        st.write(product.current_stock)
-
-    with col_qty:
-        selected_quantities[product.product_id] = st.number_input(
-            "Qty",
-            min_value=0,
-            step=1,
-            value=0,
-            key=f"qty_{product.product_id}",
-            label_visibility="collapsed",
-        )
-
-has_selected_items = any(qty > 0 for qty in selected_quantities.values())
 can_create_draft = bool(raw_message.strip()) and bool(customer_name.strip()) and has_selected_items
 
 if st.button("Crear borrador", disabled=not can_create_draft):
-    request = DraftOrderRequest(
-        raw_message=raw_message.strip(),
-        customer_name=customer_name.strip(),
-        items=[
-            DraftItemRequest(
-                product_id=product_id,
-                quantity=Decimal(str(qty)),
-            )
-            for product_id, qty in selected_quantities.items()
-            if qty > 0
-        ],
-    )
-
     try:
+        request = DraftOrderRequest(
+            raw_message=raw_message.strip(),
+            customer_name=customer_name.strip(),
+            customer_phone=customer_phone.strip() or None,
+            fulfillment_type=fulfillment_type,
+            delivery_zone=delivery_zone.strip() or None,
+            packaging_fee=_parse_decimal_input(packaging_fee_text),
+            customer_notes=customer_notes.strip() or None,
+            payment_method=payment_method,
+            items=[
+                DraftItemRequest(
+                    product_id=product_id,
+                    quantity=item_data["quantity"],
+                    modifications=item_data["modifications"],
+                )
+                for product_id, item_data in selected_items.items()
+            ],
+        )
+
         order = order_service.create_draft(request)
         st.session_state.draft_order_id = order.order_id
         st.session_state.last_success_message = None
         st.rerun()
-    except (EmptyDraftError, ProductNotFoundError, InactiveProductError) as error:
+    except (EmptyDraftError, ProductNotFoundError, InactiveProductError, ValueError) as error:
         st.error(str(error))
+
 if st.session_state.draft_order_id:
     st.divider()
-    st.subheader("Borrador actual")
-
-    draft_order = storage.get_order(st.session_state.draft_order_id)
-
-    if draft_order is None:
-        st.error("Draft order not found.")
-        st.session_state.draft_order_id = None
-    else:
-        item_rows = [
-            {
-                "product": item.product_name_snapshot,
-                "quantity": item.quantity,
-                "unit_price": item.unit_price_snapshot,
-                "line_total": item.line_total,
-            }
-            for item in draft_order.items
-        ]
-
-        st.dataframe(item_rows, use_container_width=True)
-        st.write(f"Status: `{draft_order.status}`")
-        st.write(f"Total: **{_money(draft_order.total)}**")
-
-        if st.button("Confirmar orden", type="primary"):
-            try:
-                confirmed_order = order_service.confirm_order(draft_order.order_id)
-                st.session_state.draft_order_id = None
-                st.session_state.last_success_message = (
-                    f"Orden {confirmed_order.order_id} confirmada."
-                )
-                st.rerun()
-            except (
-                InsufficientStockError,
-                ProductNotFoundError,
-                InvalidOrderStateError,
-                OrderNotFoundError,
-            ) as error:
-                st.error(str(error))
+    _render_draft(st.session_state.draft_order_id, storage, order_service)
 
 st.divider()
 st.subheader("Inventario actual")
 
 inventory_rows = [
     {
-        "product_name": product.product_name,
-        "current_stock": product.current_stock,
+        "Producto": product.product_name,
+        "Categoría": product.category,
+        "Stock": product.current_stock,
+        "Precio": _money(product.unit_price),
+        "Stock mínimo": product.min_stock,
     }
     for product in storage.list_products(active_only=False)
 ]
 
-st.dataframe(inventory_rows, use_container_width=True)
-
-st.subheader("Movimientos de stock")
-
-movement_rows = [
-    {
-        "created_at": movement.created_at,
-        "product_id": movement.product_id,
-        "quantity_delta": movement.quantity_delta,
-        "reason": movement.reason,
-        "reference_id": movement.reference_id,
-    }
-    for movement in storage.list_stock_movements()
-]
-
-movement_rows = sorted(
-    movement_rows,
-    key=lambda row: row["created_at"],
-    reverse=True,
-)
-
-st.dataframe(movement_rows, use_container_width=True)
+st.dataframe(inventory_rows, use_container_width=True, hide_index=True)
