@@ -141,3 +141,24 @@ No retry/backoff was added to production storage code.
 ### Notes
 
 Google Sheets is the current persistence backend for pilot validation, not the core architecture. `StorageInterface` remains the migration boundary for future database backends.
+
+### Added
+- M4.2.3: added the full 52-item demo restaurant catalog for `El Fogón Colombiano`.
+- Added `DemoCatalogFile` validation and `load_demo_catalog()` for fail-fast demo catalog loading.
+- Added deterministic catalog tests for product count, category distribution, restricted weekday availability, and parrilla weight variants.
+
+### Verified
+- `python -m compileall src tests scripts`
+- `pytest tests/ -v` → 33 passed, 13 deselected.
+
+### Added
+- M4.2.4: added a products-only idempotent demo catalog seed script for Google Sheets.
+- Added deterministic seed helper tests covering full catalog upsert behavior and dry-run behavior.
+- Added configurable per-product delay for safer Google Sheets seeding under API quota limits.
+
+### Verified
+- `python -m compileall src tests scripts`
+- `pytest tests/ -v` → 35 passed, 13 deselected.
+- `python scripts/seed_demo_catalog.py --dry-run` → 52 products loaded.
+- `python scripts/seed_demo_catalog.py --delay-s 2` → 52 products upserted.
+- `pytest -m live_sheets -v` → 12 live tests passed, but teardown cleanup failed with Google Sheets API 429 read quota. Manual cleanup may be needed for temporary `test_run_...` rows.
