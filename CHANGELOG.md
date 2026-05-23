@@ -1,4 +1,37 @@
 # Changelog
+
+## M4.2.5b — Tenant foundation closed
+
+### Delivered
+
+- Added required `tenant_id` to tenant-scoped domain and request models.
+- Propagated `tenant_id` through `OrderService` and `ParsingService`.
+- Kept tenant selection outside the parser; the parser does not infer tenant identity from customer message text.
+- Added catalog-level business metadata using a top-level `business` block.
+- Kept catalog products tenant-less in the JSON file and injected `business.tenant_id` when loading products.
+- Updated Google Sheets headers for `products`, `customers`, `orders`, `order_items`, `stock_movements`, and `parse_log`.
+- Placed `tenant_id` as column B / position 2 on all six tenant-scoped tabs.
+- Updated `GoogleSheetsStorage` serialization and deserialization for tenant-aware entities.
+- Updated the Google Sheets smoke script to construct tenant-aware entities.
+- Manually migrated the live test spreadsheet headers.
+- Seeded the demo catalog into the migrated live test spreadsheet.
+
+### Verification
+
+- `python -m compileall src tests scripts pages streamlit_app.py` → OK.
+- `pytest tests/ -v` → 36 passed, 13 deselected.
+- `pytest -m live_sheets -v` → 12 passed, 37 deselected.
+- `python scripts/seed_demo_catalog.py --delay-s 8` → 52 products upserted.
+- `python scripts/smoke_google_sheets.py` → All smoke checks passed.
+
+### Notes
+
+- Initial demo catalog seeding with `--delay-s 2` hit Google Sheets APIError 429 read quota.
+- No retry/backoff infrastructure was added in M4.2.5b-E because it was out of scope.
+- Rerunning the idempotent seed script with `--delay-s 8` succeeded.
+- M4.2.5b is now closed.
+- Next milestone: M4.2.6 parser-assisted draft creation.
+
 ## M4.2.5b-D — Google Sheets tenant schema preparation
 
 ### Changed

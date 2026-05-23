@@ -5,7 +5,7 @@ This migration prepares Google Sheets storage for tenant-scoped data.
 
 ### Schema change
 
-Add `tenant_id` as the second column in all six Google Sheets tabs, immediately after the primary ID column.
+Add `tenant_id` as the second column, position 2 / column B, in all six Google Sheets tabs, immediately after the primary ID column.
 
 Required header order:
 
@@ -126,13 +126,19 @@ For a future production spreadsheet, the safe migration path is:
 
 After M4.2.5b-D, `GoogleSheetsStorage` bootstrap validation intentionally raises `StorageConfigError` against any spreadsheet that does not include the new `tenant_id` columns.
 
-This header validation drift is expected during the D/E transition and is resolved by the manual spreadsheet migration in M4.2.5b-E.
+This header validation drift is expected during the D/E transition, is documented in `CHANGELOG.md`, and is resolved by the manual spreadsheet migration in M4.2.5b-E.
 
 ### Fresh bootstrap scenario
 
 A brand-new spreadsheet with no existing tabs should be bootstrapped with all six tabs using the new `tenant_id` headers in position 2.
 
 This is reviewed during D and can be verified live during E.
+
+### Column placement convention
+
+Column placement is normative.
+
+`tenant_id` belongs in position 2 / column B on every tenant-scoped tab. Future tenant or multi-tenant scope fields should follow the same convention unless a later architecture decision explicitly changes it.
 
 ### Tooling
 

@@ -7,7 +7,20 @@ This roadmap tracks future work for Duna Orders. It is not a changelog and does 
 
 \## High priority
 
+### M4.2.6 — Parser-assisted draft creation
 
+Status: next.
+
+Use the parser output to help create draft orders from customer messages inside the current Streamlit pilot flow.
+
+Planned slices:
+
+1. M4.2.6a — Extract draft request factory logic.
+2. M4.2.6b — Integrate parser-assisted draft creation into the New Order page.
+
+Reason:
+
+M4.2.5b closed the tenant foundation. The next useful pilot milestone is turning natural customer messages into reviewable draft orders while keeping the operator in control.
 
 
 \## Medium priority
@@ -143,7 +156,21 @@ This is acceptable for the MVP, but storage-specific exceptions would make servi
 
 \## Future backend migration
 
+## Recently closed
 
+### M4.2.5b — Tenant foundation
+
+Closed.
+
+Completed scope:
+
+- Added `tenant_id` to tenant-scoped domain and request models.
+- Added catalog-level business metadata.
+- Updated Google Sheets schema, serialization, and deserialization for tenant-aware storage.
+- Migrated the live test spreadsheet.
+- Verified deterministic tests, live Sheets tests, demo catalog seeding, and smoke checks.
+
+Next milestone: M4.2.6.
 
 \### Database-backed storage
 

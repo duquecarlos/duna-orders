@@ -185,3 +185,29 @@ tenant_id
 business_name
 business_type
 currency
+
+## Tenant foundation status
+
+M4.2.5b completed the tenant foundation for Duna Orders.
+
+The system now uses `tenant_id` as the stable scope identifier for tenant-owned data. This keeps the architecture business-agnostic: Duna Orders can support restaurants, cafés, e-commerce sellers, small distributors, and other WhatsApp-native businesses without tying the core model to a `restaurant_id`.
+
+Tenant-scoped persisted entities now include `tenant_id`:
+
+- products
+- customers
+- orders
+- order_items
+- stock_movements
+- parse_log
+
+Google Sheets storage also uses `tenant_id` as column B / position 2 on every tenant-scoped tab.
+
+The first demo tenant remains:
+
+- tenant_id: `el-fogon-colombiano`
+- business_name: `El Fogón Colombiano`
+- business_type: `restaurant`
+- currency: `COP`
+
+The parser does not infer tenant identity from customer message text. The caller supplies tenant context explicitly.
