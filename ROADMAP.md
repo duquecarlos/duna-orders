@@ -15,8 +15,8 @@ Use the parser output to help create draft orders from customer messages inside 
 
 Planned slices:
 
-1. M4.2.6a — Extract draft request factory logic.
-2. M4.2.6b — Integrate parser-assisted draft creation into the New Order page.
+1. M4.2.6a — Extract draft request factory logic. Closed.
+2. M4.2.6b — Integrate parser-assisted draft creation into the New Order page. Next.
 
 Reason:
 

@@ -4,8 +4,16 @@ from decimal import Decimal
 
 import streamlit as st
 
-from duna_orders.demo_catalog import DemoCatalogFile, load_demo_catalog
+from duna_orders.demo_catalog import DemoCatalogFile
 from duna_orders.domain.models import DraftItemRequest, DraftOrderRequest, Product
+from duna_orders.ui.setup import (
+    get_demo_catalog,
+    get_order_service,
+    get_parsing_service,
+    get_storage,
+    seed_inmemory_from_catalog,
+)
+
 from duna_orders.services.exceptions import (
     EmptyDraftError,
     InactiveProductError,
@@ -15,6 +23,7 @@ from duna_orders.services.exceptions import (
     ProductNotFoundError,
 )
 from duna_orders.services.orders import OrderService
+from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.memory import InMemoryStorage
 
 
@@ -36,21 +45,21 @@ def _money(value: Decimal) -> str:
     return f"${value:,.0f}".replace(",", ".")
 
 
-def _seed_catalog(storage: InMemoryStorage, catalog: DemoCatalogFile) -> None:
-    for product in catalog.products:
-        storage.upsert_product(product)
-
 def _bootstrap_session() -> None:
     if "demo_catalog" not in st.session_state:
-        st.session_state.demo_catalog = load_demo_catalog()
+        st.session_state.demo_catalog = get_demo_catalog()
 
     if "storage" not in st.session_state:
-        storage = InMemoryStorage()
-        _seed_catalog(storage, st.session_state.demo_catalog)
+        storage = get_storage()
+        if isinstance(storage, InMemoryStorage):
+            seed_inmemory_from_catalog(storage, st.session_state.demo_catalog)
         st.session_state.storage = storage
 
     if "order_service" not in st.session_state:
-        st.session_state.order_service = OrderService(st.session_state.storage)
+        st.session_state.order_service = get_order_service(st.session_state.storage)
+
+    if "parsing_service" not in st.session_state:
+        st.session_state.parsing_service = get_parsing_service(st.session_state.storage)
 
     if "draft_order_id" not in st.session_state:
         st.session_state.draft_order_id = None
@@ -124,7 +133,11 @@ def _render_product_selector(products: list[Product]) -> dict[str, dict[str, obj
     return selected
 
 
-def _render_draft(order_id: str, storage: InMemoryStorage, order_service: OrderService) -> None:
+def _render_draft(
+            order_id: str,
+            storage: StorageInterface,
+            order_service: OrderService,
+        ) -> None:
     draft_order = storage.get_order(order_id)
 
     if draft_order is None:
@@ -206,7 +219,7 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
-storage: InMemoryStorage = st.session_state.storage
+storage: StorageInterface = st.session_state.storage
 order_service: OrderService = st.session_state.order_service
 
 if st.session_state.last_success_message:

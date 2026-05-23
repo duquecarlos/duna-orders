@@ -1,5 +1,31 @@
 # Changelog
 
+## M4.2.6a — UI factory extraction
+
+### Changed
+
+- Added `src/duna_orders/ui/setup.py` for UI composition factories.
+- Added `get_storage()` for current UI storage backend construction.
+- Added `get_order_service(storage)` for `OrderService` wiring.
+- Added `get_parsing_service(storage)` for optional parser-service wiring when `ANTHROPIC_API_KEY` is set.
+- Added cached `get_demo_catalog()` for validated demo catalog loading.
+- Added `seed_inmemory_from_catalog(storage, catalog)` for idempotent in-memory catalog seeding.
+- Refactored `pages/1_New_Order.py` to use UI setup factories instead of inline setup logic.
+
+### Verification
+
+- `python -m compileall src tests scripts pages streamlit_app.py` → OK.
+- `pytest tests/ -v` → 42 passed, 13 deselected.
+- `pytest -m live_sheets -v` → 12 passed, 43 deselected.
+- Manual Streamlit check passed: New Order page renders, catalog loads, draft creates, order confirms, and inventory decreases.
+
+### Notes
+
+- No new UI behavior was added.
+- No parser-assisted draft creation was added.
+- No storage backend switch was implemented.
+- M4.2.6b remains the next slice.
+
 ## M4.2.5b — Tenant foundation closed
 
 ### Delivered
