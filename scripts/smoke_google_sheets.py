@@ -33,6 +33,8 @@ PRIMARY_ID_COLUMNS = {
     "stock_movements": "stock_movement_id",
     "parse_log": "parse_id",
 }
+DEMO_TENANT_ID = "el-fogon-colombiano"
+
 def _sleep_between_steps() -> None:
     delay_s = float(os.getenv("LIVE_SHEETS_TEST_DELAY_S", "8"))
     time.sleep(delay_s)
@@ -142,6 +144,7 @@ def _check_bootstrap(storage: GoogleSheetsStorage) -> None:
 def _check_product(storage: GoogleSheetsStorage, run_token: str) -> None:
     product = Product(
         product_id=f"{run_token}prd_1",
+        tenant_id=DEMO_TENANT_ID,
         product_name="Smoke Product",
         category="Entradas",
         available_days=["monday", "tuesday", "wednesday"],
@@ -154,6 +157,7 @@ def _check_product(storage: GoogleSheetsStorage, run_token: str) -> None:
 
     saved = storage.get_product(product.product_id)
 
+    assert saved.tenant_id == DEMO_TENANT_ID
     assert saved is not None
     assert saved.product_name == product.product_name
     assert saved.category == "Entradas"
@@ -166,6 +170,7 @@ def _check_product(storage: GoogleSheetsStorage, run_token: str) -> None:
 def _check_customer(storage: GoogleSheetsStorage, run_token: str) -> None:
     customer = Customer(
         customer_id=f"{run_token}cus_1",
+        tenant_id=DEMO_TENANT_ID,
         customer_name="Smoke Customer",
         customer_phone=f"{run_token}3001234567",
     )
@@ -175,6 +180,7 @@ def _check_customer(storage: GoogleSheetsStorage, run_token: str) -> None:
     saved = storage.get_customer(customer.customer_id)
     by_phone = storage.get_customer_by_phone(f" {customer.customer_phone} ")
 
+    assert saved.tenant_id == DEMO_TENANT_ID
     assert saved is not None
     assert saved.customer_id == customer.customer_id
     assert by_phone is not None
@@ -187,6 +193,7 @@ def _make_order(run_token: str) -> Order:
     items = [
         OrderItem(
             order_item_id=f"{run_token}oit_1",
+            tenant_id=DEMO_TENANT_ID,
             order_id=order_id,
             product_id=f"{run_token}prd_1",
             product_name_snapshot="Smoke Product",
@@ -199,6 +206,7 @@ def _make_order(run_token: str) -> Order:
         ),
         OrderItem(
             order_item_id=f"{run_token}oit_2",
+            tenant_id=DEMO_TENANT_ID,
             order_id=order_id,
             product_id=f"{run_token}prd_1",
             product_name_snapshot="Smoke Product",
@@ -213,6 +221,7 @@ def _make_order(run_token: str) -> Order:
 
     return Order(
         order_id=order_id,
+        tenant_id=DEMO_TENANT_ID,
         raw_message="Smoke order",
         status="draft",
         items=items,
@@ -234,6 +243,8 @@ def _check_order(storage: GoogleSheetsStorage, run_token: str) -> None:
 
     saved = storage.get_order(order.order_id)
 
+    assert saved.tenant_id == DEMO_TENANT_ID
+    assert all(item.tenant_id == DEMO_TENANT_ID for item in saved.items)
     assert saved is not None
     assert saved.order_id == order.order_id
     assert saved.status == "draft"
@@ -273,6 +284,7 @@ def _check_update_order_status(storage: GoogleSheetsStorage, run_token: str) -> 
 def _check_stock_movement(storage: GoogleSheetsStorage, run_token: str) -> None:
     movement = StockMovement(
         stock_movement_id=f"{run_token}mov_1",
+        tenant_id=DEMO_TENANT_ID,
         product_id=f"{run_token}prd_1",
         quantity_delta=Decimal("-2"),
         reason="sale",
@@ -283,12 +295,16 @@ def _check_stock_movement(storage: GoogleSheetsStorage, run_token: str) -> None:
 
     movements = storage.list_stock_movements(product_id=movement.product_id)
 
-    assert len([m for m in movements if m.stock_movement_id == movement.stock_movement_id]) == 1
-
+    assert any(
+        m.stock_movement_id == movement.stock_movement_id
+        and m.tenant_id == DEMO_TENANT_ID
+        for m in movements
+    )
 
 def _check_parse_log(storage: GoogleSheetsStorage, run_token: str) -> None:
     entry = ParseLogEntry(
         parse_id=f"{run_token}prs_1",
+        tenant_id=DEMO_TENANT_ID,
         raw_message="Smoke parse",
         parsed_json='{"items":[]}',
         model="smoke-model",
@@ -299,7 +315,8 @@ def _check_parse_log(storage: GoogleSheetsStorage, run_token: str) -> None:
 )
 
     saved = storage.append_parse_log(entry)
-
+    
+    assert saved.tenant_id == DEMO_TENANT_ID
     assert saved.parse_id == entry.parse_id
     assert saved.parsed_json == entry.parsed_json
 

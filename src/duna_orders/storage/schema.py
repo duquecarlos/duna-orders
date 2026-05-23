@@ -21,10 +21,10 @@ STOCK_REASONS = (
     "reversal",
 )
 
-
 TABS = {
     PRODUCTS_TAB: [
         "product_id",
+        "tenant_id",
         "product_name",
         "aliases",
         "category",
@@ -40,6 +40,7 @@ TABS = {
     ],
     CUSTOMERS_TAB: [
         "customer_id",
+        "tenant_id",
         "customer_name",
         "customer_phone",
         "default_address",
@@ -50,6 +51,7 @@ TABS = {
     ],
     ORDERS_TAB: [
         "order_id",
+        "tenant_id",
         "created_at",
         "updated_at",
         "customer_id",
@@ -74,6 +76,7 @@ TABS = {
     ],
     ORDER_ITEMS_TAB: [
         "order_item_id",
+        "tenant_id",
         "order_id",
         "product_id",
         "product_name_snapshot",
@@ -87,6 +90,7 @@ TABS = {
     ],
     STOCK_MOVEMENTS_TAB: [
         "stock_movement_id",
+        "tenant_id",
         "created_at",
         "product_id",
         "quantity_delta",
@@ -97,6 +101,7 @@ TABS = {
     ],
     PARSE_LOG_TAB: [
         "parse_id",
+        "tenant_id",
         "created_at",
         "raw_message",
         "parsed_json",

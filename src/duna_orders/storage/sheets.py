@@ -231,6 +231,7 @@ class GoogleSheetsStorage(StorageInterface):
     def _product_to_row(self, product: Product) -> list[Any]:
         return [
             product.product_id,
+            product.tenant_id,
             product.product_name,
             json.dumps(product.aliases, ensure_ascii=False),
             self._optional_text(product.category),
@@ -247,12 +248,13 @@ class GoogleSheetsStorage(StorageInterface):
             self._optional_text(product.notes),
             self._datetime_text(product.created_at),
             self._datetime_text(product.updated_at),
-    ]
+        ]
 
     def _product_from_record(self, record: dict[str, Any]) -> Product:
         return Product.model_validate(
             {
                 "product_id": record["product_id"],
+                "tenant_id": record["tenant_id"],
                 "product_name": record["product_name"],
                 "aliases": json.loads(record["aliases"] or "[]"),
                 "category": self._empty_to_none(record["category"]),
@@ -275,6 +277,7 @@ class GoogleSheetsStorage(StorageInterface):
     def _customer_to_row(self, customer: Customer) -> list[Any]:
         return [
             customer.customer_id,
+            customer.tenant_id,
             customer.customer_name,
             self._optional_text(customer.customer_phone),
             self._optional_text(customer.default_address),
@@ -292,6 +295,7 @@ class GoogleSheetsStorage(StorageInterface):
         return Customer.model_validate(
             {
                 "customer_id": record["customer_id"],
+                "tenant_id": record["tenant_id"],
                 "customer_name": record["customer_name"],
                 "customer_phone": self._empty_to_none(record["customer_phone"]),
                 "default_address": self._empty_to_none(record["default_address"]),
@@ -304,6 +308,7 @@ class GoogleSheetsStorage(StorageInterface):
     def _order_item_to_row(self, item: OrderItem) -> list[Any]:
         return [
             item.order_item_id,
+            item.tenant_id,
             item.order_id,
             self._optional_text(item.product_id),
             item.product_name_snapshot,
@@ -320,6 +325,7 @@ class GoogleSheetsStorage(StorageInterface):
         return OrderItem.model_validate(
             {
                 "order_item_id": record["order_item_id"],
+                "tenant_id": record["tenant_id"],
                 "order_id": record["order_id"],
                 "product_id": self._empty_to_none(record["product_id"]),
                 "product_name_snapshot": record["product_name_snapshot"],
@@ -336,6 +342,7 @@ class GoogleSheetsStorage(StorageInterface):
     def _order_to_row(self, order: Order) -> list[Any]:
         return [
             order.order_id,
+            order.tenant_id,
             self._datetime_text(order.created_at),
             self._datetime_text(order.updated_at),
             self._optional_text(order.customer_id),
@@ -371,6 +378,7 @@ class GoogleSheetsStorage(StorageInterface):
         return Order.model_validate(
             {
                 "order_id": record["order_id"],
+                "tenant_id": record["tenant_id"],
                 "created_at": self._to_datetime(record["created_at"]),
                 "updated_at": self._to_datetime(record["updated_at"]),
                 "customer_id": self._empty_to_none(record["customer_id"]),
@@ -405,6 +413,7 @@ class GoogleSheetsStorage(StorageInterface):
     def _stock_movement_to_row(self, movement: StockMovement) -> list[Any]:
         return [
             movement.stock_movement_id,
+            movement.tenant_id,
             self._datetime_text(movement.created_at),
             movement.product_id,
             self._decimal_text(movement.quantity_delta),
@@ -418,6 +427,7 @@ class GoogleSheetsStorage(StorageInterface):
         return StockMovement.model_validate(
             {
                 "stock_movement_id": record["stock_movement_id"],
+                "tenant_id": record["tenant_id"],
                 "created_at": self._to_datetime(record["created_at"]),
                 "product_id": record["product_id"],
                 "quantity_delta": self._to_decimal(record["quantity_delta"]),
@@ -430,6 +440,7 @@ class GoogleSheetsStorage(StorageInterface):
     def _parse_log_entry_to_row(self, entry: ParseLogEntry) -> list[Any]:
         return [
             entry.parse_id,
+            entry.tenant_id,
             self._datetime_text(entry.created_at),
             entry.raw_message,
             entry.parsed_json,
@@ -444,6 +455,7 @@ class GoogleSheetsStorage(StorageInterface):
         return ParseLogEntry.model_validate(
             {
                 "parse_id": record["parse_id"],
+                "tenant_id": record["tenant_id"],
                 "created_at": self._to_datetime(record["created_at"]),
                 "raw_message": record["raw_message"],
                 "parsed_json": record["parsed_json"],

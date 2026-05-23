@@ -1,4 +1,28 @@
 # Changelog
+## M4.2.5b-D — Google Sheets tenant schema preparation
+
+### Changed
+
+- Added `tenant_id` to Google Sheets schema headers for `products`, `customers`, `orders`, `order_items`, `stock_movements`, and `parse_log`.
+- Placed `tenant_id` as the second column on every tab, immediately after the primary ID column.
+- Updated `GoogleSheetsStorage` serialization and deserialization for tenant-aware entities.
+- Updated the Google Sheets smoke script to construct tenant-aware entities using `el-fogon-colombiano`.
+
+### Migration
+
+- Documented the manual Google Sheets header migration in `MIGRATIONS.md`.
+- Documented the expected D/E transition state where bootstrap validation rejects spreadsheets without `tenant_id` columns.
+- No automated migration tooling was added.
+
+### Known transition state
+
+- `pytest -m live_sheets -v` remains expected to fail until M4.2.5b-E because the live test spreadsheet has not been manually migrated yet.
+
+### Verified
+
+- `python -m compileall src tests scripts pages streamlit_app.py` → OK.
+- `pytest tests/ -v` → 36 passed, 13 deselected.
+
 ### Changed
 - M4.2.5b-B: added required `tenant_id` to tenant-scoped domain/request models and propagated it through `OrderService` and `ParsingService`.
 - Added shared `DEFAULT_TEST_TENANT_ID` for deterministic tests.
