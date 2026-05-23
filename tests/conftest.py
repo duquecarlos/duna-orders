@@ -13,6 +13,7 @@ from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.storage.schema import TABS
 from duna_orders.storage.sheets import GoogleSheetsStorage
 
+DEFAULT_TEST_TENANT_ID = "test-tenant"
 
 @dataclass(frozen=True)
 class StorageCase:

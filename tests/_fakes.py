@@ -4,6 +4,7 @@ from duna_orders.domain.models import (
     Product,
 )
 from duna_orders.parsing.base import ParserInterface
+from tests.conftest import DEFAULT_TEST_TENANT_ID
 
 
 class MockParser(ParserInterface):
@@ -33,6 +34,7 @@ class MockParser(ParserInterface):
         if self._result is None:
             return ParseResult(
                 request=DraftOrderRequest(
+                    tenant_id=DEFAULT_TEST_TENANT_ID,
                     raw_message=raw_message,
                     customer_name="",
                     items=[],

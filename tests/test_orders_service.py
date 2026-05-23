@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from decimal import Decimal
-
+from tests.conftest import DEFAULT_TEST_TENANT_ID
 import pytest
 
 from duna_orders.domain.models import (
@@ -35,6 +35,7 @@ def make_product(
     active: bool = True,
 ) -> Product:
     return Product(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
         product_id=product_id,
         product_name=product_name,
         unit_price=unit_price,
@@ -50,6 +51,7 @@ def make_order(
     status: str = "draft",
 ) -> Order:
     item = OrderItem(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
         order_item_id="oit_test",
         order_id=order_id,
         product_id=product_id,
@@ -62,6 +64,7 @@ def make_order(
     )
 
     return Order(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
         order_id=order_id,
         raw_message="Quiero 2 empanadas",
         status=status,
@@ -86,6 +89,7 @@ def make_draft_request(
     if items is None:
         items = [
             DraftItemRequest(
+                tenant_id=DEFAULT_TEST_TENANT_ID,
                 product_id=PRODUCT_ID,
                 quantity=Decimal("2"),
                 modifications=modifications,
@@ -93,6 +97,7 @@ def make_draft_request(
         ]
 
     return DraftOrderRequest(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
         raw_message=raw_message,
         customer_name=customer_name,
         customer_phone=customer_phone,
@@ -140,15 +145,18 @@ def test_create_draft_happy_path():
 
     service = OrderService(storage)
     request = DraftOrderRequest(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
         raw_message="Buenas, me regala 2 pollos y 3 gaseosas",
         customer_name="Cliente Test",
         items=[
             DraftItemRequest(
+                tenant_id=DEFAULT_TEST_TENANT_ID,
                 product_id="prd_pollo",
                 quantity=Decimal("2"),
                 modifications="sin cebolla",
             ),
             DraftItemRequest(
+                tenant_id=DEFAULT_TEST_TENANT_ID,
                 product_id="prd_gaseosa",
                 quantity=Decimal("3"),
             ),
@@ -193,8 +201,12 @@ def test_create_draft_raises_when_all_quantities_zero():
 
     request = make_draft_request(
         items=[
-            DraftItemRequest(product_id=PRODUCT_ID, quantity=Decimal("0")),
-        ]
+            DraftItemRequest(
+                tenant_id=DEFAULT_TEST_TENANT_ID,
+                product_id=PRODUCT_ID,
+                quantity=Decimal("0"),
+            ),
+                    ]
     )
 
     with pytest.raises(EmptyDraftError):
@@ -208,9 +220,10 @@ def test_create_draft_raises_on_unknown_product():
     request = make_draft_request(
         items=[
             DraftItemRequest(
-                product_id="prd_does_not_exist",
-                quantity=Decimal("1"),
-            ),
+                    tenant_id=DEFAULT_TEST_TENANT_ID,
+                    product_id="prd_does_not_exist",
+                    quantity=Decimal("1"),
+                ),
         ]
     )
 
@@ -273,11 +286,20 @@ def test_create_draft_computes_subtotal_and_total_correctly():
 
     service = OrderService(storage)
     request = DraftOrderRequest(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
         raw_message="Buenas, me regala 2 pollos y 3 gaseosas",
         customer_name="Cliente Test",
         items=[
-            DraftItemRequest(product_id="prd_pollo", quantity=Decimal("2")),
-            DraftItemRequest(product_id="prd_gaseosa", quantity=Decimal("3")),
+        DraftItemRequest(
+            tenant_id=DEFAULT_TEST_TENANT_ID,
+            product_id="prd_pollo",
+            quantity=Decimal("2"),
+        ),
+        DraftItemRequest(
+            tenant_id=DEFAULT_TEST_TENANT_ID,
+            product_id="prd_gaseosa",
+            quantity=Decimal("3"),
+        ),
         ],
     )
 
@@ -297,6 +319,9 @@ def test_confirm_order_happy_path():
     movements = storage.list_stock_movements()
     product = storage.get_product(PRODUCT_ID)
 
+    assert confirmed_order.tenant_id == DEFAULT_TEST_TENANT_ID
+    assert movements[0].tenant_id == DEFAULT_TEST_TENANT_ID
+    assert all(item.tenant_id == DEFAULT_TEST_TENANT_ID for item in confirmed_order.items)
     assert confirmed_order.status == "confirmed"
     assert confirmed_order.confirmed_at is not None
     assert len(movements) == 1
@@ -355,6 +380,7 @@ def test_confirm_order_is_idempotent_on_retry():
     storage = seed_storage()
 
     partial_movement = StockMovement(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
         stock_movement_id=f"mov_sale_{ORDER_ID}_{PRODUCT_ID}",
         product_id=PRODUCT_ID,
         quantity_delta=Decimal("-2"),
@@ -371,6 +397,8 @@ def test_confirm_order_is_idempotent_on_retry():
     movements = storage.list_stock_movements(product_id=PRODUCT_ID)
     product = storage.get_product(PRODUCT_ID)
 
+    assert confirmed_order.tenant_id == DEFAULT_TEST_TENANT_ID
+    assert movements[0].tenant_id == DEFAULT_TEST_TENANT_ID
     assert confirmed_order.status == "confirmed"
     assert len(movements) == 1
     assert product is not None

@@ -12,7 +12,7 @@ from duna_orders.domain.models import (
     StockMovement,
 )
 from duna_orders.storage.base import StorageInterface
-from tests.conftest import StorageCase
+from tests.conftest import DEFAULT_TEST_TENANT_ID, StorageCase
 
 
 def make_product(
@@ -26,6 +26,7 @@ def make_product(
     available_days: list[str] | None = None,
 ) -> Product:
     return Product(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
         product_id=product_id or f"{run_token}prd_test",
         product_name=product_name,
         unit_price=unit_price,
@@ -42,6 +43,7 @@ def make_customer(
     phone: str | None = None,
 ) -> Customer:
     return Customer(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
         customer_id=customer_id or f"{run_token}cus_test",
         customer_name="Cliente Test",
         customer_phone=phone or f"{run_token}3001234567",
@@ -60,6 +62,7 @@ def make_order(
     resolved_product_id = product_id or f"{run_token}prd_test"
 
     item = OrderItem(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
         order_item_id=f"{run_token}oit_{resolved_order_id}",
         order_id=resolved_order_id,
         product_id=resolved_product_id,
@@ -73,6 +76,7 @@ def make_order(
     )
 
     return Order(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
         order_id=resolved_order_id,
         created_at=created_at or datetime.now(timezone.utc),
         raw_message="Quiero 2 empanadas",
@@ -98,6 +102,7 @@ def make_stock_movement(
     reason: str = "sale",
 ) -> StockMovement:
     return StockMovement(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
         stock_movement_id=stock_movement_id or f"{run_token}mov_test",
         product_id=product_id or f"{run_token}prd_test",
         quantity_delta=quantity_delta,
@@ -112,6 +117,7 @@ def make_parse_log_entry(
     parse_id: str | None = None,
 ) -> ParseLogEntry:
     return ParseLogEntry(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
         parse_id=parse_id or f"{run_token}prs_test",
         raw_message="me regala 2 pollos",
         parsed_json='{"items":[]}',

@@ -46,6 +46,7 @@ class OrderService:
 
             order_items.append(
                 OrderItem(
+                    tenant_id=request.tenant_id,
                     order_item_id=new_id("oit"),
                     order_id=order_id,
                     product_id=product.product_id,
@@ -65,6 +66,7 @@ class OrderService:
         total = subtotal + delivery_fee + packaging_fee
 
         order = Order(
+            tenant_id=request.tenant_id,
             order_id=order_id,
             customer_id=None,
             customer_name_snapshot=request.customer_name,
@@ -123,6 +125,7 @@ class OrderService:
             movement_id = f"mov_sale_{order_id}_{item.product_id}"
 
             movement = StockMovement(
+                tenant_id=order.tenant_id,
                 stock_movement_id=movement_id,
                 created_at=confirmed_at,
                 product_id=product.product_id,

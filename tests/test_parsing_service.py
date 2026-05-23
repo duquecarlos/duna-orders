@@ -13,10 +13,11 @@ from duna_orders.parsing.exceptions import ParserAPIError
 from duna_orders.services.parsing import ParsingService
 from duna_orders.storage.memory import InMemoryStorage
 from tests._fakes import MockParser
-
+from tests.conftest import DEFAULT_TEST_TENANT_ID
 
 def _seed_product(storage: InMemoryStorage) -> Product:
     product = Product(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
         product_id=new_id("prd"),
         product_name="Pollo entero",
         unit_price=Decimal("25000"),
@@ -31,10 +32,12 @@ def test_parsing_service_success_writes_parse_log():
     product = _seed_product(storage)
     canned = ParseResult(
         request=DraftOrderRequest(
+            tenant_id=DEFAULT_TEST_TENANT_ID,
             raw_message="me regala 2 pollos",
             customer_name="",
             items=[
                 DraftItemRequest(
+                    tenant_id=DEFAULT_TEST_TENANT_ID,
                     product_id=product.product_id,
                     quantity=Decimal("2"),
                 )
@@ -48,13 +51,16 @@ def test_parsing_service_success_writes_parse_log():
     parser = MockParser(result=canned)
     service = ParsingService(parser, storage)
 
-    result = service.parse("me regala 2 pollos", storage.list_products())
+    result = service.parse(tenant_id=DEFAULT_TEST_TENANT_ID,
+                           raw_message="me regala 2 pollos", 
+                           products=storage.list_products())
 
     assert result == canned
     assert len(storage._parse_logs) == 1
 
     entry = storage._parse_logs[0]
 
+    assert entry.tenant_id == DEFAULT_TEST_TENANT_ID
     assert entry.success is True
     assert entry.error is None
     assert entry.model == "mock-parser"
@@ -69,12 +75,15 @@ def test_parsing_service_failure_writes_parse_log_and_reraises():
     service = ParsingService(parser, storage)
 
     with pytest.raises(ParserAPIError):
-        service.parse("hola", storage.list_products())
+        service.parse(tenant_id=DEFAULT_TEST_TENANT_ID,
+                      raw_message="hola",
+                      products=storage.list_products())
 
     assert len(storage._parse_logs) == 1
 
     entry = storage._parse_logs[0]
 
+    assert entry.tenant_id == DEFAULT_TEST_TENANT_ID
     assert entry.success is False
     assert entry.error is not None
     assert "network down" in entry.error
@@ -92,7 +101,9 @@ def test_parsing_service_does_not_modify_storage_beyond_parse_log():
     orders_before = storage.list_orders()
     movements_before = storage.list_stock_movements()
 
-    service.parse("test message", storage.list_products())
+    service.parse(tenant_id=DEFAULT_TEST_TENANT_ID,
+                  raw_message="test message",
+                  products=storage.list_products())
 
     assert storage.list_products() == products_before
     assert storage.list_orders() == orders_before
@@ -108,8 +119,14 @@ def test_mock_parser_records_calls():
 
     products = storage.list_products()
 
-    service.parse("first message", products)
-    service.parse("second message", products)
+    service.parse(
+                tenant_id=DEFAULT_TEST_TENANT_ID,
+                raw_message="first message",
+                products=products,
+            )
+    service.parse(tenant_id=DEFAULT_TEST_TENANT_ID,
+                  raw_message="second message",
+                  products=products)
 
     assert len(parser.calls) == 2
     assert parser.calls[0][0] == "first message"
@@ -124,7 +141,9 @@ def test_parsing_service_passes_products_unchanged_to_parser():
 
     products = storage.list_products()
 
-    service.parse("anything", products)
+    service.parse(tenant_id=DEFAULT_TEST_TENANT_ID,
+                  raw_message="anything",
+                  products=products)
 
     received_products = parser.calls[0][1]
 

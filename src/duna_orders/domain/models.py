@@ -51,7 +51,7 @@ def utc_now() -> datetime:
 
 class Product(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
+    tenant_id: str
     product_id: str
     product_name: str
     aliases: list[str] = Field(default_factory=list)
@@ -69,7 +69,7 @@ class Product(BaseModel):
 
 class Customer(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
+    tenant_id: str
     customer_id: str
     customer_name: str
     customer_phone: str | None = None
@@ -82,7 +82,7 @@ class Customer(BaseModel):
 
 class OrderItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
+    tenant_id: str
     order_item_id: str
     order_id: str
     product_id: str | None = None
@@ -101,7 +101,7 @@ class OrderItem(BaseModel):
 
 class Order(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
+    tenant_id: str
     order_id: str
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -134,9 +134,10 @@ class Order(BaseModel):
 
 class StockMovement(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
+    tenant_id: str
     stock_movement_id: str
     created_at: datetime = Field(default_factory=utc_now)
+    
 
     product_id: str
     quantity_delta: Decimal
@@ -149,7 +150,7 @@ class StockMovement(BaseModel):
 
 class DraftItemRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
+    tenant_id: str
     product_id: str
     quantity: Decimal
     modifications: str | None = None
@@ -157,7 +158,7 @@ class DraftItemRequest(BaseModel):
 
 class DraftOrderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
+    tenant_id: str
     raw_message: str
     customer_name: str
     customer_phone: str | None = None
@@ -182,7 +183,7 @@ class ParseResult(BaseModel):
 
 class ParseLogEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
+    tenant_id: str
     parse_id: str
     created_at: datetime = Field(default_factory=utc_now)
     raw_message: str

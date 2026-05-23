@@ -1,6 +1,20 @@
 # Changelog
-## M4.1 — Google Sheets storage resilience
+### Changed
+- M4.2.5b-B: added required `tenant_id` to tenant-scoped domain/request models and propagated it through `OrderService` and `ParsingService`.
+- Added shared `DEFAULT_TEST_TENANT_ID` for deterministic tests.
+- Updated order, storage-contract, parsing-service, and parser fake tests for tenant-aware in-memory behavior.
 
+### Added
+- Added `ARCHITECTURE.md` documenting the customer/operator/owner product vision, tenant identity decision, current architecture, deferred work, and Phase 5 open questions.
+
+### Known transition state
+- Live Google Sheets tests are expected to fail until M4.2.5b-D/E because the Sheets schema does not yet include the required `tenant_id` columns.
+
+### Verified
+- `python -m compileall src tests scripts pages streamlit_app.py`
+- `pytest tests/test_orders_service.py tests/test_storage_contract.py tests/test_parsing_service.py -v` → 30 passed, 12 deselected.
+
+## M4.1 — Google Sheets storage resilience
 ### Delivered
 
 - Added a central `_run_gspread(...)` execution boundary in `GoogleSheetsStorage`.

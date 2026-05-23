@@ -12,13 +12,20 @@ class ParsingService:
         self._parser = parser
         self._storage = storage
 
-    def parse(self, raw_message: str, products: list[Product]) -> ParseResult:
+    def parse(
+        self,
+        *,
+        tenant_id: str,
+        raw_message: str,
+        products: list[Product],
+    ) -> ParseResult:
         try:
             result = self._parser.parse(raw_message, products)
         except ParserError as error:
             self._storage.append_parse_log(
                 ParseLogEntry(
                     parse_id=new_id("prs"),
+                    tenant_id=tenant_id,
                     raw_message=raw_message,
                     parsed_json="",
                     model=self._parser.model_name,
@@ -33,6 +40,7 @@ class ParsingService:
         self._storage.append_parse_log(
             ParseLogEntry(
                 parse_id=new_id("prs"),
+                tenant_id=tenant_id,
                 raw_message=raw_message,
                 parsed_json=result.request.model_dump_json(),
                 model=result.model,
