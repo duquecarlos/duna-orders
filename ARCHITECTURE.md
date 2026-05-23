@@ -174,3 +174,14 @@ Customer
 
 \-> Owner reports and insights
 
+## Catalog metadata
+
+Demo catalog files define business metadata once at the top level using a `business` block.
+
+The `business` block contains:
+
+```text
+tenant_id
+business_name
+business_type
+currency

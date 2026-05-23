@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import streamlit as st
 
-from duna_orders.demo_catalog import load_demo_catalog
+from duna_orders.demo_catalog import DemoCatalogFile, load_demo_catalog
 from duna_orders.domain.models import DraftItemRequest, DraftOrderRequest, Product
 from duna_orders.services.exceptions import (
     EmptyDraftError,
@@ -36,16 +36,17 @@ def _money(value: Decimal) -> str:
     return f"${value:,.0f}".replace(",", ".")
 
 
-def _seed_catalog(storage: InMemoryStorage) -> None:
-    catalog = load_demo_catalog()
+def _seed_catalog(storage: InMemoryStorage, catalog: DemoCatalogFile) -> None:
     for product in catalog.products:
         storage.upsert_product(product)
 
-
 def _bootstrap_session() -> None:
+    if "demo_catalog" not in st.session_state:
+        st.session_state.demo_catalog = load_demo_catalog()
+
     if "storage" not in st.session_state:
         storage = InMemoryStorage()
-        _seed_catalog(storage)
+        _seed_catalog(storage, st.session_state.demo_catalog)
         st.session_state.storage = storage
 
     if "order_service" not in st.session_state:
@@ -188,16 +189,22 @@ st.set_page_config(page_title="Nueva orden", page_icon="🧾", layout="wide")
 st.title("🧾 Nueva orden")
 st.caption("Demo local con catálogo colombiano real — revisar borrador antes de confirmar.")
 
+_bootstrap_session()
+
+catalog: DemoCatalogFile = st.session_state.demo_catalog
+
 with st.sidebar:
     st.subheader("Demo")
     st.write("Backend: `InMemoryStorage`")
-    st.write("Catálogo: `El Fogón Colombiano`")
+    st.write(f"Catálogo: `{catalog.business.business_name}`")
+    st.caption(
+        f"Tipo: {catalog.business.business_type} · "
+        f"Moneda: {catalog.business.currency}"
+    )
 
     if st.button("Reset session"):
         st.session_state.clear()
         st.rerun()
-
-_bootstrap_session()
 
 storage: InMemoryStorage = st.session_state.storage
 order_service: OrderService = st.session_state.order_service
@@ -263,6 +270,7 @@ can_create_draft = bool(raw_message.strip()) and bool(customer_name.strip()) and
 if st.button("Crear borrador", disabled=not can_create_draft):
     try:
         request = DraftOrderRequest(
+            tenant_id=catalog.business.tenant_id,
             raw_message=raw_message.strip(),
             customer_name=customer_name.strip(),
             customer_phone=customer_phone.strip() or None,
@@ -273,6 +281,7 @@ if st.button("Crear borrador", disabled=not can_create_draft):
             payment_method=payment_method,
             items=[
                 DraftItemRequest(
+                    tenant_id=catalog.business.tenant_id,
                     product_id=product_id,
                     quantity=item_data["quantity"],
                     modifications=item_data["modifications"],

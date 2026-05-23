@@ -44,3 +44,5 @@ def test_seed_demo_catalog_products_dry_run_skips_storage() -> None:
     assert result.upserted_products == 0
     assert result.dry_run is True
     assert storage.products == []
+    assert all(product.tenant_id == catalog.business.tenant_id for product in storage.products)
+    

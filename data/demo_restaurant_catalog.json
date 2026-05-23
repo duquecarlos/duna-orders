@@ -1,7 +1,8 @@
 {
-  "restaurant": {
-    "restaurant_id": "el-fogon-colombiano",
-    "restaurant_name": "El Fogón Colombiano",
+  "business": {
+    "tenant_id": "el-fogon-colombiano",
+    "business_name": "El Fogón Colombiano",
+    "business_type": "restaurant",
     "currency": "COP"
   },
   "products": [
