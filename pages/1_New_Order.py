@@ -8,10 +8,19 @@ from duna_orders.demo_catalog import DemoCatalogFile
 from duna_orders.domain.models import DraftItemRequest, DraftOrderRequest, Product
 from duna_orders.ui.setup import (
     get_demo_catalog,
+    get_demo_messages,
     get_order_service,
     get_parsing_service,
     get_storage,
     seed_inmemory_from_catalog,
+)
+from duna_orders.demo_messages import DemoMessagesFile
+from duna_orders.domain.models import ParseResult
+from duna_orders.parsing.prompts import PROMPT_VERSION
+from duna_orders.services.parsing import ParsingService
+from duna_orders.ui.parser_review import (
+    DraftCandidate,
+    parsed_result_to_draft_candidate,
 )
 
 from duna_orders.services.exceptions import (
@@ -48,6 +57,9 @@ def _money(value: Decimal) -> str:
 def _bootstrap_session() -> None:
     if "demo_catalog" not in st.session_state:
         st.session_state.demo_catalog = get_demo_catalog()
+    
+    if "demo_messages" not in st.session_state:
+        st.session_state.demo_messages = get_demo_messages()
 
     if "storage" not in st.session_state:
         storage = get_storage()
@@ -66,6 +78,12 @@ def _bootstrap_session() -> None:
 
     if "last_success_message" not in st.session_state:
         st.session_state.last_success_message = None
+    
+    if "draft_candidate" not in st.session_state:
+        st.session_state.draft_candidate = None
+
+    if "selected_demo_message_id" not in st.session_state:
+        st.session_state.selected_demo_message_id = None
 
 
 def _products_by_category(products: list[Product]) -> dict[str, list[Product]]:
@@ -83,6 +101,24 @@ def _parse_decimal_input(value: str, *, default: Decimal = Decimal("0")) -> Deci
     if not clean:
         return default
     return Decimal(clean)
+
+@st.cache_data(show_spinner=False)
+def _cached_parse_message(
+    message_text: str,
+    prompt_version: str,
+) -> ParseResult:
+    parsing_service: ParsingService | None = st.session_state.parsing_service
+    catalog: DemoCatalogFile = st.session_state.demo_catalog
+    storage: StorageInterface = st.session_state.storage
+
+    if parsing_service is None:
+        raise RuntimeError("Parser no disponible.")
+
+    return parsing_service.parse(
+        tenant_id=catalog.business.tenant_id,
+        raw_message=message_text,
+        products=storage.list_products(active_only=True),
+    )
 
 
 def _render_product_selector(products: list[Product]) -> dict[str, dict[str, object]]:
@@ -132,6 +168,149 @@ def _render_product_selector(products: list[Product]) -> dict[str, dict[str, obj
 
     return selected
 
+def _render_parsed_candidate(
+    candidate: DraftCandidate,
+    *,
+    catalog: DemoCatalogFile,
+    raw_message: str,
+    order_service: OrderService,
+) -> None:
+    st.divider()
+    st.subheader("Revisión del parser")
+
+    if candidate.warnings:
+        for warning in candidate.warnings:
+            st.warning(warning)
+
+    if not candidate.items:
+        st.info("No hay productos reconocidos para crear borrador desde el parser.")
+        if st.button("Descartar y empezar de nuevo", key="discard_empty_candidate"):
+            st.session_state.draft_candidate = None
+            st.rerun()
+        return
+
+    selected_items: list[DraftItemRequest] = []
+
+    for index, item in enumerate(candidate.items):
+        product = item.matched_product
+        product_label = product.product_name if product is not None else "no encontrado"
+
+        with st.container(border=True):
+            st.write(f"**Producto:** {product_label}")
+
+            for warning in item.warnings:
+                st.warning(warning)
+
+            col_qty, col_mods = st.columns([1, 3])
+
+            with col_qty:
+                quantity = st.number_input(
+                    "Cantidad",
+                    min_value=0,
+                    step=1,
+                    value=int(item.quantity),
+                    key=f"parsed_qty_{index}_{item.product_id}",
+                )
+
+            with col_mods:
+                modifications = st.text_input(
+                    "Modificaciones",
+                    value=item.modifications or "",
+                    key=f"parsed_mods_{index}_{item.product_id}",
+                )
+
+            if product is not None and quantity > 0:
+                selected_items.append(
+                    DraftItemRequest(
+                        tenant_id=catalog.business.tenant_id,
+                        product_id=product.product_id,
+                        quantity=Decimal(str(quantity)),
+                        modifications=modifications.strip() or None,
+                    )
+                )
+
+    st.write("**Datos inferidos**")
+
+    col_fulfillment, col_zone, col_payment = st.columns(3)
+
+    with col_fulfillment:
+        fulfillment_options = ["", "delivery", "pickup"]
+        fulfillment_index = (
+            fulfillment_options.index(candidate.inferred_fulfillment_type)
+            if candidate.inferred_fulfillment_type in fulfillment_options
+            else 0
+        )
+        parsed_fulfillment_type = st.selectbox(
+            "Fulfillment inferido",
+            options=fulfillment_options,
+            index=fulfillment_index,
+            format_func=lambda value: "Sin inferir" if value == "" else value,
+            key="parsed_fulfillment_type",
+        )
+
+    with col_zone:
+        parsed_delivery_zone = st.text_input(
+            "Zona/dirección inferida",
+            value=candidate.inferred_delivery_zone or "",
+            key="parsed_delivery_zone",
+        )
+
+    with col_payment:
+        payment_options = ["", "nequi", "daviplata", "transferencia", "efectivo"]
+        payment_index = (
+            payment_options.index(candidate.inferred_payment_method)
+            if candidate.inferred_payment_method in payment_options
+            else 0
+        )
+        parsed_payment_method = st.selectbox(
+            "Pago inferido",
+            options=payment_options,
+            index=payment_index,
+            format_func=lambda value: "Sin inferir" if value == "" else value,
+            key="parsed_payment_method",
+        )
+
+    parsed_customer_notes = st.text_area(
+        "Notas inferidas",
+        value=candidate.inferred_customer_notes or "",
+        height=80,
+        key="parsed_customer_notes",
+    )
+
+    col_create, col_discard = st.columns(2)
+
+    with col_create:
+        if st.button("Crear borrador desde parser", disabled=not selected_items):
+            try:
+                request = DraftOrderRequest(
+                    tenant_id=catalog.business.tenant_id,
+                    raw_message=raw_message.strip(),
+                    customer_name="",
+                    customer_phone=None,
+                    fulfillment_type=parsed_fulfillment_type or None,
+                    delivery_zone=parsed_delivery_zone.strip() or None,
+                    packaging_fee=Decimal("0"),
+                    customer_notes=parsed_customer_notes.strip() or None,
+                    payment_method=parsed_payment_method or None,
+                    items=selected_items,
+                )
+                order = order_service.create_draft(request)
+                st.session_state.draft_order_id = order.order_id
+                st.session_state.draft_candidate = None
+                st.session_state.last_success_message = None
+                st.rerun()
+            except (
+                EmptyDraftError,
+                ProductNotFoundError,
+                InactiveProductError,
+                ValueError,
+            ) as error:
+                st.error(str(error))
+
+    with col_discard:
+        if st.button("Descartar y empezar de nuevo"):
+            st.session_state.draft_candidate = None
+            st.rerun()
 
 def _render_draft(
             order_id: str,
@@ -205,6 +384,8 @@ st.caption("Demo local con catálogo colombiano real — revisar borrador antes 
 _bootstrap_session()
 
 catalog: DemoCatalogFile = st.session_state.demo_catalog
+demo_messages: DemoMessagesFile = st.session_state.demo_messages
+
 
 with st.sidebar:
     st.subheader("Demo")
@@ -221,6 +402,7 @@ with st.sidebar:
 
 storage: StorageInterface = st.session_state.storage
 order_service: OrderService = st.session_state.order_service
+parsing_service: ParsingService | None = st.session_state.parsing_service
 
 if st.session_state.last_success_message:
     st.success(st.session_state.last_success_message)
@@ -229,14 +411,71 @@ products = storage.list_products(active_only=True)
 
 st.subheader("Mensaje del cliente")
 
+demo_message_options = [""] + [entry.id for entry in demo_messages.messages]
+selected_demo_message_id = st.selectbox(
+    "Cargar mensaje de demostración",
+    options=demo_message_options,
+    format_func=lambda value: "Selecciona un mensaje..." if value == "" else value,
+    key="demo_message_selector",
+)
+
+if (
+    selected_demo_message_id
+    and selected_demo_message_id != st.session_state.selected_demo_message_id
+):
+    selected_entry = next(
+        entry for entry in demo_messages.messages if entry.id == selected_demo_message_id
+    )
+    st.session_state.raw_message_input = selected_entry.message
+    st.session_state.selected_demo_message_id = selected_demo_message_id
+    st.session_state.draft_candidate = None
+    st.rerun()
+
 raw_message = st.text_area(
     "WhatsApp message",
     height=110,
+    key="raw_message_input",
     placeholder=(
         "Buenas, me regala una bandeja paisa, una limonada de coco "
         "y una porción de aguacate. Pago por Nequi."
     ),
 )
+
+col_parse, col_parse_status = st.columns([1, 3])
+
+with col_parse:
+    parse_clicked = st.button(
+        "Parsear mensaje",
+        disabled=not bool(raw_message.strip()),
+    )
+
+with col_parse_status:
+    if parsing_service is None:
+        st.caption("Parser no disponible: configura ANTHROPIC_API_KEY para usarlo.")
+    else:
+        st.caption("Parser disponible.")
+
+if parse_clicked:
+    if parsing_service is None:
+        st.warning(
+            "Parser no disponible. Configura ANTHROPIC_API_KEY o completa la orden manualmente."
+        )
+    else:
+        try:
+            with st.spinner("Parseando mensaje..."):
+                parse_result = _cached_parse_message(
+                    raw_message.strip(),
+                    PROMPT_VERSION,
+                )
+            st.session_state.draft_candidate = parsed_result_to_draft_candidate(
+                parse_result,
+                catalog,
+                catalog.business.tenant_id,
+            )
+            st.rerun()
+        except Exception as error:
+            st.error(str(error))
+
 
 col_customer, col_phone = st.columns(2)
 with col_customer:
@@ -271,6 +510,16 @@ customer_notes = st.text_area(
     height=80,
     placeholder="Sin cubiertos, dejar en portería, salsa aparte...",
 )
+
+draft_candidate: DraftCandidate | None = st.session_state.draft_candidate
+
+if draft_candidate is not None:
+    _render_parsed_candidate(
+        draft_candidate,
+        catalog=catalog,
+        raw_message=raw_message,
+        order_service=order_service,
+    )
 
 st.divider()
 st.subheader("Productos")

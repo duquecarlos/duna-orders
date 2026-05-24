@@ -6,21 +6,56 @@ This roadmap tracks future work for Duna Orders. It is not a changelog and does 
 
 
 \## High priority
+### Next milestone candidates
 
-### M4.2.6 — Parser-assisted draft creation
+Status: pending selection.
 
-Status: next.
+Possible next directions:
 
-Use the parser output to help create draft orders from customer messages inside the current Streamlit pilot flow.
+- Dashboard page for read-only pilot visibility.
+- Customer registry workflow for recurring customer handling.
+- Live Sheets test quota/read optimization.
+- Tenant defaults for parser-assisted draft creation.
 
-Planned slices:
 
-1. M4.2.6a — Extract draft request factory logic. Closed.
-2. M4.2.6b — Integrate parser-assisted draft creation into the New Order page. Next.
+## Recently closed
+### M4.2.6 - Parser-assisted draft creation
 
-Reason:
+Closed.
 
-M4.2.5b closed the tenant foundation. The next useful pilot milestone is turning natural customer messages into reviewable draft orders while keeping the operator in control.
+Completed scope:
+
+- M4.2.6a extracted UI setup/factory logic.
+- M4.2.6b integrated parser-assisted draft creation into the New Order page.
+- Added realistic demo messages and parser review models.
+- Added review-before-draft behavior so the operator stays in control.
+- Fixed Streamlit parser availability through settings-based API key loading.
+- Updated the live parser prompt for tenant-aware output.
+- Added parser payload normalization for common LLM output quirks.
+- Verified parser-assisted order creation and confirmation manually with `msg_002_modifications_combined` and `msg_016_informal_messy`.
+
+Deferred follow-ups:
+
+- Parser-assisted draft: consider tenant-level defaults for `customer_name` extraction and `packaging_fee`.
+- Page split trigger: keep `pages/1_New_Order.py` as a single page until one of these is true:
+  - file exceeds ~600 lines;
+  - two distinct user flows live in the same file;
+  - multiple developers are touching it concurrently;
+  - adding a new feature requires scrolling more than twice to find the relevant section.
+- Composition/page extraction remains deferred.
+- Review Google Sheets live test quota/read behavior after M4.2.
+
+### M4.2.5b - Tenant foundation
+
+Closed.
+
+Completed scope:
+
+- Added `tenant_id` to tenant-scoped domain and request models.
+- Added catalog-level business metadata.
+- Updated Google Sheets schema, serialization, and deserialization for tenant-aware storage.
+- Migrated the live test spreadsheet.
+- Verified deterministic tests, live Sheets tests, demo catalog seeding, and smoke checks.
 
 
 \## Medium priority
@@ -156,21 +191,6 @@ This is acceptable for the MVP, but storage-specific exceptions would make servi
 
 \## Future backend migration
 
-## Recently closed
-
-### M4.2.5b — Tenant foundation
-
-Closed.
-
-Completed scope:
-
-- Added `tenant_id` to tenant-scoped domain and request models.
-- Added catalog-level business metadata.
-- Updated Google Sheets schema, serialization, and deserialization for tenant-aware storage.
-- Migrated the live test spreadsheet.
-- Verified deterministic tests, live Sheets tests, demo catalog seeding, and smoke checks.
-
-Next milestone: M4.2.6.
 
 \### Database-backed storage
 

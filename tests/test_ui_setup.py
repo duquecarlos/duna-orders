@@ -31,9 +31,8 @@ def test_get_order_service_returns_service_bound_to_storage() -> None:
     assert isinstance(service, OrderService)
     assert service._storage is storage
 
-
 def test_get_parsing_service_returns_none_without_api_key(monkeypatch) -> None:
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(setup.settings, "anthropic_api_key", None)
 
     service = setup.get_parsing_service(InMemoryStorage())
 
@@ -42,7 +41,7 @@ def test_get_parsing_service_returns_none_without_api_key(monkeypatch) -> None:
 
 def test_get_parsing_service_returns_service_when_api_key_is_set(monkeypatch) -> None:
     storage = InMemoryStorage()
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(setup.settings, "anthropic_api_key", "test-key")
     monkeypatch.setattr(setup, "_build_anthropic_parser", lambda: FakeParser())
 
     service = setup.get_parsing_service(storage)
@@ -50,13 +49,17 @@ def test_get_parsing_service_returns_service_when_api_key_is_set(monkeypatch) ->
     assert isinstance(service, ParsingService)
     assert service._storage is storage
 
-
 def test_get_demo_catalog_returns_validated_catalog() -> None:
     catalog = setup.get_demo_catalog()
 
     assert catalog.business.tenant_id == "el-fogon-colombiano"
     assert len(catalog.products) == 52
 
+def test_get_demo_messages_returns_validated_messages() -> None:
+    demo_messages = setup.get_demo_messages()
+
+    assert len(demo_messages.messages) == 16
+    assert demo_messages.messages[0].id.startswith("msg_")
 
 def test_seed_inmemory_from_catalog_seeds_all_products() -> None:
     storage = InMemoryStorage()

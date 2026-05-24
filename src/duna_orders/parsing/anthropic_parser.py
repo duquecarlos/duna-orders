@@ -1,6 +1,8 @@
 import json
 import time
 
+from typing import Any
+from altair import value
 from anthropic import Anthropic
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
@@ -37,6 +39,90 @@ def _extract_json_text(raw_response: str) -> str:
 
     return text[start : end + 1]
 
+def _clean_parser_strings(payload: dict) -> dict:
+    normalized = dict(payload)
+
+    for key, value in list(normalized.items()):
+        if isinstance(value, str):
+            value = value.strip()
+
+            if key == "customer_name":
+                normalized[key] = value
+            elif key in {"customer_phone", "delivery_zone", "customer_notes", "delivery_address", "notes"} and value == "":
+                normalized[key] = None
+            else:
+                normalized[key] = value
+
+    if isinstance(normalized.get("items"), list):
+        cleaned_items = []
+
+        for item in normalized["items"]:
+            if not isinstance(item, dict):
+                cleaned_items.append(item)
+                continue
+
+            cleaned_item = dict(item)
+
+            if isinstance(cleaned_item.get("product_name"), str):
+                cleaned_item["product_name"] = cleaned_item["product_name"].strip()
+
+            if isinstance(cleaned_item.get("modifications"), list):
+                cleaned_item["modifications"] = [
+                    modification.strip()
+                    for modification in cleaned_item["modifications"]
+                    if isinstance(modification, str) and modification.strip()
+                ]
+
+            cleaned_items.append(cleaned_item)
+
+        normalized["items"] = cleaned_items
+
+    return normalized
+
+def _normalize_parser_payload(parsed: dict[str, Any]) -> dict[str, Any]:
+    request = parsed.get("request")
+
+    if not isinstance(request, dict):
+        return parsed
+
+    normalized_request = _clean_parser_strings(request)
+
+    payment_aliases = {
+        "nequi": "nequi",
+        "daviplata": "daviplata",
+        "transferencia": "transferencia",
+        "transfer": "transferencia",
+        "efectivo": "efectivo",
+        "cash": "efectivo",
+    }
+
+    fulfillment_aliases = {
+        "delivery": "delivery",
+        "domicilio": "delivery",
+        "pickup": "pickup",
+        "recoger": "pickup",
+        "recogida": "pickup",
+        "para recoger": "pickup",
+    }
+
+    payment_method = normalized_request.get("payment_method")
+    if isinstance(payment_method, str):
+        normalized_request["payment_method"] = payment_aliases.get(
+            payment_method.strip().lower(),
+            payment_method.strip().lower(),
+        )
+
+    fulfillment_type = normalized_request.get("fulfillment_type")
+    if isinstance(fulfillment_type, str):
+        normalized_request["fulfillment_type"] = fulfillment_aliases.get(
+            fulfillment_type.strip().lower(),
+            fulfillment_type.strip().lower(),
+        )
+
+    return {
+        **parsed,
+        "request": normalized_request,
+    }
 
 class AnthropicParser(ParserInterface):
     def __init__(self) -> None:
@@ -83,7 +169,7 @@ class AnthropicParser(ParserInterface):
         json_text = _extract_json_text(raw_response)
 
         try:
-            parsed = json.loads(json_text)
+            parsed = _normalize_parser_payload(json.loads(json_text))
             request = DraftOrderRequest.model_validate(parsed["request"])
             warnings = parsed.get("warnings", [])
         except Exception as error:

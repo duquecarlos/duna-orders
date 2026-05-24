@@ -1,0 +1,84 @@
+{
+  "messages": [
+    {
+      "id": "msg_001_simple_order",
+      "message": "Hola buenas, me regalas una bandeja paisa y una limonada de coco por favor",
+      "description": "Plain multi-item order with greeting. Baseline."
+    },
+    {
+      "id": "msg_002_modifications_combined",
+      "message": "Buenas tardes, necesito dos bandejas paisas, una sin chicharrón y la otra con extra aguacate, para domicilio a la cll 134 #15-23 apto 502, pago por Nequi",
+      "description": "Modifications + delivery address + payment in one message. Realistic compound."
+    },
+    {
+      "id": "msg_003_day_restricted_combined",
+      "message": "Hola, hoy quiero un ajiaco y una bandeja, te hago transferencia, mándame al edificio Atlas torre 2 oficina 408",
+      "description": "Day-restricted product (ajiaco) + multi-item + payment + detailed delivery address."
+    },
+    {
+      "id": "msg_004_pickup_weight_variant",
+      "message": "Qué hubo, una punta de anca de 400 y una gaseosa para recoger en 30 minutos, voy yo mismo",
+      "description": "Informal greeting + weight variant + pickup + extra context (voy yo mismo)."
+    },
+    {
+      "id": "msg_005_unmatched_with_notes",
+      "message": "Buenas, me das un sancocho de pescado y una limonada natural, que la limonada no venga muy dulce porfa, domicilio a la 145 con 9",
+      "description": "Unmatched item (sancocho de pescado) + modification on a different item + delivery."
+    },
+    {
+      "id": "msg_006_ambiguous_quantity_informal",
+      "message": "Parce me regalas unas empanaditas y una luladita, gracias",
+      "description": "Ambiguous quantity + diminutives + informal address. Realistic ordering language."
+    },
+    {
+      "id": "msg_007_voice_to_text_style",
+      "message": "una sopa de mondongo y arroz con pollo que llegue calientico llamar al llegar al portero le dice que es para el 1502 pago efectivo",
+      "description": "Voice-to-text style: no punctuation, run-on, multiple signals (notes + delivery + payment) jammed together."
+    },
+    {
+      "id": "msg_008_main_with_adiciones",
+      "message": "Hola, una bandeja paisa con arepa adicional y porción extra de chicharrón, y una limonada de panela, todo para llevar",
+      "description": "Main + adiciones + drink + pickup intent."
+    },
+    {
+      "id": "msg_009_cash_delivery_question",
+      "message": "Buenas, ¿tienen corrientazo hoy? Si sí mándame dos, domicilio a la cra 50 con 134, pago en efectivo contra entrega",
+      "description": "Question-then-conditional-order pattern + delivery + cash payment. Tests if parser can handle the conditional."
+    },
+    {
+      "id": "msg_010_in_message_correction",
+      "message": "Me preparas una carne grande con papa criolla y jugo de mora, no espera mejor que sea una carne de 200 nomás, transferencia",
+      "description": "Customer changes mind mid-message (correction). Parser should ideally land on the corrected version. Edge case."
+    },
+    {
+      "id": "msg_011_special_request_minimal",
+      "message": "Pollo a la plancha con ensalada, sin sal porfa",
+      "description": "Short order with one modification. Realistic brief message format."
+    },
+    {
+      "id": "msg_012_customer_name_intro",
+      "message": "Hola soy Andrea Gómez, quiero dos almuerzos con sopa del día y una porción de maduro, mándame a Cedritos cll 140 #11-30",
+      "description": "Customer name + first/last name + multi-item + neighborhood + address."
+    },
+    {
+      "id": "msg_013_shared_dish_daviplata",
+      "message": "Buenos días, una picada para dos y dos limonadas de coco, pago por Daviplata cuando llegue el domi",
+      "description": "Shared/group dish + payment method with timing condition."
+    },
+    {
+      "id": "msg_014_brand_as_category",
+      "message": "Una bandeja paisa y una coca personal, sin cubiertos por fa, mándamela a la portería de la torre 3 conjunto Mirador",
+      "description": "Brand-as-product (coca = gaseosa) + customer note (sin cubiertos) + landmark-based delivery."
+    },
+    {
+      "id": "msg_015_not_an_order",
+      "message": "Hola buenas tardes, ¿a qué hora abren hoy? Es que quiero ir a almorzar más tarde",
+      "description": "Not an order. Parser should return empty items with a warning. Tests empty-output path end-to-end."
+    },
+    {
+      "id": "msg_016_informal_messy",
+      "message": "ey parce qué hubo, me puedes mandar como una carne asada grande con arrocito y una coca, ahh y una limonadita también gracias, a la 167 con 56 apto 304, efectivo",
+      "description": "Maximally informal Colombian Spanish: parce, diminutives, hedge words, brand-as-product, run-on style, delivery, payment. The hardest realistic case."
+    }
+  ]
+}

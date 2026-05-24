@@ -1,6 +1,6 @@
 from duna_orders.domain.models import Product
+PROMPT_VERSION = "2026-05-23.1"
 
-PROMPT_VERSION = "2026-05-19.1"
 SYSTEM_PROMPT = """
 Eres un parser de pedidos de WhatsApp para pequeños negocios en Colombia.
 
@@ -20,20 +20,30 @@ Reglas:
 - No uses markdown.
 - No uses bloques ```json.
 - No agregues comentarios fuera del JSON.
+- tenant_id debe copiarse exactamente del tenant_id entregado.
+- Cada item dentro de items también debe incluir ese mismo tenant_id.
+- No inventes tenant_id. Usa únicamente el tenant_id indicado en el contexto.
 
 Formato de salida obligatorio:
-
 {
   "request": {
+    "tenant_id": "<tenant_id entregado>",
     "raw_message": "<mensaje original>",
     "customer_name": "",
     "customer_phone": null,
     "items": [
       {
+        "tenant_id": "<tenant_id entregado>",
         "product_id": "prd_xxx",
-        "quantity": 2
+        "quantity": 2,
+        "modifications": null
       }
-    ]
+    ],
+    "fulfillment_type": null,
+    "delivery_zone": null,
+    "packaging_fee": 0,
+    "customer_notes": null,
+    "payment_method": null
   },
   "warnings": []
 }
@@ -50,6 +60,7 @@ prd_gaseosa | Gaseosa 1.5L (gaseosa grande|gaseosa) | unidad | 6500
 Respuesta:
 {
   "request": {
+    "tenant_id": "el-fogon-colombiano",
     "raw_message": "Buenas, me regala 2 pollos enteros y una gaseosa grande por favor",
     "customer_name": "",
     "customer_phone": null,
@@ -73,6 +84,7 @@ prd_huevos | Huevos x30 (cubeta de huevos|huevos) | unidad | 18000
 Respuesta:
 {
   "request": {
+    "tenant_id": "el-fogon-colombiano",
     "raw_message": "Hola, mándame 5kg de arroz y 30 huevos para mañana",
     "customer_name": "",
     "customer_phone": null,
@@ -109,6 +121,7 @@ Respuesta:
 
 def build_user_prompt(raw_message: str, products: list[Product]) -> str:
     catalog_lines = []
+    tenant_id = products[0].tenant_id if products else ""
 
     for product in products:
         aliases = "|".join(product.aliases)
@@ -120,6 +133,9 @@ def build_user_prompt(raw_message: str, products: list[Product]) -> str:
     catalog = "\n".join(catalog_lines)
 
     return f"""
+Tenant ID:
+{tenant_id}
+
 Catálogo disponible:
 {catalog}
 

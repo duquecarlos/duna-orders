@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import os
+from duna_orders.config import settings
 
 import streamlit as st
 
 from duna_orders.demo_catalog import DemoCatalogFile, load_demo_catalog
+from duna_orders.demo_messages import DemoMessagesFile, load_demo_messages
 from duna_orders.parsing.base import ParserInterface
 from duna_orders.services.orders import OrderService
 from duna_orders.services.parsing import ParsingService
@@ -28,7 +29,7 @@ def _build_anthropic_parser() -> ParserInterface:
 
 
 def get_parsing_service(storage: StorageInterface) -> ParsingService | None:
-    if not os.getenv("ANTHROPIC_API_KEY"):
+    if not settings.anthropic_api_key:
         return None
 
     return ParsingService(
@@ -41,6 +42,10 @@ def get_parsing_service(storage: StorageInterface) -> ParsingService | None:
 def get_demo_catalog() -> DemoCatalogFile:
     return load_demo_catalog()
 
+
+@st.cache_data
+def get_demo_messages() -> DemoMessagesFile:
+    return load_demo_messages()
 
 def seed_inmemory_from_catalog(
     storage: InMemoryStorage,

@@ -1,4 +1,62 @@
 # Changelog
+## M4.2.6b - Parser-assisted draft creation
+
+### Delivered
+
+- Added realistic demo WhatsApp messages in `data/demo_messages.json`.
+- Added `src/duna_orders/demo_messages.py` for loading and validating demo messages.
+- Added parser review UI support in `src/duna_orders/ui/parser_review.py`.
+- Added `DraftCandidate` and `DraftCandidateItem` review models.
+- Added `parsed_result_to_draft_candidate(...)` to convert parser output into reviewable draft candidates.
+- Integrated parser-assisted draft creation into `pages/1_New_Order.py`.
+- Added a demo message selector and parser button to the New Order page.
+- Added cached parser calls keyed by message text and `PROMPT_VERSION`.
+- Added operator review before draft creation.
+- Kept manual product picker and manual draft creation unchanged.
+- Fixed parser availability in Streamlit by reading `settings.anthropic_api_key` instead of direct `os.getenv("ANTHROPIC_API_KEY")`.
+- Updated the Anthropic prompt so live parser output includes `tenant_id`.
+- Bumped `PROMPT_VERSION`.
+- Added parser payload normalization for common LLM quirks:
+  - mixed-case payment methods;
+  - fulfillment aliases;
+  - leading/trailing whitespace;
+  - empty optional string fields;
+  - item product/modification whitespace cleanup.
+- Preserved `customer_name=""` because `DraftOrderRequest.customer_name` is currently required as a string.
+
+### Verification
+
+- `python -m compileall src tests scripts pages streamlit_app.py` -> OK.
+- `pytest tests/ -v` -> 54 passed, 13 deselected.
+- `pytest -m live_api -v` -> 1 passed, 66 deselected.
+- `pytest -m live_sheets -v` -> reached Google Sheets; latest run got 9 passed, 3 failed, 55 deselected due external Google Sheets API 429 read quota.
+- Manual Streamlit check without API key passed:
+  - demo selector populated message;
+  - parser warning displayed;
+  - manual draft creation worked;
+  - manual confirmation worked;
+  - inventory decreased.
+- Manual Streamlit check with API key passed for `msg_002_modifications_combined`:
+  - parser panel rendered;
+  - quantity edit worked;
+  - draft creation from parser worked;
+  - order confirmation worked;
+  - inventory decreased correctly.
+- Manual Streamlit check with API key passed for `msg_016_informal_messy`:
+  - parser panel rendered;
+  - draft creation from parser worked;
+  - order confirmation worked;
+  - inventory decreased correctly.
+
+### Notes
+
+- Live Sheets failures during final close were caused by Google Sheets API 429 read quota, not assertion failures or parser-assisted draft regressions.
+- The parser interpretation of “dos bandejas paisas, una sin chicharrón y la otra con extra aguacate” as two Bandeja paisa items plus a separate Porción de aguacate is acceptable for order management because it improves pricing and stock impact accuracy.
+- For messy informal messages, the parser produced a usable draft, but address/location text may still land in inferred notes instead of a dedicated delivery field.
+- `customer_name=""` and `packaging_fee=0` remain acceptable for M4.2.6b and are tracked as follow-up work.
+- `pages/1_New_Order.py` remains a single page for now. Composition/page extraction is deferred until the documented split triggers are reached.
+- M4.2.6b is now closed.
+- M4.2 is now closed.
 
 ## M4.2.6a — UI factory extraction
 
