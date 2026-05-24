@@ -331,6 +331,76 @@ def test_confirm_order_happy_path():
     assert product is not None
     assert product.current_stock == Decimal("8")
 
+def test_confirm_order_aggregates_stock_impact_for_duplicate_product_items():
+    storage = InMemoryStorage()
+    storage.upsert_product(make_product(current_stock=Decimal("10")))
+    service = OrderService(storage)
+
+    request = make_draft_request(
+        items=[
+            DraftItemRequest(
+                tenant_id=DEFAULT_TEST_TENANT_ID,
+                product_id=PRODUCT_ID,
+                quantity=Decimal("1"),
+                modifications="sin chicharrón",
+            ),
+            DraftItemRequest(
+                tenant_id=DEFAULT_TEST_TENANT_ID,
+                product_id=PRODUCT_ID,
+                quantity=Decimal("1"),
+                modifications="con extra aguacate",
+            ),
+        ]
+    )
+
+    order = service.create_draft(request)
+    confirmed_order = service.confirm_order(order.order_id)
+
+    movements = storage.list_stock_movements(product_id=PRODUCT_ID)
+    product = storage.get_product(PRODUCT_ID)
+
+    assert confirmed_order.status == "confirmed"
+    assert len(order.items) == 2
+    assert len(movements) == 1
+    assert movements[0].quantity_delta == Decimal("-2")
+    assert movements[0].reference_id == order.order_id
+    assert product is not None
+    assert product.current_stock == Decimal("8")
+
+
+def test_confirm_order_raises_on_insufficient_aggregate_stock_for_duplicate_product_items():
+    storage = InMemoryStorage()
+    storage.upsert_product(make_product(current_stock=Decimal("1")))
+    service = OrderService(storage)
+
+    request = make_draft_request(
+        items=[
+            DraftItemRequest(
+                tenant_id=DEFAULT_TEST_TENANT_ID,
+                product_id=PRODUCT_ID,
+                quantity=Decimal("1"),
+            ),
+            DraftItemRequest(
+                tenant_id=DEFAULT_TEST_TENANT_ID,
+                product_id=PRODUCT_ID,
+                quantity=Decimal("1"),
+            ),
+        ]
+    )
+
+    order = service.create_draft(request)
+
+    with pytest.raises(InsufficientStockError):
+        service.confirm_order(order.order_id)
+
+    saved_order = storage.get_order(order.order_id)
+    product = storage.get_product(PRODUCT_ID)
+
+    assert saved_order is not None
+    assert saved_order.status == "draft"
+    assert storage.list_stock_movements() == []
+    assert product is not None
+    assert product.current_stock == Decimal("1")
 
 def test_confirm_order_raises_when_order_missing():
     storage = InMemoryStorage()

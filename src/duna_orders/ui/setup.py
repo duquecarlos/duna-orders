@@ -11,11 +11,35 @@ from duna_orders.services.orders import OrderService
 from duna_orders.services.parsing import ParsingService
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.memory import InMemoryStorage
+from duna_orders.storage.sheets import GoogleSheetsStorage
 
 
 def get_storage() -> StorageInterface:
-    # Future backend switch can check GOOGLE_SHEETS_SPREADSHEET_ID here.
-    return InMemoryStorage()
+    backend = settings.duna_storage_backend.strip().lower()
+
+    if backend in {"", "memory"}:
+        return InMemoryStorage()
+
+    if backend == "sheets":
+        if not settings.google_sheets_spreadsheet_id:
+            raise RuntimeError(
+                "DUNA_STORAGE_BACKEND=sheets requires GOOGLE_SHEETS_SPREADSHEET_ID."
+            )
+
+        if not settings.google_sheets_credentials_path:
+            raise RuntimeError(
+                "DUNA_STORAGE_BACKEND=sheets requires GOOGLE_SHEETS_CREDENTIALS_PATH."
+            )
+
+        return GoogleSheetsStorage(
+            spreadsheet_id=settings.google_sheets_spreadsheet_id,
+            credentials_path=str(settings.google_sheets_credentials_path),
+        )
+
+    raise RuntimeError(
+        "DUNA_STORAGE_BACKEND must be 'memory' or 'sheets'. "
+        f"Received: {settings.duna_storage_backend!r}"
+    )
 
 
 def get_order_service(storage: StorageInterface) -> OrderService:
@@ -46,6 +70,19 @@ def get_demo_catalog() -> DemoCatalogFile:
 @st.cache_data
 def get_demo_messages() -> DemoMessagesFile:
     return load_demo_messages()
+
+def prepare_storage_catalog(
+    storage: StorageInterface,
+    catalog: DemoCatalogFile,
+) -> bool:
+    if isinstance(storage, InMemoryStorage):
+        seed_inmemory_from_catalog(storage, catalog)
+        return True
+
+    if isinstance(storage, GoogleSheetsStorage):
+        return bool(storage.list_products(active_only=False))
+
+    return True
 
 def seed_inmemory_from_catalog(
     storage: InMemoryStorage,

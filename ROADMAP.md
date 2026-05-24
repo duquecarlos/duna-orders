@@ -12,6 +12,7 @@ Status: pending selection.
 
 Possible next directions:
 
+- Order lifecycle / today's-orders visibility.
 - Dashboard page for read-only pilot visibility.
 - Customer registry workflow for recurring customer handling.
 - Live Sheets test quota/read optimization.
@@ -19,6 +20,27 @@ Possible next directions:
 
 
 ## Recently closed
+
+### M4.3 - Streamlit Sheets backend wiring
+
+Closed.
+
+Completed scope:
+
+- Added env-driven backend selection for Streamlit with `DUNA_STORAGE_BACKEND`.
+- Wired `GoogleSheetsStorage` into the operator-facing demo.
+- Kept memory backend as the default local mode.
+- Made Sheets backend fail fast when required runtime configuration is missing.
+- Prevented repeated catalog upserts on every Streamlit startup.
+- Updated catalog seeding to use project settings from `.env`.
+- Verified persistent Sheets-backed order creation, confirmation, stock movement, parse log, and restart/readback behavior.
+- Fixed duplicate-product stock impact by aggregating confirmation quantities by product.
+
+Deferred follow-ups:
+
+- Google Sheets quota/read optimization remains a future cleanup item.
+- Order lifecycle, today's-orders view, customer registry, and dashboard remain out of scope until after M4.3.
+
 ### M4.2.6 - Parser-assisted draft creation
 
 Closed.

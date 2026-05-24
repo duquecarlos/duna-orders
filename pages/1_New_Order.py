@@ -12,7 +12,7 @@ from duna_orders.ui.setup import (
     get_order_service,
     get_parsing_service,
     get_storage,
-    seed_inmemory_from_catalog,
+    prepare_storage_catalog,
 )
 from duna_orders.demo_messages import DemoMessagesFile
 from duna_orders.domain.models import ParseResult
@@ -33,7 +33,6 @@ from duna_orders.services.exceptions import (
 )
 from duna_orders.services.orders import OrderService
 from duna_orders.storage.base import StorageInterface
-from duna_orders.storage.memory import InMemoryStorage
 
 
 CATEGORY_LABELS = {
@@ -63,8 +62,10 @@ def _bootstrap_session() -> None:
 
     if "storage" not in st.session_state:
         storage = get_storage()
-        if isinstance(storage, InMemoryStorage):
-            seed_inmemory_from_catalog(storage, st.session_state.demo_catalog)
+        st.session_state.catalog_ready = prepare_storage_catalog(
+            storage,
+            st.session_state.demo_catalog,
+        )
         st.session_state.storage = storage
 
     if "order_service" not in st.session_state:
@@ -383,20 +384,24 @@ st.caption("Demo local con catálogo colombiano real — revisar borrador antes 
 
 _bootstrap_session()
 
+if not st.session_state.catalog_ready:
+    st.error("Catalog not seeded. Run scripts/seed_demo_catalog.py first.")
+    st.stop()
+
 catalog: DemoCatalogFile = st.session_state.demo_catalog
 demo_messages: DemoMessagesFile = st.session_state.demo_messages
 
 
 with st.sidebar:
     st.subheader("Demo")
-    st.write("Backend: `InMemoryStorage`")
+    st.write(f"Backend: `{st.session_state.storage.__class__.__name__}`")
     st.write(f"Catálogo: `{catalog.business.business_name}`")
     st.caption(
         f"Tipo: {catalog.business.business_type} · "
         f"Moneda: {catalog.business.currency}"
     )
 
-    if st.button("Reset session"):
+    if st.button("Reset UI session"):
         st.session_state.clear()
         st.rerun()
 

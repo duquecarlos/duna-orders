@@ -1,4 +1,57 @@
 # Changelog
+## M4.3 - Streamlit Sheets backend wiring
+
+### Delivered
+
+- Added `DUNA_STORAGE_BACKEND` setting with `memory` as the default backend.
+- Added `GOOGLE_SHEETS_SPREADSHEET_ID` to runtime settings.
+- Updated `get_storage()` so Streamlit can use either `InMemoryStorage` or `GoogleSheetsStorage`.
+- Kept memory backend behavior unchanged for local demo use.
+- Added fail-fast startup behavior when `DUNA_STORAGE_BACKEND=sheets` is selected without required Sheets configuration.
+- Added `prepare_storage_catalog(...)` so memory storage is seeded from the demo catalog, while Sheets storage only checks whether products already exist.
+- Avoided automatic product upserts on every Streamlit startup when using Sheets.
+- Updated `scripts/seed_demo_catalog.py` to read the runtime Sheet ID and credentials through project settings.
+- Renamed the Streamlit reset button to `Reset UI session` to clarify that it clears local UI state only.
+- Fixed duplicate-product stock impact during order confirmation by aggregating quantities by `product_id`.
+- Added regression coverage for duplicate product lines and aggregate insufficient-stock checks.
+
+### Verification
+
+- `python -m compileall scripts\seed_demo_catalog.py src\duna_orders\config.py` -> OK.
+- `python scripts/seed_demo_catalog.py --dry-run` -> 52 products loaded from catalog.
+- `pytest tests/test_seed_demo_catalog.py tests/test_ui_setup.py tests/test_orders_service.py -v` -> 31 passed.
+- `pytest tests/ -v` -> 63 passed, 13 deselected.
+- Manual memory backend check passed:
+  - backend displayed as `InMemoryStorage`;
+  - products loaded;
+  - draft creation worked;
+  - confirmation worked;
+  - inventory decreased;
+  - reset reseeded local memory state.
+- Manual Sheets backend check passed:
+  - backend displayed as `GoogleSheetsStorage`;
+  - products loaded from Sheets;
+  - parser-assisted draft worked;
+  - confirmation worked;
+  - order row appeared in `orders`;
+  - item rows appeared in `order_items`;
+  - stock movements appeared in `stock_movements`;
+  - parse log appeared in `parse_log`;
+  - restart plus `get_order(...)` verified persistence.
+- Duplicate product stock impact verified manually:
+  - two Bandeja paisa order item lines produced one aggregated stock movement with `quantity_delta = -2`;
+  - one aguacate item produced `quantity_delta = -1`.
+
+### Notes
+
+- `scripts/seed_demo_catalog.py --delay-s 8` is now treated as a one-time setup/catalog-refresh command, not a normal startup command.
+- Runtime Streamlit configuration is read from `.env`; `.env.example` is only the template.
+- `Reset UI session` clears Streamlit session state only. It does not reset persistent Google Sheets inventory.
+- No new retry/backoff infrastructure was added in M4.3.
+- No order lifecycle changes, customer registry, dashboard, prompt changes, new pages, or new domain fields were added.
+- M4.3 closes the persistence gap for the operator-facing demo.
+
+
 ## M4.2.6b - Parser-assisted draft creation
 
 ### Delivered

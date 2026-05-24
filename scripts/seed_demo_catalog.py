@@ -1,4 +1,4 @@
-"""Seed the demo restaurant catalog products into Google Sheets.
+"""Seed the demo restaurant catalog products into the configured Google Sheet.
 
 Usage:
     python scripts/seed_demo_catalog.py --dry-run
@@ -8,7 +8,7 @@ Usage:
 from __future__ import annotations
 import time
 import argparse
-import os
+from duna_orders.config import settings
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,32 +59,18 @@ def seed_demo_catalog_products(
         dry_run=False,
     )
 
-def make_test_sheets_storage() -> GoogleSheetsStorage:
-    spreadsheet_id = os.getenv("GOOGLE_SHEETS_TEST_SPREADSHEET_ID")
-    credentials_path = os.getenv(
-        "GOOGLE_SHEETS_CREDENTIALS_PATH",
-        "./credentials/service_account.json",
-    )
-
-    if not spreadsheet_id:
-        raise RuntimeError("GOOGLE_SHEETS_TEST_SPREADSHEET_ID is not set.")
-
-    production_id = os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID")
-    if production_id and production_id == spreadsheet_id:
-        raise RuntimeError(
-            "GOOGLE_SHEETS_TEST_SPREADSHEET_ID must not equal "
-            "GOOGLE_SHEETS_SPREADSHEET_ID."
-        )
+def make_sheets_storage() -> GoogleSheetsStorage:
+    if not settings.google_sheets_spreadsheet_id:
+        raise RuntimeError("GOOGLE_SHEETS_SPREADSHEET_ID is not set.")
 
     return GoogleSheetsStorage(
-        spreadsheet_id=spreadsheet_id,
-        credentials_path=credentials_path,
+        spreadsheet_id=settings.google_sheets_spreadsheet_id,
+        credentials_path=str(settings.google_sheets_credentials_path),
     )
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Seed demo catalog products into the test Google Sheet."
+        description="Seed demo catalog products into the configured Google Sheet."
     )
     parser.add_argument(
         "--catalog-path",
@@ -110,7 +96,7 @@ def main() -> int:
     args = parse_args()
     catalog = load_demo_catalog(args.catalog_path)
 
-    storage = None if args.dry_run else make_test_sheets_storage()
+    storage = None if args.dry_run else make_sheets_storage()
 
     result = seed_demo_catalog_products(
         catalog=catalog,

@@ -100,36 +100,46 @@ class OrderService:
 
         confirmed_at = confirmed_at or utc_now()
 
-        products_by_item_id = {}
+        products_by_product_id = {}
+        quantities_by_product_id = {}
 
         for item in order.items:
             if item.product_id is None:
                 raise ProductNotFoundError(item.product_id)
 
-            product = self._storage.get_product(item.product_id)
-
+            product = products_by_product_id.get(item.product_id)
             if product is None:
-                raise ProductNotFoundError(item.product_id)
+                product = self._storage.get_product(item.product_id)
 
-            if product.current_stock < item.quantity:
+                if product is None:
+                    raise ProductNotFoundError(item.product_id)
+
+                products_by_product_id[item.product_id] = product
+
+            quantities_by_product_id[item.product_id] = (
+                quantities_by_product_id.get(item.product_id, Decimal("0")) + item.quantity
+            )
+
+        for product_id, requested_quantity in quantities_by_product_id.items():
+            product = products_by_product_id[product_id]
+
+            if product.current_stock < requested_quantity:
                 raise InsufficientStockError(
                     product.product_id,
-                    requested=item.quantity,
+                    requested=requested_quantity,
                     available=product.current_stock,
                 )
 
-            products_by_item_id[item.order_item_id] = product
-
-        for item in order.items:
-            product = products_by_item_id[item.order_item_id]
-            movement_id = f"mov_sale_{order_id}_{item.product_id}"
+        for product_id, quantity in quantities_by_product_id.items():
+            product = products_by_product_id[product_id]
+            movement_id = f"mov_sale_{order_id}_{product_id}"
 
             movement = StockMovement(
                 tenant_id=order.tenant_id,
                 stock_movement_id=movement_id,
                 created_at=confirmed_at,
                 product_id=product.product_id,
-                quantity_delta=-item.quantity,
+                quantity_delta=-quantity,
                 reason="sale",
                 reference_id=order_id,
             )
@@ -141,7 +151,7 @@ class OrderService:
 
             updated_product = product.model_copy(
                 update={
-                    "current_stock": product.current_stock - item.quantity,
+                    "current_stock": product.current_stock - quantity,
                     "updated_at": utc_now(),
                 },
                 deep=True,

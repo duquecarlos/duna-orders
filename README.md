@@ -262,6 +262,11 @@ LOG_LEVEL=INFO
 DEFAULT_TIMEZONE=America/Bogota
 DEFAULT_CURRENCY=COP
 
+# Storage backend used by Streamlit
+# memory = local in-memory demo
+# sheets = persistent Google Sheets demo
+DUNA_STORAGE_BACKEND=memory
+
 # --- LLM ---
 LLM_PROVIDER=anthropic
 LLM_MODEL=claude-sonnet-4-5
@@ -273,15 +278,21 @@ LLM_TEMPERATURE=0.0
 # --- Google Sheets ---
 GOOGLE_SHEETS_CREDENTIALS_PATH=./credentials/service_account.json
 
-# Production / runtime spreadsheet ID
+# Runtime spreadsheet used by Streamlit and scripts/seed_demo_catalog.py
 GOOGLE_SHEETS_SPREADSHEET_ID=
 
-# Separate spreadsheet for live_sheets tests; must NOT equal the production ID
+# Separate spreadsheet for live_sheets tests; must NOT equal the runtime ID
 GOOGLE_SHEETS_TEST_SPREADSHEET_ID=
 
-ACTIVE_CLIENT_SHEET_ID=
+
+But in VS Code, practically: add one line containing exactly three backticks immediately after:
+
+`ACTIVE_CLIENT_NAME=demo`
+
+So it becomes:
+
+```text
 ACTIVE_CLIENT_NAME=demo
-```
 
 Important rules:
 
@@ -300,6 +311,48 @@ $env:GOOGLE_SHEETS_CREDENTIALS_PATH = ".\credentials\service_account.json"
 $env:LIVE_SHEETS_TEST_DELAY_S = "8"
 Remove-Item Env:\GOOGLE_SHEETS_SPREADSHEET_ID -ErrorAction SilentlyContinue
 ```
+
+### Streamlit backend modes
+
+The Streamlit app supports two runtime storage modes.
+
+Memory mode is the default local mode:
+
+    DUNA_STORAGE_BACKEND=memory
+
+Use it for fast local testing. Orders and stock changes are temporary and disappear when the UI session is reset.
+
+Sheets mode is the persistent pilot/demo mode:
+
+    DUNA_STORAGE_BACKEND=sheets
+    GOOGLE_SHEETS_CREDENTIALS_PATH=credentials/service_account.json
+    GOOGLE_SHEETS_SPREADSHEET_ID=<your-runtime-sheet-id>
+
+Use it when showing the demo to someone or when orders must persist between Streamlit sessions.
+
+For normal Streamlit usage, run:
+
+    cd C:\Duna\duna-orders
+    .\.venv\Scripts\Activate.ps1
+
+    streamlit run streamlit_app.py
+
+Seed the demo catalog only when setting up a new sheet, after clearing a sheet, or after catalog changes:
+
+    cd C:\Duna\duna-orders
+    .\.venv\Scripts\Activate.ps1
+
+    python scripts/seed_demo_catalog.py --delay-s 8
+
+Do not run the seed script before every Streamlit session. It performs repeated Google Sheets upserts and can take several minutes.
+
+If the app shows:
+
+    Catalog not seeded. Run scripts/seed_demo_catalog.py first.
+
+seed the catalog once and restart Streamlit.
+
+The `Reset UI session` button clears Streamlit UI state only. With `GoogleSheetsStorage`, it does not reset persistent orders, stock, parse logs, or inventory in Google Sheets.
 
 ## 7. Google Sheets configuration
 

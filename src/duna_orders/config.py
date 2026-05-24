@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     default_timezone: str = "America/Bogota"
     default_currency: str = "COP"
+    duna_storage_backend: str = "memory"
 
     # LLM
     llm_provider: str = "anthropic"
@@ -21,6 +22,7 @@ class Settings(BaseSettings):
 
     # Google Sheets
     google_sheets_credentials_path: Path = Path("./credentials/service_account.json")
+    google_sheets_spreadsheet_id: str | None = None
     active_client_sheet_id: str | None = None
     active_client_name: str = "demo"
 
