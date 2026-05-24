@@ -53,7 +53,7 @@ def make_order(
     tenant_id: str = DEFAULT_TEST_TENANT_ID,
     fulfillment_type: str | None = None,
     ) -> Order:
-    item = OrderItem(        
+    item = OrderItem(
         tenant_id=tenant_id,
         order_item_id="oit_test",
         order_id=order_id,

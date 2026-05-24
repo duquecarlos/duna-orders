@@ -41,13 +41,13 @@ def live_sheets_run_tokens() -> list[str]:
 def live_sheets_storage(
     live_sheets_run_tokens: list[str],
 ) -> GoogleSheetsStorage:
+    
     test_spreadsheet_id = settings.google_sheets_test_spreadsheet_id
 
     if not test_spreadsheet_id:
         pytest.skip("GOOGLE_SHEETS_TEST_SPREADSHEET_ID is not set")
 
-    production_spreadsheet_id = settings.google_sheets_spreadsheet_idoduction_spreadsheet_id = os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID")
-
+    production_spreadsheet_id = settings.google_sheets_spreadsheet_id
     if production_spreadsheet_id and test_spreadsheet_id == production_spreadsheet_id:
         pytest.fail(
             "GOOGLE_SHEETS_TEST_SPREADSHEET_ID must not equal "
