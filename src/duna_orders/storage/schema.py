@@ -9,7 +9,10 @@ PARSE_LOG_TAB = "parse_log"
 ORDER_STATUSES = (
     "draft",
     "confirmed",
+    "in_preparation",
+    "ready",
     "delivered",
+    "picked_up",
     "cancelled",
 )
 
@@ -60,6 +63,7 @@ TABS = {
         "raw_message",
         "status",
         "confirmed_at",
+        "status_updated_at",
         "subtotal",
         "delivery_fee",
         "packaging_fee",

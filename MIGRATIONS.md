@@ -1,4 +1,66 @@
 # Migrations
+## M5.1 — Order lifecycle status timestamp
+
+This migration prepares the Google Sheets `orders` tab for order lifecycle transitions.
+
+### Schema change
+
+Add one column to the `orders` tab:
+
+- `status_updated_at`
+
+Required placement:
+
+- Immediately after `confirmed_at`
+- Before `subtotal`
+
+Updated `orders` header order:
+
+- order_id
+- tenant_id
+- created_at
+- updated_at
+- customer_id
+- customer_name_snapshot
+- customer_phone_snapshot
+- raw_message
+- status
+- confirmed_at
+- status_updated_at
+- subtotal
+- delivery_fee
+- packaging_fee
+- total
+- fulfillment_type
+- delivery_zone
+- customer_notes
+- payment_method
+- delivery_date
+- delivery_address
+- notes
+- confirmation_message
+- created_by
+
+### Data backfill
+
+For existing rows, set `status_updated_at` using this rule:
+
+1. If `confirmed_at` has a value, copy `confirmed_at`.
+2. If `confirmed_at` is blank, copy `updated_at`.
+
+This preserves a reasonable latest-known lifecycle timestamp without adding historical status history.
+
+### Transition behavior
+
+After this migration, `GoogleSheetsStorage` bootstrap validation intentionally raises `StorageConfigError` if the `orders` tab does not include `status_updated_at` in the expected position.
+
+### Tooling
+
+No automated migration tooling is provided for this step.
+
+The spreadsheet edit is performed manually before running live Sheets verification.
+
+
 ## M4.2.5b-D — Tenant ID columns for Google Sheets
 
 This migration prepares Google Sheets storage for tenant-scoped data.

@@ -12,14 +12,34 @@ Status: pending selection.
 
 Possible next directions:
 
-- Order lifecycle / today's-orders visibility.
-- Dashboard page for read-only pilot visibility.
 - Customer registry workflow for recurring customer handling.
-- Live Sheets test quota/read optimization.
+- Dashboard page for read-only pilot visibility.
+- Live Sheets test spreadsheet setup.
+- Google Sheets quota/read optimization.
 - Tenant defaults for parser-assisted draft creation.
 
 
 ## Recently closed
+### M5 - Order lifecycle and today's-orders visibility
+
+Closed.
+
+Completed scope:
+
+- Added lifecycle statuses for preparation, readiness, delivery, pickup, and cancellation.
+- Added service-level lifecycle transition validation through `OrderService.transition_order_status(...)`.
+- Added `status_updated_at` as the lightweight latest lifecycle timestamp.
+- Extended memory and Sheets storage to persist lifecycle status updates.
+- Added tested today-order visibility filtering.
+- Added Today’s Orders Streamlit page for active orders and lifecycle actions.
+- Verified Sheets-backed lifecycle management manually.
+
+Deferred follow-ups:
+
+- Create a separate live-test Google Sheet and configure `GOOGLE_SHEETS_TEST_SPREADSHEET_ID`.
+- Optimize Sheets read behavior to reduce 429 quota risk during Streamlit reruns.
+- Add customer registry workflow after validation feedback.
+- Add dashboard/read-only analytics after validation feedback.
 
 ### M4.3 - Streamlit Sheets backend wiring
 

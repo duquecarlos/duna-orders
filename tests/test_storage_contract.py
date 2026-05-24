@@ -279,9 +279,34 @@ def test_update_order_status_confirms_and_sets_timestamp(
 
     assert updated_order.status == "confirmed"
     assert updated_order.confirmed_at == confirmed_at
+    assert updated_order.status_updated_at == confirmed_at
     assert saved_order is not None
     assert saved_order.confirmed_at == confirmed_at
+    assert saved_order.status_updated_at == confirmed_at
 
+def test_update_order_status_sets_status_updated_at_without_confirmed_at(
+    storage_case: StorageCase,
+):
+    storage = storage_case.storage
+    token = storage_case.run_token
+    order = make_order(token, status="confirmed")
+    changed_at = datetime.now(timezone.utc).replace(microsecond=654321)
+
+    storage.create_order(order)
+    updated_order = storage.update_order_status(
+        order.order_id,
+        "in_preparation",
+        status_updated_at=changed_at,
+    )
+    saved_order = storage.get_order(order.order_id)
+
+    assert updated_order.status == "in_preparation"
+    assert updated_order.confirmed_at is None
+    assert updated_order.status_updated_at == changed_at
+    assert saved_order is not None
+    assert saved_order.status == "in_preparation"
+    assert saved_order.confirmed_at is None
+    assert saved_order.status_updated_at == changed_at
 
 def test_update_order_status_raises_on_missing_order(storage_case: StorageCase):
     storage = storage_case.storage

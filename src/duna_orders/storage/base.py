@@ -61,6 +61,7 @@ class StorageInterface(ABC):
         order_id: str,
         status: str,
         confirmed_at: datetime | None = None,
+        status_updated_at: datetime | None = None,
     ) -> Order:
         pass
 

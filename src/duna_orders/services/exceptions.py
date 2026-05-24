@@ -20,7 +20,20 @@ class InvalidOrderStateError(ServiceError):
         self.order_id = order_id
         self.status = status
 
-
+class InvalidOrderTransitionError(ServiceError):
+    def __init__(
+        self,
+        order_id: str,
+        current_status: str,
+        new_status: str,
+    ) -> None:
+        super().__init__(
+            f"Order {order_id} cannot transition from "
+            f"'{current_status}' to '{new_status}'"
+        )
+        self.order_id = order_id
+        self.current_status = current_status
+        self.new_status = new_status
 class ProductNotFoundError(ServiceError):
     def __init__(self, product_id: str | None) -> None:
         super().__init__(f"Product {product_id} not found")

@@ -8,7 +8,10 @@ from pydantic import BaseModel, ConfigDict, Field
 OrderStatus = Literal[
     "draft",
     "confirmed",
+    "in_preparation",
+    "ready",
     "delivered",
+    "picked_up",
     "cancelled",
 ]
 StockReason = Literal[
@@ -113,6 +116,7 @@ class Order(BaseModel):
     raw_message: str
     status: OrderStatus = "draft"
     confirmed_at: datetime | None = None
+    status_updated_at: datetime = Field(default_factory=utc_now)
 
     items: list[OrderItem] = Field(default_factory=list)
 

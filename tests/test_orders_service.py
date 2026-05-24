@@ -16,6 +16,7 @@ from duna_orders.services.exceptions import (
     InactiveProductError,
     InsufficientStockError,
     InvalidOrderStateError,
+    InvalidOrderTransitionError,
     OrderNotFoundError,
     ProductNotFoundError,
 )
@@ -49,9 +50,11 @@ def make_order(
     product_id: str = PRODUCT_ID,
     quantity: Decimal = Decimal("2"),
     status: str = "draft",
-) -> Order:
-    item = OrderItem(
-        tenant_id=DEFAULT_TEST_TENANT_ID,
+    tenant_id: str = DEFAULT_TEST_TENANT_ID,
+    fulfillment_type: str | None = None,
+    ) -> Order:
+    item = OrderItem(        
+        tenant_id=tenant_id,
         order_item_id="oit_test",
         order_id=order_id,
         product_id=product_id,
@@ -64,13 +67,14 @@ def make_order(
     )
 
     return Order(
-        tenant_id=DEFAULT_TEST_TENANT_ID,
+        tenant_id=tenant_id,
         order_id=order_id,
         raw_message="Quiero 2 empanadas",
         status=status,
         items=[item],
         subtotal=quantity * Decimal("3000"),
         total=quantity * Decimal("3000"),
+        fulfillment_type=fulfillment_type,
     )
 
 
@@ -473,3 +477,96 @@ def test_confirm_order_is_idempotent_on_retry():
     assert len(movements) == 1
     assert product is not None
     assert product.current_stock == Decimal("8")
+
+def test_transition_order_status_confirmed_to_in_preparation():
+    storage = InMemoryStorage()
+    storage.create_order(make_order(status="confirmed", fulfillment_type="delivery"))
+    service = OrderService(storage)
+
+    changed_at = datetime(2026, 5, 24, 12, 0, tzinfo=timezone.utc)
+
+    order = service.transition_order_status(
+        ORDER_ID,
+        DEFAULT_TEST_TENANT_ID,
+        "in_preparation",
+        status_updated_at=changed_at,
+    )
+
+    assert order.status == "in_preparation"
+    assert order.status_updated_at == changed_at
+
+
+def test_transition_order_status_ready_to_delivered_for_delivery():
+    storage = InMemoryStorage()
+    storage.create_order(make_order(status="ready", fulfillment_type="delivery"))
+    service = OrderService(storage)
+
+    order = service.transition_order_status(
+        ORDER_ID,
+        DEFAULT_TEST_TENANT_ID,
+        "delivered",
+    )
+
+    assert order.status == "delivered"
+
+
+def test_transition_order_status_ready_to_picked_up_for_pickup():
+    storage = InMemoryStorage()
+    storage.create_order(make_order(status="ready", fulfillment_type="pickup"))
+    service = OrderService(storage)
+
+    order = service.transition_order_status(
+        ORDER_ID,
+        DEFAULT_TEST_TENANT_ID,
+        "picked_up",
+    )
+
+    assert order.status == "picked_up"
+
+
+def test_transition_order_status_rejects_direct_confirmed_to_delivered():
+    storage = InMemoryStorage()
+    storage.create_order(make_order(status="confirmed", fulfillment_type="delivery"))
+    service = OrderService(storage)
+
+    with pytest.raises(InvalidOrderTransitionError) as exc_info:
+        service.transition_order_status(
+            ORDER_ID,
+            DEFAULT_TEST_TENANT_ID,
+            "delivered",
+        )
+
+    assert exc_info.value.current_status == "confirmed"
+    assert exc_info.value.new_status == "delivered"
+
+
+def test_transition_order_status_rejects_terminal_state_transition():
+    storage = InMemoryStorage()
+    storage.create_order(make_order(status="delivered", fulfillment_type="delivery"))
+    service = OrderService(storage)
+
+    with pytest.raises(InvalidOrderTransitionError):
+        service.transition_order_status(
+            ORDER_ID,
+            DEFAULT_TEST_TENANT_ID,
+            "cancelled",
+        )
+
+
+def test_transition_order_status_respects_tenant_scope():
+    storage = InMemoryStorage()
+    storage.create_order(
+        make_order(
+            status="confirmed",
+            tenant_id="tenant_other",
+            fulfillment_type="delivery",
+        )
+    )
+    service = OrderService(storage)
+
+    with pytest.raises(OrderNotFoundError):
+        service.transition_order_status(
+            ORDER_ID,
+            DEFAULT_TEST_TENANT_ID,
+            "in_preparation",
+        )

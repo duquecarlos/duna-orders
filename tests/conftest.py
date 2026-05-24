@@ -7,7 +7,7 @@ from operator import itemgetter
 
 import gspread
 import pytest
-
+from duna_orders.config import settings
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.storage.schema import TABS
@@ -41,12 +41,12 @@ def live_sheets_run_tokens() -> list[str]:
 def live_sheets_storage(
     live_sheets_run_tokens: list[str],
 ) -> GoogleSheetsStorage:
-    test_spreadsheet_id = os.getenv("GOOGLE_SHEETS_TEST_SPREADSHEET_ID")
+    test_spreadsheet_id = settings.google_sheets_test_spreadsheet_id
 
     if not test_spreadsheet_id:
         pytest.skip("GOOGLE_SHEETS_TEST_SPREADSHEET_ID is not set")
 
-    production_spreadsheet_id = os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID")
+    production_spreadsheet_id = settings.google_sheets_spreadsheet_idoduction_spreadsheet_id = os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID")
 
     if production_spreadsheet_id and test_spreadsheet_id == production_spreadsheet_id:
         pytest.fail(
@@ -54,10 +54,7 @@ def live_sheets_storage(
             "GOOGLE_SHEETS_SPREADSHEET_ID. Use a separate test spreadsheet."
         )
 
-    credentials_path = os.getenv(
-        "GOOGLE_SHEETS_CREDENTIALS_PATH",
-        "./credentials/service_account.json",
-    )
+    credentials_path = str(settings.google_sheets_credentials_path)
 
     storage = GoogleSheetsStorage(
         spreadsheet_id=test_spreadsheet_id,

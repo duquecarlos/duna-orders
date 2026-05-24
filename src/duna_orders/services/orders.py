@@ -14,11 +14,29 @@ from duna_orders.services.exceptions import (
     InactiveProductError,
     InsufficientStockError,
     InvalidOrderStateError,
+    InvalidOrderTransitionError,
     OrderNotFoundError,
     ProductNotFoundError,
 )
 from duna_orders.storage.base import StorageInterface
 
+BASE_STATUS_TRANSITIONS = {
+    "confirmed": ("in_preparation", "cancelled"),
+    "in_preparation": ("ready", "cancelled"),
+}
+
+
+def get_allowed_next_statuses(order: Order) -> tuple[str, ...]:
+    if order.status == "ready":
+        if order.fulfillment_type == "delivery":
+            return ("delivered", "cancelled")
+
+        if order.fulfillment_type == "pickup":
+            return ("picked_up", "cancelled")
+
+        return ("cancelled",)
+
+    return BASE_STATUS_TRANSITIONS.get(order.status, ())
 
 class OrderService:
     def __init__(self, storage: StorageInterface) -> None:
@@ -162,4 +180,31 @@ class OrderService:
             order_id,
             "confirmed",
             confirmed_at=confirmed_at,
+        )
+    def transition_order_status(
+        self,
+        order_id: str,
+        tenant_id: str,
+        new_status: str,
+        reason: str | None = None,
+        status_updated_at: datetime | None = None,
+    ) -> Order:
+        order = self._storage.get_order(order_id)
+
+        if order is None or order.tenant_id != tenant_id:
+            raise OrderNotFoundError(order_id)
+
+        allowed_statuses = get_allowed_next_statuses(order)
+
+        if new_status not in allowed_statuses:
+            raise InvalidOrderTransitionError(
+                order_id=order_id,
+                current_status=order.status,
+                new_status=new_status,
+            )
+
+        return self._storage.update_order_status(
+            order_id,
+            new_status,
+            status_updated_at=status_updated_at or utc_now(),
         )

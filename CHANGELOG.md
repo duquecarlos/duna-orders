@@ -1,4 +1,51 @@
 # Changelog
+## M5 - Order lifecycle and today's-orders visibility
+
+### Delivered
+
+- Extended order statuses from creation/confirmation into a simple operational lifecycle:
+  - `draft`
+  - `confirmed`
+  - `in_preparation`
+  - `ready`
+  - `delivered`
+  - `picked_up`
+  - `cancelled`
+- Added `status_updated_at` to orders as the latest lifecycle timestamp.
+- Added `OrderService.transition_order_status(...)` for controlled lifecycle transitions.
+- Added service-level transition validation:
+  - `confirmed` -> `in_preparation`, `cancelled`
+  - `in_preparation` -> `ready`, `cancelled`
+  - `ready` -> `delivered`, `cancelled` for delivery orders
+  - `ready` -> `picked_up`, `cancelled` for pickup orders
+  - terminal states cannot transition further.
+- Added tenant scoping to lifecycle transitions.
+- Extended `StorageInterface.update_order_status(...)` and both storage backends to persist `status_updated_at`.
+- Added `src/duna_orders/services/order_visibility.py` for testable today/order visibility filtering.
+- Added `pages/2_Orders_Today.py` for active order visibility and lifecycle actions.
+- Replaced the empty dashboard placeholder page with the Today’s Orders page.
+- Updated live Sheets test setup so it can read `GOOGLE_SHEETS_TEST_SPREADSHEET_ID` from project settings.
+- Updated `.env.example` so live test Sheet ID is blank by default and not copied from the runtime Sheet ID.
+- Documented the `status_updated_at` Sheets migration in `MIGRATIONS.md`.
+
+### Verification
+
+- `python -m compileall src tests scripts pages streamlit_app.py` -> OK.
+- `pytest tests/ -v -m "not live_sheets and not live_api"` -> 74 passed, 14 deselected.
+- `pytest -m live_sheets -v` -> 13 skipped, 71 deselected because `GOOGLE_SHEETS_TEST_SPREADSHEET_ID` is intentionally blank until a separate live-test spreadsheet is created.
+- Manual Sheets-backed Streamlit check passed after refreshing through a transient Google Sheets 429 quota error:
+  - existing confirmed orders appeared in Today’s Orders;
+  - lifecycle actions worked through preparation, ready, and delivered states;
+  - completed/cancelled toggle worked.
+
+### Notes
+
+- No parser prompts were changed.
+- No customer registry was added.
+- No dashboard analytics were added.
+- No status history table or audit log was added; `status_updated_at` is the current lightweight lifecycle timestamp.
+- A separate live-test Google Sheet remains deferred.
+- Google Sheets quota/read optimization remains a future cleanup item.
 ## M4.3 - Streamlit Sheets backend wiring
 
 ### Delivered

@@ -95,15 +95,20 @@ class InMemoryStorage(StorageInterface):
         order_id: str,
         status: str,
         confirmed_at: datetime | None = None,
+        status_updated_at: datetime | None = None,
     ) -> Order:
         order = self._orders.get(order_id)
 
         if order is None:
             raise KeyError(f"Order not found: {order_id}")
 
+        now = utc_now()
+        status_timestamp = status_updated_at or confirmed_at or now
+
         updates = {
             "status": status,
-            "updated_at": utc_now(),
+            "updated_at": now,
+            "status_updated_at": status_timestamp,
         }
 
         if confirmed_at is not None:

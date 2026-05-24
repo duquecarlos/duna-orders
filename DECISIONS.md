@@ -112,3 +112,17 @@ Trade-off:
 DraftOrderRequest adds one small model, but it becomes the canonical
 contract for "what an order looks like before persistence" — usable by
 both the manual UI and the future parser without translation.
+
+## M5 — Lifecycle transitions belong in the service layer
+
+Decision:
+Add order lifecycle statuses and expose status movement through `OrderService.transition_order_status(...)`, not through direct UI or storage rules.
+
+Why:
+- Streamlit pages should render allowed actions, not define business rules.
+- Storage should persist status changes, not decide whether a transition is valid.
+- The same transition matrix must work for both `InMemoryStorage` and `GoogleSheetsStorage`.
+- `status_updated_at` gives the operator useful lifecycle timing without adding a full status-history table too early.
+
+Trade-off:
+A single `status_updated_at` field does not provide an audit trail. This is acceptable for M5 because the goal is operational visibility, not historical lifecycle analytics. A status-history entity or audit tab can be added later if validation feedback shows it is needed.

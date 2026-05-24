@@ -355,6 +355,7 @@ class GoogleSheetsStorage(StorageInterface):
                 if order.confirmed_at is not None
                 else None
             ),
+            self._datetime_text(order.status_updated_at),
             self._decimal_text(order.subtotal),
             self._decimal_text(order.delivery_fee),
             self._decimal_text(order.packaging_fee),
@@ -391,6 +392,7 @@ class GoogleSheetsStorage(StorageInterface):
                 "raw_message": record["raw_message"],
                 "status": record["status"],
                 "confirmed_at": self._optional_datetime(record["confirmed_at"]),
+                "status_updated_at": self._to_datetime(record["status_updated_at"]),
                 "items": items,
                 "subtotal": self._to_decimal(record["subtotal"]),
                 "delivery_fee": self._to_decimal(record["delivery_fee"]),
@@ -612,15 +614,20 @@ class GoogleSheetsStorage(StorageInterface):
         order_id: str,
         status: str,
         confirmed_at: datetime | None = None,
+        status_updated_at: datetime | None = None,
     ) -> Order:
         order = self.get_order(order_id)
 
         if order is None:
             raise KeyError(f"Order not found: {order_id}")
 
+        now = utc_now()
+        status_timestamp = status_updated_at or confirmed_at or now
+
         updates: dict[str, Any] = {
             "status": status,
-            "updated_at": utc_now(),
+            "updated_at": now,
+            "status_updated_at": status_timestamp,
         }
 
         if confirmed_at is not None:
