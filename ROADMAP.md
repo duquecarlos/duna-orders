@@ -12,14 +12,37 @@ Status: pending selection.
 
 Possible next directions:
 
-- Customer registry workflow for recurring customer handling.
 - Dashboard page for read-only pilot visibility.
-- Live Sheets test spreadsheet setup.
 - Google Sheets quota/read optimization.
+- Customer profile editing workflow.
 - Tenant defaults for parser-assisted draft creation.
+- Customer analytics and segmentation.
 
 
 ## Recently closed
+### M6 - Customer registry and repeat recognition
+
+Closed.
+
+Completed scope:
+
+- Added customer auto-recognition by phone during draft creation.
+- Added lightweight phone normalization for spaces and dashes.
+- Added customer order history lookup through the storage contract.
+- Added customer context labels for New Order and Today’s Orders.
+- Added deterministic WhatsApp confirmation message generation.
+- Wired parser-created drafts to use the same customer name/phone fields as manual draft creation.
+- Added live Sheets coverage for customer phone lookup and customer order history.
+- Added partial-confirmation repair when stock movement already exists but order status remains draft.
+
+Deferred follow-ups:
+
+- Optimize Google Sheets reads to reduce 429 quota risk.
+- Add customer profile editing UI.
+- Add support for customer default address reuse.
+- Add dashboard/read-only analytics.
+- Add customer segmentation later, after pilot feedback.
+
 ### M5 - Order lifecycle and today's-orders visibility
 
 Closed.

@@ -22,7 +22,11 @@ from duna_orders.ui.parser_review import (
     DraftCandidate,
     parsed_result_to_draft_candidate,
 )
-
+from duna_orders.services.customer_context import (
+    format_new_order_customer_context,
+    get_customer_context_by_phone,
+)
+from duna_orders.ui.confirmation_message import generate_confirmation_message
 from duna_orders.services.exceptions import (
     EmptyDraftError,
     InactiveProductError,
@@ -79,7 +83,8 @@ def _bootstrap_session() -> None:
 
     if "last_success_message" not in st.session_state:
         st.session_state.last_success_message = None
-    
+    if "last_confirmation_message" not in st.session_state:
+        st.session_state.last_confirmation_message = None
     if "draft_candidate" not in st.session_state:
         st.session_state.draft_candidate = None
 
@@ -175,6 +180,8 @@ def _render_parsed_candidate(
     catalog: DemoCatalogFile,
     raw_message: str,
     order_service: OrderService,
+    customer_name: str,
+    customer_phone: str,
 ) -> None:
     st.divider()
     st.subheader("Revisión del parser")
@@ -281,13 +288,14 @@ def _render_parsed_candidate(
     col_create, col_discard = st.columns(2)
 
     with col_create:
-        if st.button("Crear borrador desde parser", disabled=not selected_items):
+        can_create_parser_draft = bool(customer_name.strip()) and bool(selected_items)
+        if st.button("Crear borrador con estos datos", disabled=not can_create_parser_draft):
             try:
                 request = DraftOrderRequest(
                     tenant_id=catalog.business.tenant_id,
                     raw_message=raw_message.strip(),
-                    customer_name="",
-                    customer_phone=None,
+                    customer_name=customer_name.strip(),
+                    customer_phone=customer_phone.strip() or None,
                     fulfillment_type=parsed_fulfillment_type or None,
                     delivery_zone=parsed_delivery_zone.strip() or None,
                     packaging_fee=Decimal("0"),
@@ -299,6 +307,7 @@ def _render_parsed_candidate(
                 st.session_state.draft_order_id = order.order_id
                 st.session_state.draft_candidate = None
                 st.session_state.last_success_message = None
+                st.session_state.last_confirmation_message = None
                 st.rerun()
             except (
                 EmptyDraftError,
@@ -363,10 +372,21 @@ def _render_draft(
     if st.button("Confirmar orden", type="primary"):
         try:
             confirmed_order = order_service.confirm_order(draft_order.order_id)
+            customer = (
+                storage.get_customer(confirmed_order.customer_id)
+                if confirmed_order.customer_id is not None
+                else None
+            )
+            confirmation_message = generate_confirmation_message(
+                confirmed_order,
+                customer,
+            )
+
             st.session_state.draft_order_id = None
             st.session_state.last_success_message = (
                 f"Orden {confirmed_order.order_id} confirmada por {_money(confirmed_order.total)}."
             )
+            st.session_state.last_confirmation_message = confirmation_message
             st.rerun()
         except (
             InsufficientStockError,
@@ -411,6 +431,10 @@ parsing_service: ParsingService | None = st.session_state.parsing_service
 
 if st.session_state.last_success_message:
     st.success(st.session_state.last_success_message)
+
+if st.session_state.last_confirmation_message:
+    st.subheader("Mensaje para WhatsApp")
+    st.code(st.session_state.last_confirmation_message, language="text")
 
 products = storage.list_products(active_only=True)
 
@@ -488,6 +512,24 @@ with col_customer:
 with col_phone:
     customer_phone = st.text_input("Customer phone", placeholder="3001234567")
 
+if customer_phone.strip():
+    customer_context = get_customer_context_by_phone(
+        storage,
+        tenant_id=catalog.business.tenant_id,
+        phone=customer_phone,
+    )
+    customer_context_label = format_new_order_customer_context(customer_context)
+
+    if customer_context.is_known_customer:
+        st.success(customer_context_label)
+
+        registered_name = customer_context.customer.customer_name
+        typed_name = customer_name.strip()
+
+        if typed_name and typed_name.casefold() != registered_name.casefold():
+            st.caption(f"Se usará el nombre registrado: {registered_name}.")
+    else:
+        st.info(customer_context_label)
 col_fulfillment, col_zone, col_payment, col_packaging = st.columns(4)
 
 with col_fulfillment:
@@ -524,8 +566,9 @@ if draft_candidate is not None:
         catalog=catalog,
         raw_message=raw_message,
         order_service=order_service,
+        customer_name=customer_name,
+        customer_phone=customer_phone,
     )
-
 st.divider()
 st.subheader("Productos")
 
@@ -560,6 +603,7 @@ if st.button("Crear borrador", disabled=not can_create_draft):
         order = order_service.create_draft(request)
         st.session_state.draft_order_id = order.order_id
         st.session_state.last_success_message = None
+        st.session_state.last_confirmation_message = None
         st.rerun()
     except (EmptyDraftError, ProductNotFoundError, InactiveProductError, ValueError) as error:
         st.error(str(error))

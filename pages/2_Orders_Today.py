@@ -18,6 +18,10 @@ from duna_orders.ui.setup import (
     get_order_service,
     get_storage,
 )
+from duna_orders.services.customer_context import (
+    format_today_order_customer_badge,
+    get_customer_context_by_phone,
+)
 
 
 STATUS_LABELS = {
@@ -62,10 +66,10 @@ def _format_local_datetime(value: datetime) -> str:
     timezone = ZoneInfo(settings.default_timezone)
     return value.astimezone(timezone).strftime("%Y-%m-%d %H:%M")
 
-
 def _render_order_card(
     order: Order,
     *,
+    storage: StorageInterface,
     order_service: OrderService,
     tenant_id: str,
 ) -> None:
@@ -87,6 +91,13 @@ def _render_order_card(
 
         status_label = STATUS_LABELS.get(order.status, order.status)
         st.write(f"Status: `{status_label}`")
+
+        customer_context = get_customer_context_by_phone(
+            storage,
+            tenant_id=tenant_id,
+            phone=order.customer_phone_snapshot,
+        )
+        st.caption(format_today_order_customer_badge(customer_context))
 
         if order.customer_phone_snapshot:
             st.write(f"Phone: {order.customer_phone_snapshot}")
@@ -193,6 +204,7 @@ st.divider()
 for order in orders:
     _render_order_card(
         order,
+        storage=storage,
         order_service=order_service,
         tenant_id=tenant_id,
     )

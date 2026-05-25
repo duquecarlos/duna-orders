@@ -4,6 +4,7 @@ from tests.conftest import DEFAULT_TEST_TENANT_ID
 import pytest
 
 from duna_orders.domain.models import (
+    Customer,
     DraftItemRequest,
     DraftOrderRequest,
     Order,
@@ -187,6 +188,72 @@ def test_create_draft_happy_path():
     assert order.payment_method == "nequi"
     assert order.items[0].modifications == "sin cebolla"
 
+def test_create_draft_creates_customer_when_phone_is_new():
+    storage = InMemoryStorage()
+    storage.upsert_product(make_product())
+    service = OrderService(storage)
+
+    order = service.create_draft(
+        make_draft_request(
+            customer_name="Andrea",
+            customer_phone="300 123-4567",
+        )
+    )
+
+    customers = storage.list_customers()
+
+    assert len(customers) == 1
+    assert customers[0].customer_name == "Andrea"
+    assert customers[0].customer_phone == "3001234567"
+    assert order.customer_id == customers[0].customer_id
+    assert order.customer_name_snapshot == "Andrea"
+    assert order.customer_phone_snapshot == "3001234567"
+
+
+def test_create_draft_reuses_existing_customer_by_phone_and_tenant():
+    storage = InMemoryStorage()
+    storage.upsert_product(make_product())
+    storage.create_customer(
+        Customer(
+            tenant_id=DEFAULT_TEST_TENANT_ID,
+            customer_id="cus_andrea",
+            customer_name="Andrea Registrada",
+            customer_phone="3001234567",
+        )
+    )
+    service = OrderService(storage)
+
+    order = service.create_draft(
+        make_draft_request(
+            customer_name="Andre",
+            customer_phone="300-123-4567",
+        )
+    )
+
+    customers = storage.list_customers()
+
+    assert len(customers) == 1
+    assert order.customer_id == "cus_andrea"
+    assert order.customer_name_snapshot == "Andrea Registrada"
+    assert order.customer_phone_snapshot == "3001234567"
+
+
+def test_create_draft_keeps_anonymous_flow_when_phone_is_blank():
+    storage = InMemoryStorage()
+    storage.upsert_product(make_product())
+    service = OrderService(storage)
+
+    order = service.create_draft(
+        make_draft_request(
+            customer_name="Cliente sin telefono",
+            customer_phone="   ",
+        )
+    )
+
+    assert storage.list_customers() == []
+    assert order.customer_id is None
+    assert order.customer_name_snapshot == "Cliente sin telefono"
+    assert order.customer_phone_snapshot is None
 
 def test_create_draft_raises_on_empty_items():
     storage = InMemoryStorage()
@@ -477,6 +544,33 @@ def test_confirm_order_is_idempotent_on_retry():
     assert len(movements) == 1
     assert product is not None
     assert product.current_stock == Decimal("8")
+
+def test_confirm_order_repairs_status_when_sale_movement_already_exists():
+    storage = InMemoryStorage()
+    storage.upsert_product(make_product(current_stock=Decimal("0")))
+    storage.create_order(make_order(quantity=Decimal("5")))
+
+    partial_movement = StockMovement(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        stock_movement_id=f"mov_sale_{ORDER_ID}_{PRODUCT_ID}",
+        product_id=PRODUCT_ID,
+        quantity_delta=Decimal("-5"),
+        reason="sale",
+        reference_id=ORDER_ID,
+    )
+    storage.append_stock_movement(partial_movement)
+
+    service = OrderService(storage)
+
+    confirmed_order = service.confirm_order(ORDER_ID)
+
+    movements = storage.list_stock_movements(product_id=PRODUCT_ID)
+    product = storage.get_product(PRODUCT_ID)
+
+    assert confirmed_order.status == "confirmed"
+    assert len(movements) == 1
+    assert product is not None
+    assert product.current_stock == Decimal("0")
 
 def test_transition_order_status_confirmed_to_in_preparation():
     storage = InMemoryStorage()

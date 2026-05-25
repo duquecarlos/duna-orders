@@ -31,7 +31,12 @@ class StorageInterface(ABC):
         pass
 
     @abstractmethod
-    def get_customer_by_phone(self, phone: str) -> Customer | None:
+    def get_customer_by_phone(
+        self,
+        phone: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> Customer | None:
         pass
 
     @abstractmethod
@@ -55,6 +60,15 @@ class StorageInterface(ABC):
     ) -> list[Order]:
         pass
 
+    @abstractmethod
+    def get_customer_order_history(
+        self,
+        customer_id: str,
+        tenant_id: str,
+        *,
+        limit: int = 10,
+    ) -> list[Order]:
+        pass
     @abstractmethod
     def update_order_status(
         self,

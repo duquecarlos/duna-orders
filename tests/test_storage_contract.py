@@ -35,20 +35,19 @@ def make_product(
         available_days=available_days,
     )
 
-
 def make_customer(
     run_token: str,
     *,
     customer_id: str | None = None,
     phone: str | None = None,
+    tenant_id: str = DEFAULT_TEST_TENANT_ID,
 ) -> Customer:
     return Customer(
-        tenant_id=DEFAULT_TEST_TENANT_ID,
+        tenant_id=tenant_id,
         customer_id=customer_id or f"{run_token}cus_test",
         customer_name="Cliente Test",
         customer_phone=phone or f"{run_token}3001234567",
     )
-
 
 def make_order(
     run_token: str,
@@ -57,12 +56,14 @@ def make_order(
     product_id: str | None = None,
     status: str = "draft",
     created_at: datetime | None = None,
+    customer_id: str | None = None,
+    tenant_id: str = DEFAULT_TEST_TENANT_ID,
 ) -> Order:
     resolved_order_id = order_id or f"{run_token}ord_test"
     resolved_product_id = product_id or f"{run_token}prd_test"
 
     item = OrderItem(
-        tenant_id=DEFAULT_TEST_TENANT_ID,
+        tenant_id=tenant_id,
         order_item_id=f"{run_token}oit_{resolved_order_id}",
         order_id=resolved_order_id,
         product_id=resolved_product_id,
@@ -76,7 +77,9 @@ def make_order(
     )
 
     return Order(
-        tenant_id=DEFAULT_TEST_TENANT_ID,
+        tenant_id=tenant_id,
+        customer_id=customer_id,
+        customer_phone_snapshot="3001234567",
         order_id=resolved_order_id,
         created_at=created_at or datetime.now(timezone.utc),
         raw_message="Quiero 2 empanadas",
@@ -223,6 +226,45 @@ def test_customer_phone_lookup_with_whitespace(storage_case: StorageCase):
     assert missing_customer is None
     assert storage.get_customer(f"{token}cus_missing") is None
 
+def test_customer_phone_lookup_normalizes_spaces_dashes_and_respects_tenant(
+    storage_case: StorageCase,
+):
+    storage = storage_case.storage
+    token = storage_case.run_token
+    phone = f"{token}3001234567"
+
+    main_customer = make_customer(
+        token,
+        customer_id=f"{token}cus_main",
+        phone=phone,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+    other_tenant_customer = make_customer(
+        token,
+        customer_id=f"{token}cus_other",
+        phone=phone,
+        tenant_id="other-tenant",
+    )
+
+    storage.create_customer(main_customer)
+    storage.create_customer(other_tenant_customer)
+
+    formatted_phone = f" {phone[:8]}-{phone[8:]} "
+
+    found_main = storage.get_customer_by_phone(
+        formatted_phone,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+    found_other = storage.get_customer_by_phone(
+        formatted_phone,
+        tenant_id="other-tenant",
+    )
+
+    assert found_main is not None
+    assert found_main.customer_id == main_customer.customer_id
+    assert found_other is not None
+    assert found_other.customer_id == other_tenant_customer.customer_id
+
 
 def test_create_order_persists_items_and_status_starts_draft(
     storage_case: StorageCase,
@@ -236,6 +278,7 @@ def test_create_order_persists_items_and_status_starts_draft(
     saved_order = storage.get_order(order.order_id)
 
     assert saved_order is not None
+    assert saved_order.customer_phone_snapshot == "3001234567"
     assert saved_order.status == "draft"
     assert len(saved_order.items) == 1
     assert saved_order.items[0].product_name_snapshot == "Empanada"
@@ -410,7 +453,61 @@ def test_list_orders_filters_by_status_and_since(storage_case: StorageCase):
         f"{token}ord_new_draft",
         f"{token}ord_confirmed",
     }
+def test_get_customer_order_history_filters_by_customer_tenant_and_limit(
+    storage_case: StorageCase,
+):
+    storage = storage_case.storage
+    token = storage_case.run_token
+    customer_id = f"{token}cus_history"
 
+    old_order = make_order(
+        token,
+        order_id=f"{token}ord_old",
+        customer_id=customer_id,
+        created_at=datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc),
+    )
+    newest_order = make_order(
+        token,
+        order_id=f"{token}ord_newest",
+        customer_id=customer_id,
+        created_at=datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc),
+    )
+    middle_order = make_order(
+        token,
+        order_id=f"{token}ord_middle",
+        customer_id=customer_id,
+        created_at=datetime(2026, 5, 21, 12, 0, tzinfo=timezone.utc),
+    )
+    other_customer_order = make_order(
+        token,
+        order_id=f"{token}ord_other_customer",
+        customer_id=f"{token}cus_other",
+        created_at=datetime(2026, 5, 23, 12, 0, tzinfo=timezone.utc),
+    )
+    other_tenant_order = make_order(
+        token,
+        order_id=f"{token}ord_other_tenant",
+        customer_id=customer_id,
+        tenant_id="other-tenant",
+        created_at=datetime(2026, 5, 24, 12, 0, tzinfo=timezone.utc),
+    )
+
+    storage.create_order(old_order)
+    storage.create_order(newest_order)
+    storage.create_order(middle_order)
+    storage.create_order(other_customer_order)
+    storage.create_order(other_tenant_order)
+
+    history = storage.get_customer_order_history(
+        customer_id,
+        DEFAULT_TEST_TENANT_ID,
+        limit=2,
+    )
+
+    assert [order.order_id for order in history] == [
+        f"{token}ord_newest",
+        f"{token}ord_middle",
+    ]
 
 def test_append_parse_log_persists_entry(storage_case: StorageCase):
     storage = storage_case.storage

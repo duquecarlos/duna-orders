@@ -2,12 +2,14 @@ from datetime import datetime
 from decimal import Decimal
 
 from duna_orders.domain.models import (
+    Customer,
     DraftOrderRequest,
     Order,
     OrderItem,
     StockMovement,
     utc_now,
 )
+from duna_orders.domain.phone import normalize_customer_phone
 from duna_orders.ids import new_id
 from duna_orders.services.exceptions import (
     EmptyDraftError,
@@ -82,13 +84,35 @@ class OrderService:
         delivery_fee = Decimal("0")
         packaging_fee = request.packaging_fee
         total = subtotal + delivery_fee + packaging_fee
+        customer_id = None
+        customer_name_snapshot = request.customer_name
+        customer_phone_snapshot = normalize_customer_phone(request.customer_phone)
+
+        if customer_phone_snapshot is not None:
+            existing_customer = self._storage.get_customer_by_phone(
+                customer_phone_snapshot,
+                tenant_id=request.tenant_id,
+            )
+
+            if existing_customer is None:
+                existing_customer = self._storage.create_customer(
+                    Customer(
+                        tenant_id=request.tenant_id,
+                        customer_id=new_id("cus"),
+                        customer_name=request.customer_name,
+                        customer_phone=customer_phone_snapshot,
+                    )
+                )
+
+            customer_id = existing_customer.customer_id
+            customer_name_snapshot = existing_customer.customer_name
 
         order = Order(
             tenant_id=request.tenant_id,
             order_id=order_id,
-            customer_id=None,
-            customer_name_snapshot=request.customer_name,
-            customer_phone_snapshot=request.customer_phone,
+            customer_id=customer_id,
+            customer_name_snapshot=customer_name_snapshot,
+            customer_phone_snapshot=customer_phone_snapshot,
             raw_message=request.raw_message,
             status="draft",
             items=order_items,
@@ -135,10 +159,28 @@ class OrderService:
                 products_by_product_id[item.product_id] = product
 
             quantities_by_product_id[item.product_id] = (
-                quantities_by_product_id.get(item.product_id, Decimal("0")) + item.quantity
+                quantities_by_product_id.get(item.product_id, Decimal("0"))
+                + item.quantity
             )
 
+        already_applied_product_ids = set()
+
+        for product_id in quantities_by_product_id:
+            movement_id = f"mov_sale_{order_id}_{product_id}"
+            existing_movements = self._storage.list_stock_movements(
+                product_id=product_id,
+            )
+
+            if any(
+                movement.stock_movement_id == movement_id
+                for movement in existing_movements
+            ):
+                already_applied_product_ids.add(product_id)
+
         for product_id, requested_quantity in quantities_by_product_id.items():
+            if product_id in already_applied_product_ids:
+                continue
+
             product = products_by_product_id[product_id]
 
             if product.current_stock < requested_quantity:
@@ -149,6 +191,9 @@ class OrderService:
                 )
 
         for product_id, quantity in quantities_by_product_id.items():
+            if product_id in already_applied_product_ids:
+                continue
+
             product = products_by_product_id[product_id]
             movement_id = f"mov_sale_{order_id}_{product_id}"
 

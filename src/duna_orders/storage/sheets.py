@@ -20,6 +20,7 @@ from duna_orders.domain.models import (
     StockMovement,
     utc_now,
 )
+from duna_orders.domain.phone import normalize_customer_phone
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.exceptions import (
     StorageAuthError,
@@ -175,6 +176,12 @@ class GoogleSheetsStorage(StorageInterface):
         return None
 
     @staticmethod
+    def _optional_string(value: Any) -> str | None:
+        if value in ("", None):
+            return None
+
+        return str(value)
+    @staticmethod
     def _empty_to_none(value: Any) -> Any:
         return None if value == "" else value
 
@@ -297,7 +304,7 @@ class GoogleSheetsStorage(StorageInterface):
                 "customer_id": record["customer_id"],
                 "tenant_id": record["tenant_id"],
                 "customer_name": record["customer_name"],
-                "customer_phone": self._empty_to_none(record["customer_phone"]),
+                "customer_phone": self._optional_string(record["customer_phone"]),
                 "default_address": self._empty_to_none(record["default_address"]),
                 "notes": self._empty_to_none(record["notes"]),
                 "created_at": self._to_datetime(record["created_at"]),
@@ -386,7 +393,7 @@ class GoogleSheetsStorage(StorageInterface):
                 "customer_name_snapshot": self._empty_to_none(
                     record["customer_name_snapshot"]
                 ),
-                "customer_phone_snapshot": self._empty_to_none(
+                "customer_phone_snapshot": self._optional_string(
                     record["customer_phone_snapshot"]
                 ),
                 "raw_message": record["raw_message"],
@@ -519,17 +526,22 @@ class GoogleSheetsStorage(StorageInterface):
 
         return None
 
-    def get_customer_by_phone(self, phone: str) -> Customer | None:
-        normalized_phone = phone.strip()
+    def get_customer_by_phone(
+        self,
+        phone: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> Customer | None:
+        normalized_phone = normalize_customer_phone(phone)
 
-        if not normalized_phone:
+        if normalized_phone is None:
             return None
 
         for customer in self.list_customers():
-            if (
-                customer.customer_phone is not None
-                and customer.customer_phone.strip() == normalized_phone
-            ):
+            if tenant_id is not None and customer.tenant_id != tenant_id:
+                continue
+
+            if normalize_customer_phone(customer.customer_phone) == normalized_phone:
                 return customer
 
         return None
@@ -608,6 +620,25 @@ class GoogleSheetsStorage(StorageInterface):
             orders = [order for order in orders if order.created_at >= since]
 
         return orders
+
+    def get_customer_order_history(
+        self,
+        customer_id: str,
+        tenant_id: str,
+        *,
+        limit: int = 10,
+    ) -> list[Order]:
+        orders = [
+            order
+            for order in self.list_orders()
+            if order.tenant_id == tenant_id and order.customer_id == customer_id
+        ]
+
+        return sorted(
+            orders,
+            key=lambda order: order.created_at,
+            reverse=True,
+        )[:limit]
 
     def update_order_status(
         self,

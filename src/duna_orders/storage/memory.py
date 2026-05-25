@@ -9,7 +9,7 @@ from duna_orders.domain.models import (
     utc_now,
 )
 from duna_orders.storage.base import StorageInterface
-
+from duna_orders.domain.phone import normalize_customer_phone
 
 class InMemoryStorage(StorageInterface):
     def __init__(self) -> None:
@@ -42,14 +42,22 @@ class InMemoryStorage(StorageInterface):
         customer = self._customers.get(customer_id)
         return customer.model_copy(deep=True) if customer else None
 
-    def get_customer_by_phone(self, phone: str) -> Customer | None:
-        normalized_phone = phone.strip()
+    def get_customer_by_phone(
+        self,
+        phone: str,
+        *,
+        tenant_id: str | None = None,
+    ) -> Customer | None:
+        normalized_phone = normalize_customer_phone(phone)
 
-        if not normalized_phone:
+        if normalized_phone is None:
             return None
 
         for customer in self._customers.values():
-            if customer.customer_phone and customer.customer_phone.strip() == normalized_phone:
+            if tenant_id is not None and customer.tenant_id != tenant_id:
+                continue
+
+            if normalize_customer_phone(customer.customer_phone) == normalized_phone:
                 return customer.model_copy(deep=True)
 
         return None
@@ -90,6 +98,26 @@ class InMemoryStorage(StorageInterface):
 
         return [order.model_copy(deep=True) for order in orders]
 
+    def get_customer_order_history(
+        self,
+        customer_id: str,
+        tenant_id: str,
+        *,
+        limit: int = 10,
+    ) -> list[Order]:
+        orders = [
+            order
+            for order in self._orders.values()
+            if order.tenant_id == tenant_id and order.customer_id == customer_id
+        ]
+
+        ordered = sorted(
+            orders,
+            key=lambda order: order.created_at,
+            reverse=True,
+        )
+
+        return [order.model_copy(deep=True) for order in ordered[:limit]]
     def update_order_status(
         self,
         order_id: str,

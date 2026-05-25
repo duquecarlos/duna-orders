@@ -1,4 +1,31 @@
 # Architectural Decisions
+## M6 — Customer recognition is service-owned and phone-based
+
+Decision:
+Use phone number as the first customer-recognition key for the MVP. `OrderService.create_draft(...)` owns customer association: it normalizes the submitted phone, looks up an existing customer by `(tenant_id, phone)`, creates a customer when none exists, and stores the associated `customer_id` on the order.
+
+Why:
+- Operators already have customer phone numbers from WhatsApp, even without a WhatsApp API integration.
+- Customer recognition must work for both manual orders and parser-assisted orders.
+- Keeping the logic in the service prevents Streamlit pages from duplicating customer matching rules.
+- The storage backends remain responsible for persistence and lookup only.
+
+Trade-off:
+Phone-only matching is intentionally simple. It does not support multiple phones per customer, deep international normalization, or customer profile merging. Those can be added after real pilot feedback.
+
+## M6 — Confirmation retry repairs partial stock application
+
+Decision:
+Keep deterministic sale movement IDs and make `OrderService.confirm_order(...)` repair a partial confirmation when a sale movement already exists but the order status is still `draft`.
+
+Why:
+- Google Sheets is not transactional.
+- A confirm operation can append stock movement and update product stock, then fail before updating order status because of quota or network issues.
+- On retry, the service should not apply stock twice.
+- Existing deterministic movement IDs allow the service to detect already-applied stock impact and continue to the status update.
+
+Trade-off:
+This repair handles the known partial-confirmation case but does not replace the need for future Sheets read/write optimization or a more transactional backend.
 
 ## M1.1 — Data contract layer
 

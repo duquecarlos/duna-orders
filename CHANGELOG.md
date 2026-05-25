@@ -1,4 +1,60 @@
 # Changelog
+## M6 - Customer registry and repeat recognition
+
+### Delivered
+
+- Added customer auto-recognition during draft creation.
+- Added phone normalization through `normalize_customer_phone(...)`.
+- Phone normalization currently:
+  - strips leading/trailing whitespace;
+  - removes spaces;
+  - removes dashes;
+  - does not perform deep international phone normalization.
+- When `OrderService.create_draft(...)` receives a customer phone:
+  - it looks up an existing customer by `(tenant_id, normalized_phone)`;
+  - if found, it associates the order with the existing `customer_id`;
+  - if not found, it creates a new customer;
+  - registered customer name takes precedence over the newly typed name.
+- Added `StorageInterface.get_customer_order_history(...)`.
+- Implemented customer order history in both `InMemoryStorage` and `GoogleSheetsStorage`.
+- Added `src/duna_orders/services/customer_context.py` for shared customer context and repeat-customer labels.
+- Added customer context to the New Order page:
+  - `Cliente nuevo`;
+  - `Cliente conocido: [name] - [N] pedido(s) anterior(es)`;
+  - note when a typed name differs from the registered customer name.
+- Added customer badges to Today’s Orders:
+  - `First order`;
+  - `Repeat customer (N orders)`.
+- Added deterministic Colombian-Spanish WhatsApp confirmation message generation in `src/duna_orders/ui/confirmation_message.py`.
+- Added WhatsApp confirmation message display after order confirmation.
+- Updated parser-created draft flow so customer name/phone fields are reused instead of hardcoded anonymous customer data.
+- Added Sheets deserialization safeguards for numeric-looking phone values in `customer_phone` and `customer_phone_snapshot`.
+- Added retry repair logic for partial confirmation cases where a deterministic sale stock movement already exists but the order status is still `draft`.
+
+### Verification
+
+- `python -m compileall src tests scripts pages streamlit_app.py` -> OK.
+- `pytest tests/ -v -m "not live_sheets and not live_api"` -> 86 passed, 16 deselected.
+- `pytest -m live_sheets -v` with `LIVE_SHEETS_TEST_DELAY_S=12` -> 15 passed, 87 deselected.
+- Manual Sheets-backed Streamlit verification passed:
+  - new customer phone created a customer row in Google Sheets;
+  - repeated phone recognized the stored customer;
+  - typed name mismatch kept the registered customer name;
+  - parser-created drafts used the same customer name/phone fields;
+  - WhatsApp confirmation message displayed after confirmation;
+  - Today’s Orders showed customer context;
+  - inconsistent draft-plus-stock-movement runtime order was repaired successfully.
+
+### Notes
+
+- No parser prompts were changed.
+- No outbound WhatsApp messaging was added.
+- No customer profile editing UI was added.
+- No dashboard analytics were added.
+- No multi-phone customer support was added.
+- Google Sheets 429 quota/read pressure remains a future optimization item.
+- `OrderService.confirm_order(...)` now explicitly repairs partial-confirmation retries by detecting deterministic existing sale movement IDs and continuing to status update.
+
 ## M5 - Order lifecycle and today's-orders visibility
 
 ### Delivered
