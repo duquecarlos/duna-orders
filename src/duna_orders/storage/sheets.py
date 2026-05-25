@@ -38,7 +38,16 @@ from duna_orders.storage.schema import (
 )
 
 T = TypeVar("T")
+class _SheetsRecordSet:
+    def __init__(self, storage: "GoogleSheetsStorage") -> None:
+        self._storage = storage
+        self._records_by_tab: dict[str, list[dict[str, Any]]] = {}
 
+    def records(self, tab_name: str) -> list[dict[str, Any]]:
+        if tab_name not in self._records_by_tab:
+            self._records_by_tab[tab_name] = self._storage._load_records(tab_name)
+
+        return self._records_by_tab[tab_name]
 
 def _is_retryable_status_code(status_code: int | None) -> bool:
     if status_code is None:
@@ -150,9 +159,21 @@ class GoogleSheetsStorage(StorageInterface):
     def _worksheet(self, tab_name: str) -> gspread.Worksheet:
         return self._run_gspread(lambda: self._spreadsheet.worksheet(tab_name))
 
-    def _records(self, tab_name: str) -> list[dict[str, Any]]:
+    def _new_record_set(self) -> _SheetsRecordSet:
+        return _SheetsRecordSet(self)
+
+    def _load_records(self, tab_name: str) -> list[dict[str, Any]]:
         return self._run_gspread(lambda: self._worksheet(tab_name).get_all_records())
 
+    def _records(
+        self,
+        tab_name: str,
+        record_set: _SheetsRecordSet | None = None,
+    ) -> list[dict[str, Any]]:
+        if record_set is None:
+            return self._load_records(tab_name)
+
+        return record_set.records(tab_name)
     def _find_row_index(
         self,
         *,
@@ -475,16 +496,30 @@ class GoogleSheetsStorage(StorageInterface):
                 "error": self._empty_to_none(record["error"]),
             }
         )
-    def list_products(self, *, active_only: bool = True) -> list[Product]:
-        products = [self._product_from_record(record) for record in self._records(PRODUCTS_TAB)]
+    def _products_from_records(
+        self,
+        record_set: _SheetsRecordSet,
+        *,
+        active_only: bool = True,
+    ) -> list[Product]:
+        products = [
+            self._product_from_record(record)
+            for record in self._records(PRODUCTS_TAB, record_set)
+        ]
 
         if active_only:
             products = [product for product in products if product.active]
 
         return products
 
+    def list_products(self, *, active_only: bool = True) -> list[Product]:
+        record_set = self._new_record_set()
+        return self._products_from_records(record_set, active_only=active_only)
+
     def get_product(self, product_id: str) -> Product | None:
-        for product in self.list_products(active_only=False):
+        record_set = self._new_record_set()
+
+        for product in self._products_from_records(record_set, active_only=False):
             if product.product_id == product_id:
                 return product
 
@@ -513,14 +548,23 @@ class GoogleSheetsStorage(StorageInterface):
 
         return product.model_copy(deep=True)
 
-    def list_customers(self) -> list[Customer]:
+    def _customers_from_records(
+        self,
+        record_set: _SheetsRecordSet,
+    ) -> list[Customer]:
         return [
             self._customer_from_record(record)
-            for record in self._records(CUSTOMERS_TAB)
+            for record in self._records(CUSTOMERS_TAB, record_set)
         ]
 
+    def list_customers(self) -> list[Customer]:
+        record_set = self._new_record_set()
+        return self._customers_from_records(record_set)
+
     def get_customer(self, customer_id: str) -> Customer | None:
-        for customer in self.list_customers():
+        record_set = self._new_record_set()
+
+        for customer in self._customers_from_records(record_set):
             if customer.customer_id == customer_id:
                 return customer
 
@@ -537,7 +581,9 @@ class GoogleSheetsStorage(StorageInterface):
         if normalized_phone is None:
             return None
 
-        for customer in self.list_customers():
+        record_set = self._new_record_set()
+
+        for customer in self._customers_from_records(record_set):
             if tenant_id is not None and customer.tenant_id != tenant_id:
                 continue
 
@@ -545,7 +591,6 @@ class GoogleSheetsStorage(StorageInterface):
                 return customer
 
         return None
-
     def create_customer(self, customer: Customer) -> Customer:
         worksheet = self._worksheet(CUSTOMERS_TAB)
         row_index = self._find_row_index(
@@ -585,20 +630,14 @@ class GoogleSheetsStorage(StorageInterface):
 
         return order.model_copy(deep=True)
 
-    def get_order(self, order_id: str) -> Order | None:
-        for order in self.list_orders():
-            if order.order_id == order_id:
-                return order
-
-        return None
-
-    def list_orders(
+    def _orders_from_records(
         self,
+        record_set: _SheetsRecordSet,
         *,
         status: str | None = None,
         since: datetime | None = None,
     ) -> list[Order]:
-        item_records = self._records(ORDER_ITEMS_TAB)
+        item_records = self._records(ORDER_ITEMS_TAB, record_set)
         items_by_order_id: dict[str, list[OrderItem]] = {}
 
         for record in item_records:
@@ -610,7 +649,7 @@ class GoogleSheetsStorage(StorageInterface):
                 record,
                 items_by_order_id.get(record["order_id"], []),
             )
-            for record in self._records(ORDERS_TAB)
+            for record in self._records(ORDERS_TAB, record_set)
         ]
 
         if status is not None:
@@ -621,6 +660,24 @@ class GoogleSheetsStorage(StorageInterface):
 
         return orders
 
+    def get_order(self, order_id: str) -> Order | None:
+        record_set = self._new_record_set()
+
+        for order in self._orders_from_records(record_set):
+            if order.order_id == order_id:
+                return order
+
+        return None
+
+    def list_orders(
+        self,
+        *,
+        status: str | None = None,
+        since: datetime | None = None,
+    ) -> list[Order]:
+        record_set = self._new_record_set()
+        return self._orders_from_records(record_set, status=status, since=since)
+
     def get_customer_order_history(
         self,
         customer_id: str,
@@ -628,9 +685,10 @@ class GoogleSheetsStorage(StorageInterface):
         *,
         limit: int = 10,
     ) -> list[Order]:
+        record_set = self._new_record_set()
         orders = [
             order
-            for order in self.list_orders()
+            for order in self._orders_from_records(record_set)
             if order.tenant_id == tenant_id and order.customer_id == customer_id
         ]
 
@@ -639,7 +697,6 @@ class GoogleSheetsStorage(StorageInterface):
             key=lambda order: order.created_at,
             reverse=True,
         )[:limit]
-
     def update_order_status(
         self,
         order_id: str,
@@ -721,14 +778,15 @@ class GoogleSheetsStorage(StorageInterface):
 
         return entry.model_copy(deep=True)
 
-    def list_stock_movements(
+    def _stock_movements_from_records(
         self,
+        record_set: _SheetsRecordSet,
         *,
         product_id: str | None = None,
     ) -> list[StockMovement]:
         movements = [
             self._stock_movement_from_record(record)
-            for record in self._records(STOCK_MOVEMENTS_TAB)
+            for record in self._records(STOCK_MOVEMENTS_TAB, record_set)
         ]
 
         if product_id is not None:
@@ -739,3 +797,14 @@ class GoogleSheetsStorage(StorageInterface):
             ]
 
         return movements
+
+    def list_stock_movements(
+        self,
+        *,
+        product_id: str | None = None,
+    ) -> list[StockMovement]:
+        record_set = self._new_record_set()
+        return self._stock_movements_from_records(
+            record_set,
+            product_id=product_id,
+        )

@@ -1,4 +1,34 @@
 # Changelog
+## M6.5.1 - Internal Sheets read-provider consolidation
+
+### Delivered
+
+- Centralized Google Sheets full-tab record loading behind the private `GoogleSheetsStorage._load_records(...)` path.
+- Added `_SheetsRecordSet` as an operation-scoped record loader inside `GoogleSheetsStorage`.
+- Routed read-side hydration through reusable private helpers for:
+  - products;
+  - customers;
+  - orders and order items;
+  - stock movements.
+- Preserved the public `StorageInterface` contract.
+- Did not change OrderService, UI behavior, or Pydantic models.
+- Did not add request scoping or cross-request caching; those remain deferred to later M6.5 slices.
+- Added fake Sheets test infrastructure with read counters for deterministic read-pattern tests.
+- Added `tests/test_sheets_read_consolidation.py`.
+
+### Verification
+
+- `python -m compileall src\duna_orders\storage\sheets.py tests\_fakes.py tests\test_sheets_read_consolidation.py` -> OK.
+- `pytest tests\test_sheets_read_consolidation.py -v` -> 3 passed.
+- `pytest tests/test_storage_contract.py -v -m "not live_sheets"` -> 15 passed, 15 deselected.
+- `git diff --check` -> clean.
+
+### Notes
+
+- M6.5.1 only centralizes internal read loading and creates reusable fake read-count infrastructure.
+- Request-scoped consolidation remains deferred to M6.5.2.
+- Short-TTL cross-request caching remains deferred to M6.5.3.
+
 ## M6 - Customer registry and repeat recognition
 
 ### Delivered
