@@ -153,3 +153,32 @@ Why:
 
 Trade-off:
 A single `status_updated_at` field does not provide an audit trail. This is acceptable for M5 because the goal is operational visibility, not historical lifecycle analytics. A status-history entity or audit tab can be added later if validation feedback shows it is needed.
+
+## M6 - Partial confirmation retry repair
+
+Decision:
+Keep the partial-confirmation repair path inside OrderService.confirm_order, but make it deterministic and narrow.
+
+Detection criterion:
+A product-level sale movement is considered already applied only when an existing StockMovement matches the expected sale movement exactly:
+
+- tenant_id matches the order tenant_id.
+- stock_movement_id equals mov_sale_{order_id}_{product_id}.
+- product_id matches the aggregated order product_id.
+- quantity_delta equals the negative aggregated ordered quantity for that product.
+- reason is sale.
+- reference_id equals the order_id.
+
+This is not a heuristic. It does not use time windows, fuzzy matching, customer data, item names, or operator guesses.
+
+Audit/logging behavior:
+When an exact existing movement is used to repair a draft order, confirm_order emits a runtime warning log and then updates the order status to confirmed. No additional persistent audit row is created in M6 because stock_movements already contain the deterministic sale record and the order status update is still persisted. A dedicated audit/status-history table can be added later if operator feedback shows it is needed.
+
+Permanence:
+This is a permanent safety path, not a feature flag. It protects Sheets-backed confirmation retries from double-applying stock after a partial write.
+
+Failure policy:
+If an existing movement has a similar ID but does not match the exact expected sale payload, it is not treated as already applied. Normal stock validation and append-only duplicate protection apply, and the order remains draft if confirmation cannot complete.
+
+Trade-off:
+The repair path is intentionally conservative. It may refuse to repair some manually corrupted rows, but it avoids silently confirming an order against incorrect stock movement data.

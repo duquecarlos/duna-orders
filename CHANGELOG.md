@@ -52,8 +52,10 @@
 - No customer profile editing UI was added.
 - No dashboard analytics were added.
 - No multi-phone customer support was added.
-- Google Sheets 429 quota/read pressure remains a future optimization item.
-- `OrderService.confirm_order(...)` now explicitly repairs partial-confirmation retries by detecting deterministic existing sale movement IDs and continuing to status update.
+- `GoogleSheetsStorage.get_customer_order_history(...)` is currently naive: it calls `list_orders()`, hydrates the full order list, and filters by `tenant_id` and `customer_id` in Python.
+- Customer order history read optimization is deferred into M6.5 as part of the Sheets performance / cleanup slice.
+- Google Sheets 429 quota/read pressure remains a known optimization item before dashboard work.
+- `OrderService.confirm_order(...)` repairs partial-confirmation retries only when the existing sale stock movement exactly matches the expected deterministic payload.
 
 ## M5 - Order lifecycle and today's-orders visibility
 

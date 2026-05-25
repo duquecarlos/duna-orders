@@ -571,7 +571,35 @@ def test_confirm_order_repairs_status_when_sale_movement_already_exists():
     assert len(movements) == 1
     assert product is not None
     assert product.current_stock == Decimal("0")
+def test_confirm_order_does_not_repair_when_existing_sale_movement_payload_mismatches():
+    storage = InMemoryStorage()
+    storage.upsert_product(make_product(current_stock=Decimal("0")))
+    storage.create_order(make_order(quantity=Decimal("5")))
 
+    malformed_movement = StockMovement(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        stock_movement_id=f"mov_sale_{ORDER_ID}_{PRODUCT_ID}",
+        product_id=PRODUCT_ID,
+        quantity_delta=Decimal("-4"),
+        reason="sale",
+        reference_id=ORDER_ID,
+    )
+    storage.append_stock_movement(malformed_movement)
+
+    service = OrderService(storage)
+
+    with pytest.raises(InsufficientStockError):
+        service.confirm_order(ORDER_ID)
+
+    saved_order = storage.get_order(ORDER_ID)
+    movements = storage.list_stock_movements(product_id=PRODUCT_ID)
+    product = storage.get_product(PRODUCT_ID)
+
+    assert saved_order is not None
+    assert saved_order.status == "draft"
+    assert len(movements) == 1
+    assert product is not None
+    assert product.current_stock == Decimal("0")
 def test_transition_order_status_confirmed_to_in_preparation():
     storage = InMemoryStorage()
     storage.create_order(make_order(status="confirmed", fulfillment_type="delivery"))

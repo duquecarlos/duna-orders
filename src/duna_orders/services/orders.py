@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-
+import logging
 from duna_orders.domain.models import (
     Customer,
     DraftOrderRequest,
@@ -26,7 +26,7 @@ BASE_STATUS_TRANSITIONS = {
     "confirmed": ("in_preparation", "cancelled"),
     "in_preparation": ("ready", "cancelled"),
 }
-
+logger = logging.getLogger(__name__)
 
 def get_allowed_next_statuses(order: Order) -> tuple[str, ...]:
     if order.status == "ready":
@@ -163,18 +163,31 @@ class OrderService:
                 + item.quantity
             )
 
-        already_applied_product_ids = set()
+        already_applied_product_ids: set[str] = set()
 
-        for product_id in quantities_by_product_id:
+        for product_id, quantity in quantities_by_product_id.items():
             movement_id = f"mov_sale_{order_id}_{product_id}"
             existing_movements = self._storage.list_stock_movements(
                 product_id=product_id,
             )
 
-            if any(
-                movement.stock_movement_id == movement_id
+            exact_match = any(
+                movement.tenant_id == order.tenant_id
+                and movement.stock_movement_id == movement_id
+                and movement.product_id == product_id
+                and movement.quantity_delta == -quantity
+                and movement.reason == "sale"
+                and movement.reference_id == order_id
                 for movement in existing_movements
-            ):
+            )
+
+            if exact_match:
+                logger.warning(
+                    "Repairing partially confirmed order %s: "
+                    "sale stock movement already exists for product %s",
+                    order_id,
+                    product_id,
+                )
                 already_applied_product_ids.add(product_id)
 
         for product_id, requested_quantity in quantities_by_product_id.items():
@@ -207,11 +220,7 @@ class OrderService:
                 reference_id=order_id,
             )
 
-            try:
-                self._storage.append_stock_movement(movement)
-            except ValueError:
-                continue
-
+            self._storage.append_stock_movement(movement)
             updated_product = product.model_copy(
                 update={
                     "current_stock": product.current_stock - quantity,

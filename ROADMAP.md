@@ -5,15 +5,38 @@
 This roadmap tracks future work for Duna Orders. It is not a changelog and does not describe completed milestones.
 
 
-\## High priority
-### Next milestone candidates
+## High priority
+### Next milestone
+
+M6.5 - Sheets performance / cleanup slice.
+
+Entry:
+- After M6 closure follow-ups.
+- Before M7 dashboard work.
+- While M6 customer/order-history changes are still fresh.
+
+Scope:
+- Consolidate Sheets reads so one request-level load uses at most one `get_all_records` call per needed sheet.
+- Distribute loaded records to entity hydration instead of repeatedly reading the same tabs.
+- Add a short-TTL in-memory cache, approximately 30 seconds, keyed by spreadsheet, tenant, and sheet/tab.
+- Invalidate the cache on writes.
+- Add customer-lookup reuse within a single operator request.
+
+Exit criteria:
+- Define and verify a dashboard prototype read budget before M7.
+- First target: no more than 4 full-sheet reads per Streamlit page load for the dashboard prototype scenario.
+- Live Sheets verification shows materially reduced 429/rate-limit pressure compared with the current repeated-read behavior.
+
+Reason:
+M6 added customer recognition and order history, but `GoogleSheetsStorage.get_customer_order_history(...)` currently pulls all orders and filters in Python. Before adding dashboard reads in M7, the Sheets backend needs a small performance/cleanup slice to reduce repeated tab reads and quota pressure.
+
+### Next milestone candidates after M6.5
 
 Status: pending selection.
 
 Possible next directions:
 
 - Dashboard page for read-only pilot visibility.
-- Google Sheets quota/read optimization.
 - Customer profile editing workflow.
 - Tenant defaults for parser-assisted draft creation.
 - Customer analytics and segmentation.
@@ -37,7 +60,7 @@ Completed scope:
 
 Deferred follow-ups:
 
-- Optimize Google Sheets reads to reduce 429 quota risk.
+- Optimize Google Sheets reads to reduce 429 quota risk through M6.5.
 - Add customer profile editing UI.
 - Add support for customer default address reuse.
 - Add dashboard/read-only analytics.
