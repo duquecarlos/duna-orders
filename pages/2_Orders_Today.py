@@ -13,6 +13,7 @@ from duna_orders.services.exceptions import InvalidOrderTransitionError, OrderNo
 from duna_orders.services.order_visibility import filter_today_orders
 from duna_orders.services.orders import OrderService, get_allowed_next_statuses
 from duna_orders.storage.base import StorageInterface
+from duna_orders.storage.read_context import sheets_request_context
 from duna_orders.ui.setup import (
     get_demo_catalog,
     get_order_service,
@@ -163,48 +164,49 @@ tenant_id = catalog.business.tenant_id
 timezone = ZoneInfo(settings.default_timezone)
 today = datetime.now(timezone).date()
 
-with st.sidebar:
-    st.subheader("Demo")
-    st.write(f"Backend: `{storage.__class__.__name__}`")
-    st.write(f"Business: `{catalog.business.business_name}`")
-    st.write(f"Date: `{today.isoformat()}`")
-    include_completed = st.toggle("Include completed/cancelled", value=False)
+with sheets_request_context(storage):
+    with st.sidebar:
+        st.subheader("Demo")
+        st.write(f"Backend: `{storage.__class__.__name__}`")
+        st.write(f"Business: `{catalog.business.business_name}`")
+        st.write(f"Date: `{today.isoformat()}`")
+        include_completed = st.toggle("Include completed/cancelled", value=False)
 
-    if st.button("Refresh"):
-        st.rerun()
+        if st.button("Refresh"):
+            st.rerun()
 
-orders = filter_today_orders(
-    storage.list_orders(),
-    tenant_id=tenant_id,
-    target_date=today,
-    timezone_name=settings.default_timezone,
-    include_completed=include_completed,
-)
-
-if not orders:
-    st.info("No orders found for today with the current filters.")
-    st.stop()
-
-summary_rows = [
-    {
-        "Order": _short_id(order.order_id),
-        "Customer": order.customer_name_snapshot or "Sin nombre",
-        "Total": _money(order.total),
-        "Status": STATUS_LABELS.get(order.status, order.status),
-        "Fulfillment": order.fulfillment_type or "",
-        "Created": _format_local_datetime(order.created_at),
-    }
-    for order in orders
-]
-
-st.dataframe(summary_rows, use_container_width=True, hide_index=True)
-
-st.divider()
-
-for order in orders:
-    _render_order_card(
-        order,
-        storage=storage,
-        order_service=order_service,
+    orders = filter_today_orders(
+        storage.list_orders(),
         tenant_id=tenant_id,
+        target_date=today,
+        timezone_name=settings.default_timezone,
+        include_completed=include_completed,
     )
+
+    if not orders:
+        st.info("No orders found for today with the current filters.")
+        st.stop()
+
+    summary_rows = [
+        {
+            "Order": _short_id(order.order_id),
+            "Customer": order.customer_name_snapshot or "Sin nombre",
+            "Total": _money(order.total),
+            "Status": STATUS_LABELS.get(order.status, order.status),
+            "Fulfillment": order.fulfillment_type or "",
+            "Created": _format_local_datetime(order.created_at),
+        }
+        for order in orders
+    ]
+
+    st.dataframe(summary_rows, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    for order in orders:
+        _render_order_card(
+            order,
+            storage=storage,
+            order_service=order_service,
+            tenant_id=tenant_id,
+        )

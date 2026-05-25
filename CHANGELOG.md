@@ -1,4 +1,32 @@
 # Changelog
+## M6.5.2 - Request-scoped Sheets read consolidation
+
+### Delivered
+
+- Added `src/duna_orders/storage/read_context.py` with an explicit `sheets_request_context(storage)` context manager.
+- Implemented request-scoped read reuse through a module-level `ContextVar`.
+- Updated `GoogleSheetsStorage` read methods to reuse the active `_SheetsRecordSet` across storage method calls inside one request context.
+- Preserved behavior outside any request context: each public read method still creates its own operation-scoped record set.
+- Wrapped the read-heavy page body in:
+  - `pages/1_New_Order.py`
+  - `pages/2_Orders_Today.py`
+- Did not use `st.session_state` for request-scoped read reuse.
+- Did not change `StorageInterface`, `OrderService`, UI semantics, or Pydantic models.
+- Did not introduce cross-request caching.
+
+### Verification
+
+- `python -m compileall src\duna_orders\storage\read_context.py src\duna_orders\storage\sheets.py pages\1_New_Order.py pages\2_Orders_Today.py tests\test_sheets_request_context.py` -> OK.
+- `pytest tests\test_sheets_request_context.py -v` -> 6 passed.
+- `pytest tests\test_sheets_read_consolidation.py -v` -> 3 passed.
+- `git diff --check` -> clean.
+
+### Notes
+
+- Nested Sheets request contexts are intentionally rejected with `RuntimeError`.
+- Context teardown resets the `ContextVar`, including exception paths.
+- Short-TTL cross-request caching remains deferred to M6.5.3.
+
 ## M6.5.1 - Internal Sheets read-provider consolidation
 
 ### Delivered

@@ -182,3 +182,29 @@ If an existing movement has a similar ID but does not match the exact expected s
 
 Trade-off:
 The repair path is intentionally conservative. It may refuse to repair some manually corrupted rows, but it avoids silently confirming an order against incorrect stock movement data.
+
+## M6.5.2 - Request-scoped Sheets read consolidation
+
+Decision:
+Use an explicit request-scoped context manager for Google Sheets read reuse: `with sheets_request_context(storage):`.
+
+The context is opened around the Streamlit page body after the storage instance is available and is closed by `__exit__` at the end of the script run.
+
+Threading mechanism:
+The context manager uses a module-level `ContextVar` to store the active request state. When active, `GoogleSheetsStorage` read methods reuse the same `_SheetsRecordSet` across storage method calls. When inactive, the storage behaves like M6.5.1: each public read method creates its own operation-scoped record set.
+
+Convention:
+Streamlit pages should wrap their read-heavy page body with `sheets_request_context(storage)`. Do not use `st.session_state` for request-scoped read reuse because it persists across reruns and would break the bounded-lifetime guarantee.
+
+Nested contexts:
+Nested Sheets request contexts are explicitly disallowed and raise `RuntimeError`. This keeps the request boundary unambiguous.
+
+Why:
+- StorageInterface remains unchanged.
+- Services and UI semantics remain unchanged.
+- The optimization stays behind storage/read-context internals.
+- Deterministic tests can exercise the request boundary without importing Streamlit.
+- Records are released on context exit, including exception paths.
+
+Trade-off:
+The page must explicitly define the request boundary after storage is available. This adds a small convention in Streamlit pages, but avoids hidden global caching and prevents stale reads from leaking across reruns.

@@ -37,7 +37,7 @@ from duna_orders.services.exceptions import (
 )
 from duna_orders.services.orders import OrderService
 from duna_orders.storage.base import StorageInterface
-
+from duna_orders.storage.read_context import sheets_request_context
 
 CATEGORY_LABELS = {
     "entradas": "Entradas",
@@ -428,202 +428,202 @@ with st.sidebar:
 storage: StorageInterface = st.session_state.storage
 order_service: OrderService = st.session_state.order_service
 parsing_service: ParsingService | None = st.session_state.parsing_service
+with sheets_request_context(storage):
+    if st.session_state.last_success_message:
+        st.success(st.session_state.last_success_message)
 
-if st.session_state.last_success_message:
-    st.success(st.session_state.last_success_message)
+    if st.session_state.last_confirmation_message:
+        st.subheader("Mensaje para WhatsApp")
+        st.code(st.session_state.last_confirmation_message, language="text")
 
-if st.session_state.last_confirmation_message:
-    st.subheader("Mensaje para WhatsApp")
-    st.code(st.session_state.last_confirmation_message, language="text")
+    products = storage.list_products(active_only=True)
 
-products = storage.list_products(active_only=True)
+    st.subheader("Mensaje del cliente")
 
-st.subheader("Mensaje del cliente")
-
-demo_message_options = [""] + [entry.id for entry in demo_messages.messages]
-selected_demo_message_id = st.selectbox(
-    "Cargar mensaje de demostración",
-    options=demo_message_options,
-    format_func=lambda value: "Selecciona un mensaje..." if value == "" else value,
-    key="demo_message_selector",
-)
-
-if (
-    selected_demo_message_id
-    and selected_demo_message_id != st.session_state.selected_demo_message_id
-):
-    selected_entry = next(
-        entry for entry in demo_messages.messages if entry.id == selected_demo_message_id
-    )
-    st.session_state.raw_message_input = selected_entry.message
-    st.session_state.selected_demo_message_id = selected_demo_message_id
-    st.session_state.draft_candidate = None
-    st.rerun()
-
-raw_message = st.text_area(
-    "WhatsApp message",
-    height=110,
-    key="raw_message_input",
-    placeholder=(
-        "Buenas, me regala una bandeja paisa, una limonada de coco "
-        "y una porción de aguacate. Pago por Nequi."
-    ),
-)
-
-col_parse, col_parse_status = st.columns([1, 3])
-
-with col_parse:
-    parse_clicked = st.button(
-        "Parsear mensaje",
-        disabled=not bool(raw_message.strip()),
+    demo_message_options = [""] + [entry.id for entry in demo_messages.messages]
+    selected_demo_message_id = st.selectbox(
+        "Cargar mensaje de demostración",
+        options=demo_message_options,
+        format_func=lambda value: "Selecciona un mensaje..." if value == "" else value,
+        key="demo_message_selector",
     )
 
-with col_parse_status:
-    if parsing_service is None:
-        st.caption("Parser no disponible: configura ANTHROPIC_API_KEY para usarlo.")
-    else:
-        st.caption("Parser disponible.")
-
-if parse_clicked:
-    if parsing_service is None:
-        st.warning(
-            "Parser no disponible. Configura ANTHROPIC_API_KEY o completa la orden manualmente."
+    if (
+        selected_demo_message_id
+        and selected_demo_message_id != st.session_state.selected_demo_message_id
+    ):
+        selected_entry = next(
+            entry for entry in demo_messages.messages if entry.id == selected_demo_message_id
         )
-    else:
-        try:
-            with st.spinner("Parseando mensaje..."):
-                parse_result = _cached_parse_message(
-                    raw_message.strip(),
-                    PROMPT_VERSION,
-                )
-            st.session_state.draft_candidate = parsed_result_to_draft_candidate(
-                parse_result,
-                catalog,
-                catalog.business.tenant_id,
+        st.session_state.raw_message_input = selected_entry.message
+        st.session_state.selected_demo_message_id = selected_demo_message_id
+        st.session_state.draft_candidate = None
+        st.rerun()
+
+    raw_message = st.text_area(
+        "WhatsApp message",
+        height=110,
+        key="raw_message_input",
+        placeholder=(
+            "Buenas, me regala una bandeja paisa, una limonada de coco "
+            "y una porción de aguacate. Pago por Nequi."
+        ),
+    )
+
+    col_parse, col_parse_status = st.columns([1, 3])
+
+    with col_parse:
+        parse_clicked = st.button(
+            "Parsear mensaje",
+            disabled=not bool(raw_message.strip()),
+        )
+
+    with col_parse_status:
+        if parsing_service is None:
+            st.caption("Parser no disponible: configura ANTHROPIC_API_KEY para usarlo.")
+        else:
+            st.caption("Parser disponible.")
+
+    if parse_clicked:
+        if parsing_service is None:
+            st.warning(
+                "Parser no disponible. Configura ANTHROPIC_API_KEY o completa la orden manualmente."
             )
+        else:
+            try:
+                with st.spinner("Parseando mensaje..."):
+                    parse_result = _cached_parse_message(
+                        raw_message.strip(),
+                        PROMPT_VERSION,
+                    )
+                st.session_state.draft_candidate = parsed_result_to_draft_candidate(
+                    parse_result,
+                    catalog,
+                    catalog.business.tenant_id,
+                )
+                st.rerun()
+            except Exception as error:
+                st.error(str(error))
+
+
+    col_customer, col_phone = st.columns(2)
+    with col_customer:
+        customer_name = st.text_input("Customer name", placeholder="Carlos Pérez")
+    with col_phone:
+        customer_phone = st.text_input("Customer phone", placeholder="3001234567")
+
+    if customer_phone.strip():
+        customer_context = get_customer_context_by_phone(
+            storage,
+            tenant_id=catalog.business.tenant_id,
+            phone=customer_phone,
+        )
+        customer_context_label = format_new_order_customer_context(customer_context)
+
+        if customer_context.is_known_customer:
+            st.success(customer_context_label)
+
+            registered_name = customer_context.customer.customer_name
+            typed_name = customer_name.strip()
+
+            if typed_name and typed_name.casefold() != registered_name.casefold():
+                st.caption(f"Se usará el nombre registrado: {registered_name}.")
+        else:
+            st.info(customer_context_label)
+    col_fulfillment, col_zone, col_payment, col_packaging = st.columns(4)
+
+    with col_fulfillment:
+        fulfillment_type = st.selectbox(
+            "Fulfillment",
+            options=["delivery", "pickup", "dine_in"],
+            index=0,
+        )
+
+    with col_zone:
+        delivery_zone = st.text_input("Delivery zone", placeholder="Chapinero")
+
+    with col_payment:
+        payment_method = st.selectbox(
+            "Payment",
+            options=["cash", "nequi", "daviplata", "card", "transfer"],
+            index=1,
+        )
+
+    with col_packaging:
+        packaging_fee_text = st.text_input("Packaging fee", value="1000")
+
+    customer_notes = st.text_area(
+        "Customer notes",
+        height=80,
+        placeholder="Sin cubiertos, dejar en portería, salsa aparte...",
+    )
+
+    draft_candidate: DraftCandidate | None = st.session_state.draft_candidate
+
+    if draft_candidate is not None:
+        _render_parsed_candidate(
+            draft_candidate,
+            catalog=catalog,
+            raw_message=raw_message,
+            order_service=order_service,
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+        )
+    st.divider()
+    st.subheader("Productos")
+
+    selected_items = _render_product_selector(products)
+    has_selected_items = bool(selected_items)
+
+    can_create_draft = bool(raw_message.strip()) and bool(customer_name.strip()) and has_selected_items
+
+    if st.button("Crear borrador", disabled=not can_create_draft):
+        try:
+            request = DraftOrderRequest(
+                tenant_id=catalog.business.tenant_id,
+                raw_message=raw_message.strip(),
+                customer_name=customer_name.strip(),
+                customer_phone=customer_phone.strip() or None,
+                fulfillment_type=fulfillment_type,
+                delivery_zone=delivery_zone.strip() or None,
+                packaging_fee=_parse_decimal_input(packaging_fee_text),
+                customer_notes=customer_notes.strip() or None,
+                payment_method=payment_method,
+                items=[
+                    DraftItemRequest(
+                        tenant_id=catalog.business.tenant_id,
+                        product_id=product_id,
+                        quantity=item_data["quantity"],
+                        modifications=item_data["modifications"],
+                    )
+                    for product_id, item_data in selected_items.items()
+                ],
+            )
+
+            order = order_service.create_draft(request)
+            st.session_state.draft_order_id = order.order_id
+            st.session_state.last_success_message = None
+            st.session_state.last_confirmation_message = None
             st.rerun()
-        except Exception as error:
+        except (EmptyDraftError, ProductNotFoundError, InactiveProductError, ValueError) as error:
             st.error(str(error))
 
+    if st.session_state.draft_order_id:
+        st.divider()
+        _render_draft(st.session_state.draft_order_id, storage, order_service)
 
-col_customer, col_phone = st.columns(2)
-with col_customer:
-    customer_name = st.text_input("Customer name", placeholder="Carlos Pérez")
-with col_phone:
-    customer_phone = st.text_input("Customer phone", placeholder="3001234567")
-
-if customer_phone.strip():
-    customer_context = get_customer_context_by_phone(
-        storage,
-        tenant_id=catalog.business.tenant_id,
-        phone=customer_phone,
-    )
-    customer_context_label = format_new_order_customer_context(customer_context)
-
-    if customer_context.is_known_customer:
-        st.success(customer_context_label)
-
-        registered_name = customer_context.customer.customer_name
-        typed_name = customer_name.strip()
-
-        if typed_name and typed_name.casefold() != registered_name.casefold():
-            st.caption(f"Se usará el nombre registrado: {registered_name}.")
-    else:
-        st.info(customer_context_label)
-col_fulfillment, col_zone, col_payment, col_packaging = st.columns(4)
-
-with col_fulfillment:
-    fulfillment_type = st.selectbox(
-        "Fulfillment",
-        options=["delivery", "pickup", "dine_in"],
-        index=0,
-    )
-
-with col_zone:
-    delivery_zone = st.text_input("Delivery zone", placeholder="Chapinero")
-
-with col_payment:
-    payment_method = st.selectbox(
-        "Payment",
-        options=["cash", "nequi", "daviplata", "card", "transfer"],
-        index=1,
-    )
-
-with col_packaging:
-    packaging_fee_text = st.text_input("Packaging fee", value="1000")
-
-customer_notes = st.text_area(
-    "Customer notes",
-    height=80,
-    placeholder="Sin cubiertos, dejar en portería, salsa aparte...",
-)
-
-draft_candidate: DraftCandidate | None = st.session_state.draft_candidate
-
-if draft_candidate is not None:
-    _render_parsed_candidate(
-        draft_candidate,
-        catalog=catalog,
-        raw_message=raw_message,
-        order_service=order_service,
-        customer_name=customer_name,
-        customer_phone=customer_phone,
-    )
-st.divider()
-st.subheader("Productos")
-
-selected_items = _render_product_selector(products)
-has_selected_items = bool(selected_items)
-
-can_create_draft = bool(raw_message.strip()) and bool(customer_name.strip()) and has_selected_items
-
-if st.button("Crear borrador", disabled=not can_create_draft):
-    try:
-        request = DraftOrderRequest(
-            tenant_id=catalog.business.tenant_id,
-            raw_message=raw_message.strip(),
-            customer_name=customer_name.strip(),
-            customer_phone=customer_phone.strip() or None,
-            fulfillment_type=fulfillment_type,
-            delivery_zone=delivery_zone.strip() or None,
-            packaging_fee=_parse_decimal_input(packaging_fee_text),
-            customer_notes=customer_notes.strip() or None,
-            payment_method=payment_method,
-            items=[
-                DraftItemRequest(
-                    tenant_id=catalog.business.tenant_id,
-                    product_id=product_id,
-                    quantity=item_data["quantity"],
-                    modifications=item_data["modifications"],
-                )
-                for product_id, item_data in selected_items.items()
-            ],
-        )
-
-        order = order_service.create_draft(request)
-        st.session_state.draft_order_id = order.order_id
-        st.session_state.last_success_message = None
-        st.session_state.last_confirmation_message = None
-        st.rerun()
-    except (EmptyDraftError, ProductNotFoundError, InactiveProductError, ValueError) as error:
-        st.error(str(error))
-
-if st.session_state.draft_order_id:
     st.divider()
-    _render_draft(st.session_state.draft_order_id, storage, order_service)
+    st.subheader("Inventario actual")
 
-st.divider()
-st.subheader("Inventario actual")
+    inventory_rows = [
+        {
+            "Producto": product.product_name,
+            "Categoría": product.category,
+            "Stock": product.current_stock,
+            "Precio": _money(product.unit_price),
+            "Stock mínimo": product.min_stock,
+        }
+        for product in storage.list_products(active_only=False)
+    ]
 
-inventory_rows = [
-    {
-        "Producto": product.product_name,
-        "Categoría": product.category,
-        "Stock": product.current_stock,
-        "Precio": _money(product.unit_price),
-        "Stock mínimo": product.min_stock,
-    }
-    for product in storage.list_products(active_only=False)
-]
-
-st.dataframe(inventory_rows, use_container_width=True, hide_index=True)
+    st.dataframe(inventory_rows, use_container_width=True, hide_index=True)

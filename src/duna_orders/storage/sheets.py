@@ -3,7 +3,7 @@ import os
 from datetime import datetime
 from decimal import Decimal
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
@@ -36,6 +36,7 @@ from duna_orders.storage.schema import (
     STOCK_MOVEMENTS_TAB,
     TABS,
 )
+from duna_orders.storage.read_context import current_sheets_record_set
 
 T = TypeVar("T")
 class _SheetsRecordSet:
@@ -161,7 +162,8 @@ class GoogleSheetsStorage(StorageInterface):
 
     def _new_record_set(self) -> _SheetsRecordSet:
         return _SheetsRecordSet(self)
-
+    def _current_record_set(self) -> _SheetsRecordSet | None:
+        return cast(_SheetsRecordSet | None, current_sheets_record_set(self))
     def _load_records(self, tab_name: str) -> list[dict[str, Any]]:
         return self._run_gspread(lambda: self._worksheet(tab_name).get_all_records())
 
@@ -513,11 +515,11 @@ class GoogleSheetsStorage(StorageInterface):
         return products
 
     def list_products(self, *, active_only: bool = True) -> list[Product]:
-        record_set = self._new_record_set()
+        record_set = self._current_record_set() or self._new_record_set()
         return self._products_from_records(record_set, active_only=active_only)
 
     def get_product(self, product_id: str) -> Product | None:
-        record_set = self._new_record_set()
+        record_set = self._current_record_set() or self._new_record_set()
 
         for product in self._products_from_records(record_set, active_only=False):
             if product.product_id == product_id:
@@ -558,11 +560,11 @@ class GoogleSheetsStorage(StorageInterface):
         ]
 
     def list_customers(self) -> list[Customer]:
-        record_set = self._new_record_set()
+        record_set = self._current_record_set() or self._new_record_set()
         return self._customers_from_records(record_set)
 
     def get_customer(self, customer_id: str) -> Customer | None:
-        record_set = self._new_record_set()
+        record_set = self._current_record_set() or self._new_record_set()
 
         for customer in self._customers_from_records(record_set):
             if customer.customer_id == customer_id:
@@ -581,7 +583,7 @@ class GoogleSheetsStorage(StorageInterface):
         if normalized_phone is None:
             return None
 
-        record_set = self._new_record_set()
+        record_set = self._current_record_set() or self._new_record_set()
 
         for customer in self._customers_from_records(record_set):
             if tenant_id is not None and customer.tenant_id != tenant_id:
@@ -661,7 +663,7 @@ class GoogleSheetsStorage(StorageInterface):
         return orders
 
     def get_order(self, order_id: str) -> Order | None:
-        record_set = self._new_record_set()
+        record_set = self._current_record_set() or self._new_record_set()
 
         for order in self._orders_from_records(record_set):
             if order.order_id == order_id:
@@ -675,9 +677,8 @@ class GoogleSheetsStorage(StorageInterface):
         status: str | None = None,
         since: datetime | None = None,
     ) -> list[Order]:
-        record_set = self._new_record_set()
+        record_set = self._current_record_set() or self._new_record_set()
         return self._orders_from_records(record_set, status=status, since=since)
-
     def get_customer_order_history(
         self,
         customer_id: str,
@@ -685,7 +686,7 @@ class GoogleSheetsStorage(StorageInterface):
         *,
         limit: int = 10,
     ) -> list[Order]:
-        record_set = self._new_record_set()
+        record_set = self._current_record_set() or self._new_record_set()
         orders = [
             order
             for order in self._orders_from_records(record_set)
@@ -803,7 +804,7 @@ class GoogleSheetsStorage(StorageInterface):
         *,
         product_id: str | None = None,
     ) -> list[StockMovement]:
-        record_set = self._new_record_set()
+        record_set = self._current_record_set() or self._new_record_set()
         return self._stock_movements_from_records(
             record_set,
             product_id=product_id,

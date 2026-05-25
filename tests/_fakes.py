@@ -65,6 +65,8 @@ class FakeWorksheet:
 
     def set_records(self, records: list[dict[str, Any]]) -> None:
         self._records = [dict(record) for record in records]
+    def reset_read_count(self) -> None:
+        self.get_all_records_call_count = 0
 
 
 class FakeSpreadsheet:
@@ -93,6 +95,9 @@ class FakeSpreadsheet:
 
     def read_count(self, tab_name: str) -> int:
         return self._worksheets[tab_name].get_all_records_call_count
+    def reset_read_counts(self) -> None:
+        for worksheet in self._worksheets.values():
+            worksheet.reset_read_count()
 
 
 def make_fake_google_sheets_storage(
