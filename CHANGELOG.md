@@ -39,9 +39,9 @@
 - `pytest tests\test_dashboard_widgets.py tests\test_sheets_read_budget.py -v` -> 21 passed.
 - `python scripts\measure_sheets_reads.py` -> Pass: True, 4 full-sheet reads.
 - Streamlit smoke check -> dashboard page opens and renders M7.1 widgets plus top customers and top items.
-- `pytest -m live_sheets -v` with `LIVE_SHEETS_TEST_DELAY_S=10` -> pending.
-- `pytest tests/ -v` -> pending.
-- `git diff --check` -> pending.
+- `pytest -m live_sheets -v` with `LIVE_SHEETS_TEST_DELAY_S=10` -> 15 passed, 129 deselected.
+- `pytest tests/ -v` -> 128 passed, 16 deselected.
+- `git diff --check` -> clean.
 
 ### Notes
 
