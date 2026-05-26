@@ -294,3 +294,32 @@ The dashboard scenario can meet the ≤4 budget because all eight widgets can be
 
 Trade-off:
 The budget is defined for a cold-cache prototype page render. Warm-cache renders may be lower, but the cold-cache budget is the safer baseline for M7 dashboard implementation.
+
+## M7.1 - Dashboard compute and Streamlit rendering split
+
+Decision:
+Keep dashboard computation in `src/duna_orders/services/dashboard.py` and Streamlit rendering in `src/duna_orders/ui/dashboard_streamlit.py`.
+
+Timezone:
+Dashboard date bucketing uses `America/Bogota`. Order timestamps are converted to local time before day/week aggregation.
+
+Scope:
+M7.1 implements only:
+- today's pulse;
+- week trend;
+- status breakdown;
+- customer mix.
+
+The locked eight-widget dashboard scenario remains the source of truth, but later widgets are intentionally deferred to later M7 slices.
+
+Why:
+The pilot MVP currently uses Streamlit, but the product may later migrate to a web app or expose dashboard summaries through another channel. Keeping compute logic Streamlit-independent makes the aggregation layer reusable.
+
+Rendering policy:
+Streamlit helper functions receive already-computed result objects. They do not call storage and do not recompute business rules.
+
+Request boundary:
+The dashboard page wraps the full page body in one `sheets_request_context(storage)` and calls `run_locked_dashboard_read_scenario(...)` once.
+
+Trade-off:
+This adds one small UI module now, but avoids mixing dashboard business logic with Streamlit page code. No broader framework abstraction is introduced.

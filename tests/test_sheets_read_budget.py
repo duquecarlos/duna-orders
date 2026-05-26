@@ -197,8 +197,10 @@ def test_locked_dashboard_cold_cache_page_render_stays_within_read_budget():
     }
     total_reads = sum(per_tab_reads.values())
 
-    assert result.today_pulse["orders_count"] == 1
-    assert result.item_pairs
+    assert len(result.orders) == 3
+    assert len(result.order_items) == 4
+    assert len(result.customers) == 2
+    assert len(result.products) == 3
     assert total_reads <= LOCKED_DASHBOARD_READ_BUDGET
 
     for tab_name in LOCKED_DASHBOARD_TAB_UNION:

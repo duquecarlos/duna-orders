@@ -206,7 +206,13 @@ def main() -> int:
     print(f"Pass: {passed}")
 
     # Touch result to make the script fail loudly if scenario computation breaks.
-    print(f"Widgets computed: {len(result.__dict__)}")
+    print(
+        "Records loaded: "
+        f"orders={len(result.orders)}, "
+        f"order_items={len(result.order_items)}, "
+        f"customers={len(result.customers)}, "
+        f"products={len(result.products)}"
+    )
 
     return 0 if passed else 1
 

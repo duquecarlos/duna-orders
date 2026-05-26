@@ -1,5 +1,42 @@
 # Changelog
+## M7.1 - Dashboard skeleton and simple aggregation widgets
 
+### Delivered
+
+- Added `src/duna_orders/services/dashboard.py`.
+- Added pure dashboard compute functions for:
+  - today's pulse;
+  - week trend;
+  - status breakdown;
+  - customer mix.
+- Refactored `src/duna_orders/services/dashboard_read_scenario.py` so the locked scenario returns raw typed records through `DashboardScenarioResult`.
+- Preserved the locked dashboard tab union:
+  - `orders`;
+  - `order_items`;
+  - `customers`;
+  - `products`.
+- Added `src/duna_orders/ui/dashboard_streamlit.py` with Streamlit-native render helpers only.
+- Added `pages/3_Dashboard.py`.
+- Wrapped the dashboard page body in one `sheets_request_context(storage)`.
+- Kept widget computation storage-independent.
+- Added deterministic tests in `tests/test_dashboard_widgets.py`.
+- Updated the read-budget test and measurement script for the raw-record scenario result.
+
+### Verification
+
+- `python -m compileall src\duna_orders\services\dashboard.py src\duna_orders\services\dashboard_read_scenario.py src\duna_orders\ui\dashboard_streamlit.py pages\3_Dashboard.py scripts\measure_sheets_reads.py tests\test_dashboard_widgets.py tests\test_sheets_read_budget.py` -> OK.
+- `pytest tests\test_dashboard_widgets.py tests\test_sheets_read_budget.py -v` -> 9 passed.
+- `python scripts\measure_sheets_reads.py` -> Pass: True, 4 full-sheet reads.
+- Streamlit smoke check -> dashboard page opens and renders the four M7.1 widgets.
+- `pytest -m live_sheets -v` with `LIVE_SHEETS_TEST_DELAY_S=10` -> 15 passed, 117 deselected.
+- `pytest tests/ -v` -> 116 passed, 16 deselected.
+- `git diff --check` -> clean.
+
+### Notes
+
+- M7.1 implements only the first four dashboard widgets.
+- Time-of-day heatmap, top customers, top items this week, and item pairs remain deferred to later M7 slices.
+- No `StorageInterface`, `OrderService`, or domain Pydantic model changes were made.
 ## M6.5.4 - Exit verification and documentation
 
 ### Delivered
