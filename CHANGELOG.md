@@ -1,4 +1,47 @@
 # Changelog
+
+## M6.5.4 - Exit verification and documentation
+
+### Delivered
+
+- Locked the dashboard prototype scenario before M7.
+- Added `src/duna_orders/services/dashboard_read_scenario.py`.
+- Added `scripts/measure_sheets_reads.py`.
+- Added `tests/test_sheets_read_budget.py`.
+- Defined the dashboard prototype as one future Streamlit page with eight widgets:
+  - today's pulse;
+  - week trend;
+  - status breakdown;
+  - time-of-day heatmap;
+  - customer mix;
+  - top customers leaderboard;
+  - top items this week;
+  - items frequently ordered together.
+- Defined the required tab union:
+  - `orders`;
+  - `order_items`;
+  - `customers`;
+  - `products`.
+- Verified the cold-cache dashboard prototype read budget:
+  - target: ≤4 full-sheet `get_all_records` calls;
+  - measured: 4 full-sheet reads;
+  - result: pass.
+- No dashboard UI was implemented.
+- No Streamlit page edits were made.
+- No `StorageInterface`, `OrderService`, UI semantic, or Pydantic model changes were made.
+
+### Verification
+
+- `python -m compileall src\duna_orders\services\dashboard_read_scenario.py scripts\measure_sheets_reads.py tests\test_sheets_read_budget.py` -> OK.
+- `pytest tests\test_sheets_read_budget.py -v` -> 2 passed.
+- `python scripts\measure_sheets_reads.py` -> Pass: True.
+- `git diff --check` -> clean.
+
+### Notes
+
+- This closes M6.5 as the Sheets performance / cleanup slice.
+- M7 is unlocked only after the external restaurant-owner validation conversation is completed.
+
 ## M6.5.3 - Short-TTL Sheets record cache
 
 ### Delivered

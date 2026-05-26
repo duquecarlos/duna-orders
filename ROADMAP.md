@@ -8,41 +8,69 @@ This roadmap tracks future work for Duna Orders. It is not a changelog and does 
 ## High priority
 ### Next milestone
 
-M6.5 - Sheets performance / cleanup slice.
+M7 - Dashboard page for read-only pilot visibility.
 
-Entry:
-- After M6 closure follow-ups.
-- Before M7 dashboard work.
-- While M6 customer/order-history changes are still fresh.
+Entry conditions:
+- M6.5 is closed.
+- One external validation conversation with a restaurant owner is completed and summarized.
+- M7 dashboard scope uses the locked eight-widget prototype scenario from M6.5.4.
 
-Scope:
-- Consolidate Sheets reads so one request-level load uses at most one `get_all_records` call per needed sheet.
-- Distribute loaded records to entity hydration instead of repeatedly reading the same tabs.
-- Add a short-TTL in-memory cache, approximately 30 seconds, keyed by spreadsheet, tenant, and sheet/tab.
-- Invalidate the cache on writes.
-- Add customer-lookup reuse within a single operator request.
+Locked dashboard prototype scenario:
+- Today's pulse.
+- Week trend.
+- Status breakdown.
+- Time-of-day heatmap.
+- Customer mix.
+- Top customers leaderboard.
+- Top items this week.
+- Items frequently ordered together.
 
-Exit criteria:
-- Define and verify a dashboard prototype read budget before M7.
-- First target: no more than 4 full-sheet reads per Streamlit page load for the dashboard prototype scenario.
-- Live Sheets verification shows materially reduced 429/rate-limit pressure compared with the current repeated-read behavior.
+Read-budget guardrail:
+- Cold-cache dashboard page render must stay at no more than 4 full-sheet reads:
+  - `orders`
+  - `order_items`
+  - `customers`
+  - `products`
 
-Reason:
-M6 added customer recognition and order history, but `GoogleSheetsStorage.get_customer_order_history(...)` currently pulls all orders and filters in Python. Before adding dashboard reads in M7, the Sheets backend needs a small performance/cleanup slice to reduce repeated tab reads and quota pressure.
-
-### Next milestone candidates after M6.5
+### Next milestone candidates after M7
 
 Status: pending selection.
 
 Possible next directions:
 
-- Dashboard page for read-only pilot visibility.
-- Customer profile editing workflow.
-- Tenant defaults for parser-assisted draft creation.
-- Customer analytics and segmentation.
-
-
 ## Recently closed
+### M6.5 - Sheets performance / cleanup slice
+
+Closed.
+
+Completed scope:
+
+- Centralized full-tab Google Sheets record loading behind a private storage path.
+- Added operation-scoped record sets.
+- Added request-scoped read consolidation with explicit `sheets_request_context(storage)`.
+- Wrapped read-heavy Streamlit page bodies with the request context.
+- Added a 30-second, per-storage-instance, short-TTL record cache.
+- Added write invalidation for products, customers, orders, order_items, and stock_movements.
+- Added deterministic read-count tests with fake worksheets.
+- Locked the dashboard prototype scenario for M7.
+- Verified the locked dashboard prototype can compute all eight widgets from four full-tab reads.
+- Added `scripts/measure_sheets_reads.py`.
+
+Verification:
+
+- Cold-cache locked dashboard scenario reads:
+  - `orders`: 1
+  - `order_items`: 1
+  - `customers`: 1
+  - `products`: 1
+  - total: 4
+- Target: ≤4 full-sheet reads.
+- Result: pass.
+
+Deferred follow-ups:
+
+- Implement the actual dashboard UI in M7.
+- Complete one external restaurant-owner validation conversation before M7 starts.
 ### M6 - Customer registry and repeat recognition
 
 Closed.
@@ -60,7 +88,6 @@ Completed scope:
 
 Deferred follow-ups:
 
-- Optimize Google Sheets reads to reduce 429 quota risk through M6.5.
 - Add customer profile editing UI.
 - Add support for customer default address reuse.
 - Add dashboard/read-only analytics.

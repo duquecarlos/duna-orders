@@ -245,3 +245,52 @@ Cache hits return fresh record copies so caller-side mutation cannot corrupt cac
 
 Trade-off:
 This cache may briefly serve data up to 30 seconds old for reads that are not preceded by a write through this storage instance. The trade-off is acceptable for the current Google Sheets pilot because writes invalidate affected tabs and the main goal is to reduce repeated read pressure from Streamlit reruns.
+
+## M6.5.4 - Locked dashboard read-budget verification
+
+Decision:
+Lock the dashboard prototype scenario as one future Streamlit page with eight widgets and a cold-cache read budget of no more than 4 full-sheet `get_all_records` calls per page render.
+
+Locked scenario:
+- Today's pulse: orders count today, revenue today, AOV today.
+- Week trend: orders count and revenue per day for the last 7 days.
+- Status breakdown: counts by draft, confirmed, completed, and cancelled.
+- Time-of-day heatmap: weekday by hour order-count grid.
+- Customer mix: new vs repeat customers this week.
+- Top customers leaderboard: top customers by total spend.
+- Top items this week: top products by quantity sold.
+- Items frequently ordered together: top product pairs by co-occurrence count.
+
+Required tabs:
+- `orders`
+- `order_items`
+- `customers`
+- `products`
+
+Read budget:
+The locked scenario requires exactly 4 tabs, so the target remains no more than 4 full-sheet reads per cold-cache page render.
+
+Measurement methodology:
+The scenario is defined once in `src/duna_orders/services/dashboard_read_scenario.py` and reused by both `scripts/measure_sheets_reads.py` and `tests/test_sheets_read_budget.py`. The measurement uses the storage layer with fake worksheets underneath, so `get_all_records` calls are counted without live Sheets.
+
+Measured result:
+- Total full-sheet reads: 4.
+- `products`: 1.
+- `customers`: 1.
+- `orders`: 1.
+- `order_items`: 1.
+- `stock_movements`: 0.
+- `parse_log`: 0.
+- Result: pass.
+
+Live Sheets delay comparison:
+- Pre-M6.5 baseline: `LIVE_SHEETS_TEST_DELAY_S=12`.
+- Post-M6.5.3 measurement: `LIVE_SHEETS_TEST_DELAY_S=3` still hit Google Sheets 429 quota errors.
+- Post-M6.5.3 passing measurement: the next measured slower delay passed with 15 live_sheets tests.
+- Because the suite still needs a delay, M6.5 improved deterministic read behavior and page-read budget readiness, but did not fully eliminate live-test quota sensitivity.
+
+Rationale:
+The dashboard scenario can meet the ≤4 budget because all eight widgets can be computed in Python from four full-tab reads. No widget requires per-cell, per-customer, per-product, or per-pair Sheets queries.
+
+Trade-off:
+The budget is defined for a cold-cache prototype page render. Warm-cache renders may be lower, but the cold-cache budget is the safer baseline for M7 dashboard implementation.
