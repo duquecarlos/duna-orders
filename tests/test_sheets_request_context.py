@@ -77,14 +77,14 @@ def test_request_context_reuses_records_across_storage_methods():
     assert storage._spreadsheet.read_count(ORDER_ITEMS_TAB) == 1
 
 
-def test_reads_outside_request_context_do_not_reuse_records_across_methods():
+def test_reads_outside_request_context_can_reuse_cross_request_cache():
     storage, _, newest_order = _storage_with_order_records()
 
     storage.get_order(newest_order.order_id)
     storage.list_orders(status="confirmed")
 
-    assert storage._spreadsheet.read_count(ORDERS_TAB) == 2
-    assert storage._spreadsheet.read_count(ORDER_ITEMS_TAB) == 2
+    assert storage._spreadsheet.read_count(ORDERS_TAB) == 1
+    assert storage._spreadsheet.read_count(ORDER_ITEMS_TAB) == 1
 
 
 def test_request_context_returns_safe_model_copies():
@@ -110,7 +110,7 @@ def test_nested_request_contexts_are_rejected():
                 pass
 
 
-def test_request_context_teardown_does_not_leak_records_to_next_context():
+def test_request_context_teardown_releases_request_scoped_record_set():
     storage, _, _ = _storage_with_order_records()
 
     with sheets_request_context(storage):
@@ -118,6 +118,8 @@ def test_request_context_teardown_does_not_leak_records_to_next_context():
 
     assert storage._spreadsheet.read_count(ORDERS_TAB) == 1
     assert storage._spreadsheet.read_count(ORDER_ITEMS_TAB) == 1
+
+    storage._records_cache.clear()
 
     with sheets_request_context(storage):
         storage.list_orders()
@@ -133,6 +135,8 @@ def test_request_context_resets_after_exception():
         with sheets_request_context(storage):
             storage.list_orders()
             raise ValueError("boom")
+
+    storage._records_cache.clear()
 
     with sheets_request_context(storage):
         storage.list_orders()

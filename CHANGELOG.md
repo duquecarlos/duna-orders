@@ -1,4 +1,41 @@
 # Changelog
+## M6.5.3 - Short-TTL Sheets record cache
+
+### Delivered
+
+- Added `src/duna_orders/storage/sheets_cache.py`.
+- Added a short-TTL, process-local cache for full-tab Google Sheets records.
+- Cache key is `(spreadsheet_id, sheet_name)`.
+- Cache is per-`GoogleSheetsStorage` instance, not module-level.
+- Tenant filtering remains outside the cache because `get_all_records` loads full tabs.
+- Added 30-second TTL with injectable time source for deterministic tests.
+- Updated `GoogleSheetsStorage._load_records(...)` to consult the cache.
+- Preserved request-scoped precedence: active request-context records are reused before the cache is consulted.
+- Added write invalidation for:
+  - products on `upsert_product(...)`;
+  - customers on `create_customer(...)`;
+  - orders and order_items on `create_order(...)`;
+  - orders on `update_order_status(...)`;
+  - stock_movements on `append_stock_movement(...)`.
+- Ensured failed reads are not cached.
+- Ensured cache hits return safe record copies.
+- Updated request-context tests to account for legitimate cross-request cache reuse.
+- Added `tests/test_sheets_cache.py`.
+
+### Verification
+
+- `python -m compileall src\duna_orders\storage\sheets_cache.py src\duna_orders\storage\sheets.py tests\_fakes.py tests\test_sheets_cache.py tests\test_sheets_request_context.py` -> OK.
+- `pytest tests\test_sheets_cache.py -v` -> 11 passed.
+- `pytest tests\test_sheets_request_context.py -v` -> 6 passed.
+- `pytest tests\test_sheets_read_consolidation.py -v` -> 3 passed.
+- `git diff --check` -> clean.
+
+### Notes
+
+- No `StorageInterface` changes.
+- No `OrderService`, UI semantic, or Pydantic model changes.
+- Dashboard read-budget work remains deferred to M6.5.4.
+
 ## M6.5.2 - Request-scoped Sheets read consolidation
 
 ### Delivered

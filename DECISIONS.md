@@ -208,3 +208,40 @@ Why:
 
 Trade-off:
 The page must explicitly define the request boundary after storage is available. This adds a small convention in Streamlit pages, but avoids hidden global caching and prevents stale reads from leaking across reruns.
+
+## M6.5.3 - Short-TTL Sheets record cache
+
+Decision:
+Add a short-TTL, process-local, per-`GoogleSheetsStorage` instance cache for full-tab Google Sheets records.
+
+Placement:
+The cache sits behind the operation-scoped and request-scoped record layers. Request-scoped records are checked first through `_SheetsRecordSet`. When a tab is not already loaded in the active record set, `_load_records(...)` consults the cache before calling `get_all_records`.
+
+Cache key:
+Use `(spreadsheet_id, sheet_name)` as the cache key. Do not include `tenant_id` because `get_all_records` loads the full sheet tab and tenant filtering happens after records are hydrated or filtered by storage methods.
+
+TTL:
+Use a 30-second TTL. This is short enough to reduce repeated Streamlit rerun reads and live Sheets quota pressure while limiting stale-read risk during pilot usage.
+
+Cache ownership:
+The cache is attached to each `GoogleSheetsStorage` instance, not stored as a module-level singleton. This keeps runtime and test storage isolated and makes deterministic tests simpler.
+
+Invalidation policy:
+Invalidate affected tabs on every write through the storage layer:
+
+- `upsert_product(...)` invalidates `products`.
+- `create_customer(...)` invalidates `customers`.
+- `create_order(...)` invalidates `orders` and `order_items`.
+- `update_order_status(...)` invalidates `orders`.
+- `append_stock_movement(...)` invalidates `stock_movements`.
+
+Invalidation happens before the write. If a write partially succeeds or fails, the next read should hit Google Sheets instead of serving stale cached records.
+
+Failure policy:
+If `get_all_records` raises, the exception propagates and the cache key remains unset or is cleared. Failed reads must not poison the cache.
+
+Safe-copy policy:
+Cache hits return fresh record copies so caller-side mutation cannot corrupt cached state.
+
+Trade-off:
+This cache may briefly serve data up to 30 seconds old for reads that are not preceded by a write through this storage instance. The trade-off is acceptable for the current Google Sheets pilot because writes invalidate affected tabs and the main goal is to reduce repeated read pressure from Streamlit reruns.

@@ -9,6 +9,8 @@ from typing import Any
 
 from duna_orders.storage.schema import TABS
 from duna_orders.storage.sheets import GoogleSheetsStorage
+import re
+from duna_orders.storage.sheets_cache import SheetsRecordsCache
 
 class MockParser(ParserInterface):
     """Deterministic parser for tests. Configurable via constructor."""
@@ -58,13 +60,48 @@ class FakeWorksheet:
         self.title = title
         self._records = [dict(record) for record in records or []]
         self.get_all_records_call_count = 0
+        self._next_get_all_records_error: Exception | None = None
 
     def get_all_records(self) -> list[dict[str, Any]]:
         self.get_all_records_call_count += 1
+
+        if self._next_get_all_records_error is not None:
+            error = self._next_get_all_records_error
+            self._next_get_all_records_error = None
+            raise error
+
         return [dict(record) for record in self._records]
+
+    def fail_next_get_all_records(self, error: Exception) -> None:
+        self._next_get_all_records_error = error
 
     def set_records(self, records: list[dict[str, Any]]) -> None:
         self._records = [dict(record) for record in records]
+
+    def append_row(self, row: list[object]) -> None:
+        self._records.append(dict(zip(TABS[self.title], row)))
+
+    def append_rows(self, rows: list[list[object]]) -> None:
+        for row in rows:
+            self.append_row(row)
+
+    def col_values(self, col_index: int) -> list[object]:
+        header = TABS[self.title][col_index - 1]
+        return [header] + [record.get(header, "") for record in self._records]
+
+    def update(self, *, values: list[list[object]], range_name: str) -> None:
+        match = re.search(r"\d+", range_name)
+
+        if match is None:
+            raise ValueError(f"Cannot parse row index from range: {range_name}")
+
+        record_index = int(match.group()) - 2
+
+        if record_index < 0 or record_index >= len(self._records):
+            raise IndexError(f"Row out of range: {range_name}")
+
+        self._records[record_index] = dict(zip(TABS[self.title], values[0]))
+
     def reset_read_count(self) -> None:
         self.get_all_records_call_count = 0
 
@@ -98,13 +135,21 @@ class FakeSpreadsheet:
     def reset_read_counts(self) -> None:
         for worksheet in self._worksheets.values():
             worksheet.reset_read_count()
+    def fail_next_get_all_records(self, tab_name: str, error: Exception) -> None:
+        self._worksheets[tab_name].fail_next_get_all_records(error)
 
 
 def make_fake_google_sheets_storage(
     records_by_tab: dict[str, list[dict[str, Any]]] | None = None,
+    *,
+    spreadsheet_id: str = "fake-spreadsheet-id",
+    time_source: Any | None = None,
 ) -> GoogleSheetsStorage:
     storage = object.__new__(GoogleSheetsStorage)
-    storage._spreadsheet_id = "fake-spreadsheet-id"
+    storage._spreadsheet_id = spreadsheet_id
     storage._credentials_path = "fake-credentials.json"
     storage._spreadsheet = FakeSpreadsheet(records_by_tab)
+    storage._records_cache = SheetsRecordsCache(
+        time_source=time_source if time_source is not None else lambda: 0.0,
+    )
     return storage

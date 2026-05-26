@@ -37,6 +37,7 @@ from duna_orders.storage.schema import (
     TABS,
 )
 from duna_orders.storage.read_context import current_sheets_record_set
+from duna_orders.storage.sheets_cache import SheetsRecordsCache
 
 T = TypeVar("T")
 class _SheetsRecordSet:
@@ -79,7 +80,7 @@ class GoogleSheetsStorage(StorageInterface):
     ) -> None:
         self._spreadsheet_id = spreadsheet_id or os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID")
         self._credentials_path = credentials_path or os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH")
-
+        self._records_cache = SheetsRecordsCache()
         if not self._spreadsheet_id:
             raise StorageConfigError("GOOGLE_SHEETS_SPREADSHEET_ID is not set.")
 
@@ -165,8 +166,19 @@ class GoogleSheetsStorage(StorageInterface):
     def _current_record_set(self) -> _SheetsRecordSet | None:
         return cast(_SheetsRecordSet | None, current_sheets_record_set(self))
     def _load_records(self, tab_name: str) -> list[dict[str, Any]]:
-        return self._run_gspread(lambda: self._worksheet(tab_name).get_all_records())
+        return self._records_cache.get_or_load(
+            spreadsheet_id=self._spreadsheet_id,
+            sheet_name=tab_name,
+            load_records=lambda: self._run_gspread(
+                lambda: self._worksheet(tab_name).get_all_records()
+            ),
+        )
 
+    def _invalidate_records_cache(self, *tab_names: str) -> None:
+        self._records_cache.invalidate_many(
+            spreadsheet_id=self._spreadsheet_id,
+            sheet_names=list(tab_names),
+        )
     def _records(
         self,
         tab_name: str,
@@ -536,6 +548,7 @@ class GoogleSheetsStorage(StorageInterface):
             id_value=product.product_id,
         )
 
+        self._invalidate_records_cache(PRODUCTS_TAB)
         if row_index is None:
             self._run_gspread(lambda: worksheet.append_row(row))
         else:
@@ -606,6 +619,7 @@ class GoogleSheetsStorage(StorageInterface):
 
         row = self._customer_to_row(customer)
 
+        self._invalidate_records_cache(CUSTOMERS_TAB)
         self._run_gspread(lambda: worksheet.append_row(row))
 
         return customer.model_copy(deep=True)
@@ -623,6 +637,7 @@ class GoogleSheetsStorage(StorageInterface):
         item_rows = [self._order_item_to_row(item) for item in order.items]
         order_row = self._order_to_row(order)
 
+        self._invalidate_records_cache(ORDERS_TAB, ORDER_ITEMS_TAB)
         if item_rows:
             self._run_gspread(
                 lambda: self._worksheet(ORDER_ITEMS_TAB).append_rows(item_rows)
@@ -736,6 +751,7 @@ class GoogleSheetsStorage(StorageInterface):
 
         start = rowcol_to_a1(row_index, 1)
         end = rowcol_to_a1(row_index, len(TABS[ORDERS_TAB]))
+        self._invalidate_records_cache(ORDERS_TAB)
         self._run_gspread(
             lambda: self._worksheet(ORDERS_TAB).update(
                 values=[row],
@@ -759,6 +775,7 @@ class GoogleSheetsStorage(StorageInterface):
 
         row = self._stock_movement_to_row(movement)
 
+        self._invalidate_records_cache(STOCK_MOVEMENTS_TAB)
         self._run_gspread(lambda: self._worksheet(STOCK_MOVEMENTS_TAB).append_row(row))
 
         return movement.model_copy(deep=True)
