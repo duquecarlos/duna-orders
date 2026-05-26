@@ -1,4 +1,54 @@
 # Changelog
+## M7.2 - Dashboard leaderboard widgets
+
+### Delivered
+
+- Added dashboard leaderboard compute objects for:
+  - top customers;
+  - top items this week.
+- Added `compute_top_customers(...)`.
+- Added `compute_top_items(...)`.
+- Added deterministic tests for:
+  - customer leaderboard ranking by spend;
+  - customer leaderboard tie-break by customer name;
+  - anonymous and unknown customers excluded;
+  - customer leaderboard limit behavior;
+  - customer leaderboard empty input behavior;
+  - customer leaderboard week-window filtering;
+  - item leaderboard ranking by quantity;
+  - item leaderboard tie-break by product name;
+  - missing catalog product fallback;
+  - item leaderboard limit behavior;
+  - item leaderboard empty input behavior;
+  - item leaderboard week-window filtering.
+- Added Streamlit render helpers:
+  - `render_top_customers(...)`;
+  - `render_top_items(...)`.
+- Wired the two leaderboard widgets into `pages/3_Dashboard.py`.
+- Preserved one `sheets_request_context(storage)` per dashboard render.
+- Preserved one `run_locked_dashboard_read_scenario(...)` call per dashboard render.
+- Preserved the locked four-tab read union:
+  - `orders`;
+  - `order_items`;
+  - `customers`;
+  - `products`.
+
+### Verification
+
+- `python -m compileall src\duna_orders\services\dashboard.py src\duna_orders\ui\dashboard_streamlit.py pages\3_Dashboard.py tests\test_dashboard_widgets.py tests\test_sheets_read_budget.py scripts\measure_sheets_reads.py` -> OK.
+- `pytest tests\test_dashboard_widgets.py tests\test_sheets_read_budget.py -v` -> 21 passed.
+- `python scripts\measure_sheets_reads.py` -> Pass: True, 4 full-sheet reads.
+- Streamlit smoke check -> dashboard page opens and renders M7.1 widgets plus top customers and top items.
+- `pytest -m live_sheets -v` with `LIVE_SHEETS_TEST_DELAY_S=10` -> pending.
+- `pytest tests/ -v` -> pending.
+- `git diff --check` -> pending.
+
+### Notes
+
+- M7.2 implements only leaderboard widgets.
+- Time-of-day heatmap and item-pair analysis remain deferred to M7.3.
+- No `StorageInterface`, `OrderService`, or domain Pydantic model changes were made.
+- No new dashboard tabs were accessed.
 ## M7.1 - Dashboard skeleton and simple aggregation widgets
 
 ### Delivered

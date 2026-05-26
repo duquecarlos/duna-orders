@@ -9,13 +9,12 @@ from duna_orders.services.dashboard import (
     CustomerMix,
     StatusBreakdown,
     TodaysPulse,
+    TopCustomersResult,
+    TopItemsResult,
     WeekTrendDay,
 )
-
-
 def _money(value: Decimal) -> str:
-    return f"${value:,.0f}".replace(",", ".")
-
+    return f"COP {value:,.0f}".replace(",", ".")
 
 def _pct(value: Decimal) -> str:
     return f"{value * Decimal('100'):.0f}%"
@@ -93,3 +92,40 @@ def render_customer_mix(result: CustomerMix) -> None:
     )
 
     st.bar_chart(chart_data, x="type", y="customers")
+
+def render_top_customers(result: TopCustomersResult) -> None:
+    st.subheader("Top customers")
+
+    rows = [
+        {
+            "Name": entry.customer_name,
+            "Orders": entry.order_count,
+            "Total spend": _money(entry.total_spend),
+        }
+        for entry in result.entries
+    ]
+
+    st.dataframe(
+        pd.DataFrame(rows),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+
+def render_top_items(result: TopItemsResult) -> None:
+    st.subheader("Top items this week")
+
+    rows = [
+        {
+            "Product": entry.product_name,
+            "Quantity": entry.quantity,
+            "Revenue": _money(entry.revenue),
+        }
+        for entry in result.entries
+    ]
+
+    st.dataframe(
+        pd.DataFrame(rows),
+        hide_index=True,
+        use_container_width=True,
+    )

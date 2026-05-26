@@ -323,3 +323,23 @@ The dashboard page wraps the full page body in one `sheets_request_context(stora
 
 Trade-off:
 This adds one small UI module now, but avoids mixing dashboard business logic with Streamlit page code. No broader framework abstraction is introduced.
+
+## M7.2 - Dashboard leaderboard rules
+
+Decision:
+Add dashboard leaderboard widgets for top customers and top items this week using the existing locked dashboard scenario records.
+
+Top customers:
+Rank qualifying customers by total spend descending. Break ties by customer name ascending. Exclude anonymous orders and orders whose `customer_id` is not found in the customer registry.
+
+Top items:
+Rank products by quantity sold descending. Break ties by product name ascending. Include items whose product is no longer present in the catalog, using `product_id` as the product-name fallback.
+
+Currency formatting:
+Dashboard display uses COP formatting as `COP 45.000`, with thousand-separator dots and no decimals for whole pesos. Formatting happens in Streamlit render helpers, not in compute functions.
+
+Why:
+The compute layer should preserve numeric values for later reuse in a web app, bot summary, or report. Display-specific formatting belongs in the UI layer.
+
+Trade-off:
+For deleted or missing catalog products, showing the `product_id` is less friendly than the old product name snapshot, but it makes the missing-catalog condition explicit and avoids silently presenting stale catalog names as current products.

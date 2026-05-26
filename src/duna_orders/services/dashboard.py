@@ -49,6 +49,30 @@ class CustomerMix:
     new_pct: Decimal
     repeat_pct: Decimal
 
+@dataclass(frozen=True)
+class TopCustomersEntry:
+    customer_id: str
+    customer_name: str
+    order_count: int
+    total_spend: Decimal
+
+
+@dataclass(frozen=True)
+class TopCustomersResult:
+    entries: list[TopCustomersEntry]
+
+
+@dataclass(frozen=True)
+class TopItemsEntry:
+    product_id: str
+    product_name: str
+    quantity: Decimal
+    revenue: Decimal
+
+
+@dataclass(frozen=True)
+class TopItemsResult:
+    entries: list[TopItemsEntry]
 
 def _local_datetime(value: datetime) -> datetime:
     return value.astimezone(ZoneInfo(DASHBOARD_TIMEZONE))
@@ -172,3 +196,92 @@ def compute_customer_mix(
             else Decimal("0")
         ),
     )
+
+def compute_top_customers(
+    scenario: DashboardScenarioResult,
+    *,
+    week_start: date,
+    limit: int = 10,
+) -> TopCustomersResult:
+    week_end = week_start + timedelta(days=6)
+    customers_by_id = {
+        customer.customer_id: customer
+        for customer in scenario.customers
+    }
+
+    totals_by_customer: dict[str, Decimal] = {}
+    counts_by_customer: dict[str, int] = {}
+
+    for order in scenario.orders:
+        local_date = _local_datetime(order.created_at).date()
+        if not week_start <= local_date <= week_end:
+            continue
+
+        if order.customer_id is None or order.customer_id not in customers_by_id:
+            continue
+
+        totals_by_customer[order.customer_id] = (
+            totals_by_customer.get(order.customer_id, Decimal("0")) + order.total
+        )
+        counts_by_customer[order.customer_id] = (
+            counts_by_customer.get(order.customer_id, 0) + 1
+        )
+
+    entries = [
+        TopCustomersEntry(
+            customer_id=customer_id,
+            customer_name=customers_by_id[customer_id].customer_name,
+            order_count=counts_by_customer[customer_id],
+            total_spend=total_spend,
+        )
+        for customer_id, total_spend in totals_by_customer.items()
+    ]
+
+    entries.sort(key=lambda item: (-item.total_spend, item.customer_name))
+
+    return TopCustomersResult(entries=entries[:limit])
+
+
+def compute_top_items(
+    scenario: DashboardScenarioResult,
+    *,
+    week_start: date,
+    limit: int = 5,
+) -> TopItemsResult:
+    week_end = week_start + timedelta(days=6)
+    products_by_id = {
+        product.product_id: product
+        for product in scenario.products
+    }
+
+    quantity_by_product: dict[str, Decimal] = {}
+    revenue_by_product: dict[str, Decimal] = {}
+
+    for order in scenario.orders:
+        local_date = _local_datetime(order.created_at).date()
+        if not week_start <= local_date <= week_end:
+            continue
+
+        for item in order.items:
+            quantity_by_product[item.product_id] = (
+                quantity_by_product.get(item.product_id, Decimal("0")) + item.quantity
+            )
+            revenue_by_product[item.product_id] = (
+                revenue_by_product.get(item.product_id, Decimal("0")) + item.line_total
+            )
+
+    entries = [
+        TopItemsEntry(
+            product_id=product_id,
+            product_name=products_by_id[product_id].product_name
+            if product_id in products_by_id
+            else product_id,
+            quantity=quantity,
+            revenue=revenue_by_product[product_id],
+        )
+        for product_id, quantity in quantity_by_product.items()
+    ]
+
+    entries.sort(key=lambda item: (-item.quantity, item.product_name))
+
+    return TopItemsResult(entries=entries[:limit])

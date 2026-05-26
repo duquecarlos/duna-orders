@@ -11,6 +11,8 @@ from duna_orders.services.dashboard import (
     compute_customer_mix,
     compute_status_breakdown,
     compute_todays_pulse,
+    compute_top_customers,
+    compute_top_items,
     compute_week_trend,
 )
 from duna_orders.services.dashboard_read_scenario import (
@@ -21,6 +23,8 @@ from duna_orders.ui.dashboard_streamlit import (
     render_customer_mix,
     render_status_breakdown,
     render_todays_pulse,
+    render_top_customers,
+    render_top_items,
     render_week_trend,
 )
 from duna_orders.ui.setup import (
@@ -83,17 +87,20 @@ def main() -> None:
         week_trend = compute_week_trend(scenario, today=today)
         status_breakdown = compute_status_breakdown(scenario)
         customer_mix = compute_customer_mix(scenario, week_start=week_start)
-
+        top_customers = compute_top_customers(scenario, week_start=week_start)
+        top_items = compute_top_items(scenario, week_start=week_start)
         render_todays_pulse(todays_pulse)
 
         left_col, right_col = st.columns(2)
 
         with left_col:
             render_week_trend(week_trend)
+            render_top_customers(top_customers)
 
         with right_col:
             render_status_breakdown(status_breakdown)
             render_customer_mix(customer_mix)
+            render_top_items(top_items)
 
 
 if __name__ == "__main__":
