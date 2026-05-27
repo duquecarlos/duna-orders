@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     google_sheets_credentials_path: Path = Path("./credentials/service_account.json")
     google_sheets_spreadsheet_id: str | None = None
     google_sheets_test_spreadsheet_id: str | None = None
+    google_sheets_demo_spreadsheet_id: str | None = None
     active_client_sheet_id: str | None = None
     active_client_name: str = "demo"
 
