@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from itertools import combinations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -73,6 +74,35 @@ class TopItemsEntry:
 @dataclass(frozen=True)
 class TopItemsResult:
     entries: list[TopItemsEntry]
+
+@dataclass(frozen=True)
+class TimeOfDayCell:
+    weekday: int
+    hour: int
+    order_count: int
+
+
+@dataclass(frozen=True)
+class TimeOfDayHeatmapResult:
+    cells: list[TimeOfDayCell]
+    window_start: date
+    window_end: date
+
+
+@dataclass(frozen=True)
+class ProductPairEntry:
+    product_id_a: str
+    product_name_a: str
+    product_id_b: str
+    product_name_b: str
+    count: int
+
+
+@dataclass(frozen=True)
+class ProductPairsResult:
+    pairs: list[ProductPairEntry]
+    week_start: date
+    limit: int
 
 def _local_datetime(value: datetime) -> datetime:
     return value.astimezone(ZoneInfo(DASHBOARD_TIMEZONE))
@@ -285,3 +315,95 @@ def compute_top_items(
     entries.sort(key=lambda item: (-item.quantity, item.product_name))
 
     return TopItemsResult(entries=entries[:limit])
+
+def compute_time_of_day_heatmap(
+    scenario: DashboardScenarioResult,
+    *,
+    today: date,
+    window_days: int = 28,
+) -> TimeOfDayHeatmapResult:
+    window_start = today - timedelta(days=window_days - 1)
+    window_end = today
+
+    counts = {
+        (weekday, hour): 0
+        for weekday in range(7)
+        for hour in range(24)
+    }
+
+    for order in scenario.orders:
+        local_datetime = _local_datetime(order.created_at)
+        local_date = local_datetime.date()
+
+        if not window_start <= local_date <= window_end:
+            continue
+
+        counts[(local_datetime.weekday(), local_datetime.hour)] += 1
+
+    cells = [
+        TimeOfDayCell(
+            weekday=weekday,
+            hour=hour,
+            order_count=counts[(weekday, hour)],
+        )
+        for weekday in range(7)
+        for hour in range(24)
+    ]
+
+    return TimeOfDayHeatmapResult(
+        cells=cells,
+        window_start=window_start,
+        window_end=window_end,
+    )
+
+
+def compute_product_pairs(
+    scenario: DashboardScenarioResult,
+    *,
+    week_start: date,
+    limit: int = 5,
+) -> ProductPairsResult:
+    week_end = week_start + timedelta(days=6)
+    products_by_id = {
+        product.product_id: product
+        for product in scenario.products
+    }
+    pair_counter: Counter[tuple[str, str]] = Counter()
+
+    for order in scenario.orders:
+        local_date = _local_datetime(order.created_at).date()
+        if not week_start <= local_date <= week_end:
+            continue
+
+        product_ids = sorted({item.product_id for item in order.items})
+        if len(product_ids) < 2:
+            continue
+
+        for product_id_a, product_id_b in combinations(product_ids, 2):
+            pair_counter[(product_id_a, product_id_b)] += 1
+
+    sorted_pairs = sorted(
+        pair_counter.items(),
+        key=lambda item: (-item[1], item[0][0] + item[0][1]),
+    )
+
+    entries = [
+        ProductPairEntry(
+            product_id_a=product_id_a,
+            product_name_a=products_by_id[product_id_a].product_name
+            if product_id_a in products_by_id
+            else product_id_a,
+            product_id_b=product_id_b,
+            product_name_b=products_by_id[product_id_b].product_name
+            if product_id_b in products_by_id
+            else product_id_b,
+            count=count,
+        )
+        for (product_id_a, product_id_b), count in sorted_pairs[:limit]
+    ]
+
+    return ProductPairsResult(
+        pairs=entries,
+        week_start=week_start,
+        limit=limit,
+    )

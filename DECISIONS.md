@@ -343,3 +343,33 @@ The compute layer should preserve numeric values for later reuse in a web app, b
 
 Trade-off:
 For deleted or missing catalog products, showing the `product_id` is less friendly than the old product name snapshot, but it makes the missing-catalog condition explicit and avoids silently presenting stale catalog names as current products.
+
+## M7.3 - Dashboard analytical widgets
+
+Decision:
+Add the time-of-day heatmap and items-frequently-ordered-together widgets using the existing locked dashboard scenario records.
+
+Time-of-day heatmap:
+The heatmap uses a trailing 28-day window ending on `today`, inclusive. Orders are bucketed after converting timestamps to `America/Bogota`. Weekday encoding follows Python convention: `0=Monday` through `6=Sunday`.
+
+The compute result always returns a full 7x24 grid with 168 cells, including zero-order cells. This keeps rendering simple and tests deterministic.
+
+Product pairs:
+Product pairs use the current week window from `week_start` through `week_start + 6 days`, matching the leaderboard widgets.
+
+For each order, product IDs are deduplicated with a set before pair generation. This means duplicate item rows for the same product inside one order contribute only once to pair co-occurrence. Pairs are generated from `itertools.combinations(sorted(product_id_set), 2)` so `(A, B)` and `(B, A)` are canonicalized to the same pair.
+
+Ranking:
+Product pairs rank by count descending. Ties break by concatenated product IDs ascending for deterministic output.
+
+Missing catalog products:
+If a product ID is not present in the current catalog, the product ID is used as the display-name fallback, matching the M7.2 leaderboard convention.
+
+Rendering:
+The heatmap uses Streamlit’s Altair support with `st.altair_chart(...)` and `mark_rect`. Product pairs use `st.dataframe(...)`.
+
+Empty state:
+If there are no product pairs for the week, the UI shows `No pair data this week.`
+
+Trade-off:
+The heatmap is useful but visually denser than the previous widgets. M7.3 keeps rendering functional and defers layout polish to M7.4.

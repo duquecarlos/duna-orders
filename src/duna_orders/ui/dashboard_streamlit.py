@@ -2,17 +2,31 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
 from duna_orders.services.dashboard import (
     CustomerMix,
+    ProductPairsResult,
     StatusBreakdown,
+    TimeOfDayHeatmapResult,
     TodaysPulse,
     TopCustomersResult,
     TopItemsResult,
     WeekTrendDay,
 )
+WEEKDAY_LABELS = {
+    0: "Mon",
+    1: "Tue",
+    2: "Wed",
+    3: "Thu",
+    4: "Fri",
+    5: "Sat",
+    6: "Sun",
+}
+
+WEEKDAY_SORT = [WEEKDAY_LABELS[index] for index in range(7)]
 def _money(value: Decimal) -> str:
     return f"COP {value:,.0f}".replace(",", ".")
 
@@ -122,6 +136,68 @@ def render_top_items(result: TopItemsResult) -> None:
             "Revenue": _money(entry.revenue),
         }
         for entry in result.entries
+    ]
+
+    st.dataframe(
+        pd.DataFrame(rows),
+        hide_index=True,
+        use_container_width=True,
+    )
+def render_time_of_day_heatmap(result: TimeOfDayHeatmapResult) -> None:
+    st.subheader("Time-of-day heatmap")
+    st.caption(
+        f"Trailing window: {result.window_start.isoformat()} "
+        f"to {result.window_end.isoformat()}"
+    )
+
+    rows = [
+        {
+            "weekday": cell.weekday,
+            "weekday_label": WEEKDAY_LABELS[cell.weekday],
+            "hour": cell.hour,
+            "order_count": cell.order_count,
+        }
+        for cell in result.cells
+    ]
+
+    chart_data = pd.DataFrame(rows)
+
+    chart = (
+        alt.Chart(chart_data)
+        .mark_rect()
+        .encode(
+            x=alt.X("hour:O", title="Hour", sort=list(range(24))),
+            y=alt.Y("weekday_label:O", title="Weekday", sort=WEEKDAY_SORT),
+            color=alt.Color(
+                "order_count:Q",
+                title="Orders",
+                scale=alt.Scale(scheme="blues"),
+            ),
+            tooltip=[
+                alt.Tooltip("weekday_label:O", title="Weekday"),
+                alt.Tooltip("hour:O", title="Hour"),
+                alt.Tooltip("order_count:Q", title="Orders"),
+            ],
+        )
+        .properties(height=260)
+    )
+
+    st.altair_chart(chart, use_container_width=True)
+
+
+def render_product_pairs(result: ProductPairsResult) -> None:
+    st.subheader("Items frequently ordered together")
+
+    if not result.pairs:
+        st.caption("No pair data this week.")
+        return
+
+    rows = [
+        {
+            "Pair": f"{entry.product_name_a} + {entry.product_name_b}",
+            "Count": entry.count,
+        }
+        for entry in result.pairs
     ]
 
     st.dataframe(

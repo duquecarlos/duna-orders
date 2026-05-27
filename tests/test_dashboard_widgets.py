@@ -6,7 +6,9 @@ from decimal import Decimal
 from duna_orders.services.dashboard import (
     DashboardScenarioResult,
     compute_customer_mix,
+    compute_product_pairs,
     compute_status_breakdown,
+    compute_time_of_day_heatmap,
     compute_todays_pulse,
     compute_top_customers,
     compute_top_items,
@@ -120,7 +122,11 @@ def _order_with_items(
         },
         deep=True,
     )
-
+def _heatmap_count_by_cell(result):
+    return {
+        (cell.weekday, cell.hour): cell.order_count
+        for cell in result.cells
+    }
 def test_compute_todays_pulse_counts_revenue_and_aov_for_today_orders():
     scenario = _scenario(
         _order(
@@ -632,3 +638,391 @@ def test_compute_top_items_respects_time_window():
     assert len(result.entries) == 1
     assert result.entries[0].product_id == "prd_arepa"
     assert result.entries[0].quantity == Decimal("1")
+
+def test_compute_time_of_day_heatmap_counts_by_weekday_and_hour():
+    scenario = _scenario(
+        _order(
+            "ord_tuesday_morning",
+            created_at=datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+        ),
+        _order(
+            "ord_tuesday_morning_2",
+            created_at=datetime(2026, 5, 26, 14, 30, tzinfo=timezone.utc),
+            total=Decimal("12000"),
+        ),
+        _order(
+            "ord_sunday_afternoon",
+            created_at=datetime(2026, 5, 24, 20, 0, tzinfo=timezone.utc),
+            total=Decimal("14000"),
+        ),
+    )
+
+    result = compute_time_of_day_heatmap(scenario, today=TODAY)
+    counts = _heatmap_count_by_cell(result)
+
+    assert len(result.cells) == 168
+    assert result.window_start == date(2026, 4, 29)
+    assert result.window_end == TODAY
+    assert counts[(1, 9)] == 2
+    assert counts[(6, 15)] == 1
+    assert counts[(0, 0)] == 0
+
+
+def test_compute_time_of_day_heatmap_uses_bogota_timezone_boundary():
+    scenario = _scenario(
+        _order(
+            "ord_utc_tuesday_local_monday",
+            created_at=datetime(2026, 5, 26, 2, 30, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+        ),
+    )
+
+    result = compute_time_of_day_heatmap(scenario, today=TODAY)
+    counts = _heatmap_count_by_cell(result)
+
+    assert counts[(0, 21)] == 1
+    assert counts[(1, 2)] == 0
+
+
+def test_compute_time_of_day_heatmap_respects_window_and_includes_today():
+    scenario = _scenario(
+        _order(
+            "ord_before_window",
+            created_at=datetime(2026, 4, 28, 14, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+        ),
+        _order(
+            "ord_today",
+            created_at=datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc),
+            total=Decimal("12000"),
+        ),
+    )
+
+    result = compute_time_of_day_heatmap(scenario, today=TODAY)
+    counts = _heatmap_count_by_cell(result)
+
+    assert len(result.cells) == 168
+    assert sum(counts.values()) == 1
+    assert counts[(1, 9)] == 1
+
+
+def test_compute_time_of_day_heatmap_empty_input_returns_zero_grid():
+    result = compute_time_of_day_heatmap(_scenario(), today=TODAY)
+    counts = _heatmap_count_by_cell(result)
+
+    assert len(result.cells) == 168
+    assert all(count == 0 for count in counts.values())
+
+
+def test_compute_product_pairs_counts_shared_pairs():
+    scenario = _scenario(
+        _order_with_items(
+            "ord_pair_1",
+            created_at=datetime(2026, 5, 22, 14, 0, tzinfo=timezone.utc),
+            items=[
+                _item(
+                    order_id="ord_pair_1",
+                    product_id="prd_arepa",
+                    product_name="Arepa",
+                    quantity=Decimal("1"),
+                ),
+                _item(
+                    order_id="ord_pair_1",
+                    product_id="prd_jugo",
+                    product_name="Jugo",
+                    quantity=Decimal("1"),
+                ),
+                _item(
+                    order_id="ord_pair_1",
+                    product_id="prd_postre",
+                    product_name="Postre",
+                    quantity=Decimal("1"),
+                ),
+            ],
+        ),
+        _order_with_items(
+            "ord_pair_2",
+            created_at=datetime(2026, 5, 23, 14, 0, tzinfo=timezone.utc),
+            items=[
+                _item(
+                    order_id="ord_pair_2",
+                    product_id="prd_arepa",
+                    product_name="Arepa",
+                    quantity=Decimal("1"),
+                ),
+                _item(
+                    order_id="ord_pair_2",
+                    product_id="prd_jugo",
+                    product_name="Jugo",
+                    quantity=Decimal("1"),
+                ),
+            ],
+        ),
+    )
+
+    result = compute_product_pairs(scenario, week_start=date(2026, 5, 20))
+
+    assert [(pair.product_id_a, pair.product_id_b, pair.count) for pair in result.pairs] == [
+        ("prd_arepa", "prd_jugo", 2),
+        ("prd_arepa", "prd_postre", 1),
+        ("prd_jugo", "prd_postre", 1),
+    ]
+
+
+def test_compute_product_pairs_tiebreaks_by_concatenated_product_ids():
+    scenario = _scenario(
+        _order_with_items(
+            "ord_tie_pair_1",
+            created_at=datetime(2026, 5, 22, 14, 0, tzinfo=timezone.utc),
+            items=[
+                _item(
+                    order_id="ord_tie_pair_1",
+                    product_id="prd_arepa",
+                    product_name="Arepa",
+                    quantity=Decimal("1"),
+                ),
+                _item(
+                    order_id="ord_tie_pair_1",
+                    product_id="prd_postre",
+                    product_name="Postre",
+                    quantity=Decimal("1"),
+                ),
+            ],
+        ),
+        _order_with_items(
+            "ord_tie_pair_2",
+            created_at=datetime(2026, 5, 23, 14, 0, tzinfo=timezone.utc),
+            items=[
+                _item(
+                    order_id="ord_tie_pair_2",
+                    product_id="prd_jugo",
+                    product_name="Jugo",
+                    quantity=Decimal("1"),
+                ),
+                _item(
+                    order_id="ord_tie_pair_2",
+                    product_id="prd_postre",
+                    product_name="Postre",
+                    quantity=Decimal("1"),
+                ),
+            ],
+        ),
+    )
+
+    result = compute_product_pairs(scenario, week_start=date(2026, 5, 20))
+
+    assert [(pair.product_id_a, pair.product_id_b) for pair in result.pairs] == [
+        ("prd_arepa", "prd_postre"),
+        ("prd_jugo", "prd_postre"),
+    ]
+
+
+def test_compute_product_pairs_ignores_single_product_orders_and_deduplicates_products():
+    scenario = _scenario(
+        _order_with_items(
+            "ord_single_product",
+            created_at=datetime(2026, 5, 22, 14, 0, tzinfo=timezone.utc),
+            items=[
+                _item(
+                    order_id="ord_single_product",
+                    product_id="prd_arepa",
+                    product_name="Arepa",
+                    quantity=Decimal("1"),
+                ),
+            ],
+        ),
+        _order_with_items(
+            "ord_duplicate_product",
+            created_at=datetime(2026, 5, 23, 14, 0, tzinfo=timezone.utc),
+            items=[
+                _item(
+                    order_id="ord_duplicate_product",
+                    product_id="prd_arepa",
+                    product_name="Arepa",
+                    quantity=Decimal("1"),
+                ),
+                _item(
+                    order_id="ord_duplicate_product",
+                    product_id="prd_arepa",
+                    product_name="Arepa",
+                    quantity=Decimal("2"),
+                ),
+                _item(
+                    order_id="ord_duplicate_product",
+                    product_id="prd_jugo",
+                    product_name="Jugo",
+                    quantity=Decimal("1"),
+                ),
+            ],
+        ),
+    )
+
+    result = compute_product_pairs(scenario, week_start=date(2026, 5, 20))
+
+    assert len(result.pairs) == 1
+    assert result.pairs[0].product_id_a == "prd_arepa"
+    assert result.pairs[0].product_id_b == "prd_jugo"
+    assert result.pairs[0].count == 1
+
+
+def test_compute_product_pairs_uses_canonical_ordering():
+    scenario = _scenario(
+        _order_with_items(
+            "ord_b_a",
+            created_at=datetime(2026, 5, 22, 14, 0, tzinfo=timezone.utc),
+            items=[
+                _item(
+                    order_id="ord_b_a",
+                    product_id="prd_jugo",
+                    product_name="Jugo",
+                    quantity=Decimal("1"),
+                ),
+                _item(
+                    order_id="ord_b_a",
+                    product_id="prd_arepa",
+                    product_name="Arepa",
+                    quantity=Decimal("1"),
+                ),
+            ],
+        ),
+        _order_with_items(
+            "ord_a_b",
+            created_at=datetime(2026, 5, 23, 14, 0, tzinfo=timezone.utc),
+            items=[
+                _item(
+                    order_id="ord_a_b",
+                    product_id="prd_arepa",
+                    product_name="Arepa",
+                    quantity=Decimal("1"),
+                ),
+                _item(
+                    order_id="ord_a_b",
+                    product_id="prd_jugo",
+                    product_name="Jugo",
+                    quantity=Decimal("1"),
+                ),
+            ],
+        ),
+    )
+
+    result = compute_product_pairs(scenario, week_start=date(2026, 5, 20))
+
+    assert len(result.pairs) == 1
+    assert result.pairs[0].product_id_a == "prd_arepa"
+    assert result.pairs[0].product_id_b == "prd_jugo"
+    assert result.pairs[0].count == 2
+
+
+def test_compute_product_pairs_returns_fewer_than_limit_and_empty_input_is_empty():
+    scenario = _scenario(
+        _order_with_items(
+            "ord_one_pair",
+            created_at=datetime(2026, 5, 22, 14, 0, tzinfo=timezone.utc),
+            items=[
+                _item(
+                    order_id="ord_one_pair",
+                    product_id="prd_arepa",
+                    product_name="Arepa",
+                    quantity=Decimal("1"),
+                ),
+                _item(
+                    order_id="ord_one_pair",
+                    product_id="prd_jugo",
+                    product_name="Jugo",
+                    quantity=Decimal("1"),
+                ),
+            ],
+        ),
+    )
+
+    result = compute_product_pairs(
+        scenario,
+        week_start=date(2026, 5, 20),
+        limit=5,
+    )
+    empty_result = compute_product_pairs(
+        _scenario(),
+        week_start=date(2026, 5, 20),
+    )
+
+    assert len(result.pairs) == 1
+    assert empty_result.pairs == []
+
+
+def test_compute_product_pairs_respects_time_window():
+    scenario = _scenario(
+        _order_with_items(
+            "ord_old_pair",
+            created_at=datetime(2026, 5, 10, 14, 0, tzinfo=timezone.utc),
+            items=[
+                _item(
+                    order_id="ord_old_pair",
+                    product_id="prd_arepa",
+                    product_name="Arepa",
+                    quantity=Decimal("1"),
+                ),
+                _item(
+                    order_id="ord_old_pair",
+                    product_id="prd_jugo",
+                    product_name="Jugo",
+                    quantity=Decimal("1"),
+                ),
+            ],
+        ),
+        _order_with_items(
+            "ord_week_pair",
+            created_at=datetime(2026, 5, 22, 14, 0, tzinfo=timezone.utc),
+            items=[
+                _item(
+                    order_id="ord_week_pair",
+                    product_id="prd_arepa",
+                    product_name="Arepa",
+                    quantity=Decimal("1"),
+                ),
+                _item(
+                    order_id="ord_week_pair",
+                    product_id="prd_postre",
+                    product_name="Postre",
+                    quantity=Decimal("1"),
+                ),
+            ],
+        ),
+    )
+
+    result = compute_product_pairs(scenario, week_start=date(2026, 5, 20))
+
+    assert len(result.pairs) == 1
+    assert result.pairs[0].product_id_a == "prd_arepa"
+    assert result.pairs[0].product_id_b == "prd_postre"
+
+
+def test_compute_product_pairs_uses_product_id_fallback_for_missing_catalog_product():
+    scenario = _scenario(
+        _order_with_items(
+            "ord_missing_pair",
+            created_at=datetime(2026, 5, 22, 14, 0, tzinfo=timezone.utc),
+            items=[
+                _item(
+                    order_id="ord_missing_pair",
+                    product_id="prd_arepa",
+                    product_name="Arepa",
+                    quantity=Decimal("1"),
+                ),
+                _item(
+                    order_id="ord_missing_pair",
+                    product_id="prd_missing",
+                    product_name="Deleted product",
+                    quantity=Decimal("1"),
+                ),
+            ],
+        ),
+    )
+
+    result = compute_product_pairs(scenario, week_start=date(2026, 5, 20))
+
+    assert len(result.pairs) == 1
+    assert result.pairs[0].product_id_a == "prd_arepa"
+    assert result.pairs[0].product_name_a == "Arepa"
+    assert result.pairs[0].product_id_b == "prd_missing"
+    assert result.pairs[0].product_name_b == "prd_missing"

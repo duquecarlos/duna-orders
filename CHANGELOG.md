@@ -1,4 +1,58 @@
 # Changelog
+## M7.3 - Dashboard analytical widgets
+
+### Delivered
+
+- Added time-of-day heatmap compute objects:
+  - `TimeOfDayCell`;
+  - `TimeOfDayHeatmapResult`.
+- Added product-pair compute objects:
+  - `ProductPairEntry`;
+  - `ProductPairsResult`.
+- Added `compute_time_of_day_heatmap(...)`.
+- Added `compute_product_pairs(...)`.
+- Added deterministic tests for:
+  - heatmap weekday/hour aggregation;
+  - Bogotá timezone bucketing;
+  - 28-day trailing heatmap window;
+  - full 168-cell heatmap grid with zero cells;
+  - empty heatmap input behavior;
+  - product-pair counting;
+  - pair tie-break behavior;
+  - duplicate product deduplication inside one order;
+  - canonical pair ordering;
+  - pair limit and empty input behavior;
+  - pair week-window filtering;
+  - missing catalog product fallback.
+- Added Streamlit render helpers:
+  - `render_time_of_day_heatmap(...)`;
+  - `render_product_pairs(...)`.
+- Wired both analytical widgets into `pages/3_Dashboard.py`.
+- Preserved one `sheets_request_context(storage)` per dashboard render.
+- Preserved one `run_locked_dashboard_read_scenario(...)` call per dashboard render.
+- Preserved the locked four-tab read union:
+  - `orders`;
+  - `order_items`;
+  - `customers`;
+  - `products`.
+
+### Verification
+
+- `python -m compileall src\duna_orders\services\dashboard.py src\duna_orders\ui\dashboard_streamlit.py pages\3_Dashboard.py tests\test_dashboard_widgets.py tests\test_sheets_read_budget.py scripts\measure_sheets_reads.py` -> OK.
+- `pytest tests\test_dashboard_widgets.py tests\test_sheets_read_budget.py -v` -> 32 passed.
+- `python scripts\measure_sheets_reads.py` -> Pass: True, 4 full-sheet reads.
+- Streamlit smoke check -> dashboard page opens and renders all eight locked widgets.
+- `pytest tests/ -v` -> 139 passed, 16 deselected.
+- `pytest -m live_sheets -v` with `LIVE_SHEETS_TEST_DELAY_S=10` -> 15 passed, 140 deselected.
+- `git diff --check` -> clean.
+
+### Notes
+
+- M7.3 implements only analytical widgets.
+- M7.4 remains for polish, layout, labels, empty states, formatting consistency, and final M7 closure docs.
+- No `StorageInterface`, `OrderService`, or domain Pydantic model changes were made.
+- No new dashboard tabs were accessed.
+- Altair was used only in the Streamlit render layer for the heatmap.
 ## M7.2 - Dashboard leaderboard widgets
 
 ### Delivered
