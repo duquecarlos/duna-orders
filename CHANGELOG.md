@@ -1,4 +1,83 @@
 # Changelog
+## M7.4 - Dashboard polish and M7 closure
+
+### Delivered
+
+- Polished `pages/3_Dashboard.py` with one page title and a concise dashboard caption.
+- Grouped dashboard sections into:
+  - Now;
+  - This week;
+  - Patterns.
+- Added consistent empty-state messages across dashboard render helpers.
+- Standardized dashboard formatting:
+  - COP values as `COP 45.000`;
+  - counts with thousand-separator dots;
+  - percentages with one decimal place.
+- Added friendly page-level dashboard load error handling.
+- Added `tests/test_dashboard_page.py` for the dashboard load-error path.
+- Preserved one `sheets_request_context(storage)` per dashboard render.
+- Preserved one `run_locked_dashboard_read_scenario(...)` call per dashboard render.
+- Preserved the locked four-tab read union:
+  - `orders`;
+  - `order_items`;
+  - `customers`;
+  - `products`.
+
+### Verification
+
+- `python -m compileall src\duna_orders\ui\dashboard_streamlit.py pages\3_Dashboard.py tests\test_dashboard_page.py` -> OK.
+- `pytest tests\test_dashboard_page.py tests\test_dashboard_widgets.py tests\test_sheets_read_budget.py -v` -> 33 passed.
+- `pytest tests/test_dashboard_widgets.py tests/test_sheets_read_budget.py -v` -> 32 passed.
+- `python scripts/measure_sheets_reads.py` -> Pass: True, 4 full-sheet reads.
+- `pytest tests/ -v -m "not live_sheets and not live_api"` -> 140 passed, 16 deselected.
+- `pytest -m live_sheets -v` with `LIVE_SHEETS_TEST_DELAY_S=10` -> 15 passed, 141 deselected.
+- Streamlit smoke check -> dashboard opens and all eight widgets render.
+- `git diff --check` -> clean.
+
+### Notes
+
+- M7.4 added polish only.
+- No new widgets were added.
+- No dashboard scenario change was made.
+- No new storage reads were added.
+- No `StorageInterface`, `OrderService`, or domain Pydantic model changes were made.
+- No new dashboard tabs were accessed.
+
+## M7 - Dashboard page for read-only pilot visibility
+
+Closed.
+
+Completed scope:
+
+- Implemented the full locked eight-widget dashboard:
+  - today's pulse;
+  - week trend;
+  - status breakdown;
+  - time-of-day heatmap;
+  - customer mix;
+  - top customers leaderboard;
+  - top items this week;
+  - items frequently ordered together.
+- Completed M7 in four slices:
+  - M7.1: dashboard skeleton and simple aggregation widgets;
+  - M7.2: leaderboard widgets;
+  - M7.3: analytical widgets;
+  - M7.4: polish, verification, and closure docs.
+- Kept dashboard computation in `src/duna_orders/services/dashboard.py`.
+- Kept Streamlit rendering in `src/duna_orders/ui/dashboard_streamlit.py`.
+- Kept the dashboard page in `pages/3_Dashboard.py`.
+- Preserved the locked cold-cache read budget of no more than 4 full-sheet reads.
+- Preserved the migration-safe service layer for future web app or bot summaries.
+
+Final verification:
+
+- `pytest tests/test_dashboard_widgets.py tests/test_sheets_read_budget.py -v` -> 32 passed.
+- `python scripts/measure_sheets_reads.py` -> Pass: True, 4 full-sheet reads.
+- `pytest tests/ -v -m "not live_sheets and not live_api"` -> 140 passed, 16 deselected.
+- `pytest -m live_sheets -v` with `LIVE_SHEETS_TEST_DELAY_S=10` -> 15 passed, 141 deselected.
+- Streamlit smoke check -> dashboard opens and all eight widgets render.
+- `git diff --check` -> clean.
+
 ## M7.3 - Dashboard analytical widgets
 
 ### Delivered

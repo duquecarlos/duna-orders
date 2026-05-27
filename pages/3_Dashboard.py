@@ -20,9 +20,11 @@ from duna_orders.services.dashboard import (
 from duna_orders.services.dashboard_read_scenario import (
     run_locked_dashboard_read_scenario,
 )
+from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.read_context import sheets_request_context
 from duna_orders.ui.dashboard_streamlit import (
     render_customer_mix,
+    render_dashboard_load_error,
     render_product_pairs,
     render_status_breakdown,
     render_time_of_day_heatmap,
@@ -58,6 +60,62 @@ def _bootstrap_session() -> None:
         st.session_state.storage = storage
 
 
+def _render_dashboard_body(
+    *,
+    storage: StorageInterface,
+    tenant_id: str,
+    now: datetime,
+    timezone_name: str,
+) -> None:
+    today = now.date()
+    week_start = today - timedelta(days=6)
+
+    try:
+        with sheets_request_context(storage):
+            scenario = run_locked_dashboard_read_scenario(
+                storage,
+                tenant_id=tenant_id,
+                now=now,
+                timezone_name=timezone_name,
+            )
+
+            todays_pulse = compute_todays_pulse(scenario, today=today)
+            week_trend = compute_week_trend(scenario, today=today)
+            status_breakdown = compute_status_breakdown(scenario)
+            customer_mix = compute_customer_mix(scenario, week_start=week_start)
+            top_customers = compute_top_customers(scenario, week_start=week_start)
+            top_items = compute_top_items(scenario, week_start=week_start)
+            time_of_day_heatmap = compute_time_of_day_heatmap(scenario, today=today)
+            product_pairs = compute_product_pairs(scenario, week_start=week_start)
+
+            st.header("Now")
+            now_left_col, now_right_col = st.columns(2)
+
+            with now_left_col:
+                render_todays_pulse(todays_pulse)
+
+            with now_right_col:
+                render_status_breakdown(status_breakdown)
+
+            st.header("This week")
+            week_left_col, week_right_col = st.columns(2)
+
+            with week_left_col:
+                render_week_trend(week_trend)
+                render_top_customers(top_customers)
+
+            with week_right_col:
+                render_customer_mix(customer_mix)
+                render_top_items(top_items)
+                render_product_pairs(product_pairs)
+
+            st.header("Patterns")
+            render_time_of_day_heatmap(time_of_day_heatmap)
+
+    except Exception as error:
+        render_dashboard_load_error(error)
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Duna Orders - Dashboard",
@@ -65,8 +123,11 @@ def main() -> None:
         layout="wide",
     )
 
-    st.title("Dashboard")
-    st.caption("Pilot dashboard computed from the locked M7 read scenario.")
+    st.title("Duna Orders Dashboard")
+    st.caption(
+        "Read-only pilot visibility for orders, sales, customers, "
+        "items, and order patterns."
+    )
 
     _bootstrap_session()
 
@@ -76,39 +137,13 @@ def main() -> None:
     timezone_name = settings.default_timezone
     timezone = ZoneInfo(timezone_name)
     now = datetime.now(timezone)
-    today = now.date()
-    week_start = today - timedelta(days=6)
 
-    with sheets_request_context(storage):
-        scenario = run_locked_dashboard_read_scenario(
-            storage,
-            tenant_id=tenant_id,
-            now=now,
-            timezone_name=timezone_name,
-        )
-
-        todays_pulse = compute_todays_pulse(scenario, today=today)
-        week_trend = compute_week_trend(scenario, today=today)
-        status_breakdown = compute_status_breakdown(scenario)
-        customer_mix = compute_customer_mix(scenario, week_start=week_start)
-        top_customers = compute_top_customers(scenario, week_start=week_start)
-        top_items = compute_top_items(scenario, week_start=week_start)
-        time_of_day_heatmap = compute_time_of_day_heatmap(scenario, today=today)
-        product_pairs = compute_product_pairs(scenario, week_start=week_start)
-        render_todays_pulse(todays_pulse)
-        render_time_of_day_heatmap(time_of_day_heatmap)
-
-        left_col, right_col = st.columns(2)
-
-        with left_col:
-            render_week_trend(week_trend)
-            render_top_customers(top_customers)
-
-        with right_col:
-            render_status_breakdown(status_breakdown)
-            render_customer_mix(customer_mix)
-            render_top_items(top_items)
-            render_product_pairs(product_pairs)
+    _render_dashboard_body(
+        storage=storage,
+        tenant_id=tenant_id,
+        now=now,
+        timezone_name=timezone_name,
+    )
 
 
 if __name__ == "__main__":

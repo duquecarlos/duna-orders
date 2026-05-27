@@ -373,3 +373,37 @@ If there are no product pairs for the week, the UI shows `No pair data this week
 
 Trade-off:
 The heatmap is useful but visually denser than the previous widgets. M7.3 keeps rendering functional and defers layout polish to M7.4.
+
+## M7.4 - Dashboard polish conventions
+
+Decision:
+Polish the dashboard without changing the locked scenario, widget set, storage reads, or service-layer contracts.
+
+Section grouping:
+Use three page sections:
+- `Now`: today's pulse and status breakdown.
+- `This week`: week trend, customer mix, top customers, top items, and item pairs.
+- `Patterns`: time-of-day heatmap.
+
+Rationale:
+This grouping keeps the dashboard scannable by operator intent. `Now` gives immediate operating state, `This week` gives short-term business performance, and `Patterns` separates denser analytical behavior from the main operational summary.
+
+Empty-state convention:
+Use short, consistent empty-state captions:
+- `No data for today.`
+- `No data for this week.`
+- `No data for this period.`
+
+Formatting convention:
+Dashboard render helpers own display formatting:
+- COP values display as `COP 45.000`.
+- Counts use thousand-separator dots when needed.
+- Percentages display with one decimal place.
+- Compute functions continue returning numeric values.
+
+Error handling:
+If the dashboard scenario load fails, the page shows a friendly message instead of a Streamlit traceback:
+`Dashboard data could not be loaded. Refresh the page or check the Sheets connection.`
+
+Trade-off:
+The page now has slightly more rendering code, but the compute layer remains Streamlit-independent and reusable for a future web app or bot summaries.

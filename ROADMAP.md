@@ -1,44 +1,97 @@
-\# Roadmap
+# Roadmap
 
+This roadmap tracks future work for Duna Orders and keeps a lightweight milestone archive.
 
-
-This roadmap tracks future work for Duna Orders. It is not a changelog and does not describe completed milestones.
-
+Detailed completed work belongs in `CHANGELOG.md`. This file only keeps milestone-level summaries, deferred follow-ups, and next-candidate direction.
 
 ## High priority
-### Next milestone
 
-M7 - Dashboard page for read-only pilot visibility.
+### Next milestone candidate
 
-Entry conditions:
-- M6.5 is closed.
-- One external validation conversation with a restaurant owner is completed and summarized.
-- M7 dashboard scope uses the locked eight-widget prototype scenario from M6.5.4.
+M8 - Real WhatsApp bot integration.
 
-Locked dashboard prototype scenario:
-- Today's pulse.
-- Week trend.
-- Status breakdown.
-- Time-of-day heatmap.
-- Customer mix.
-- Top customers leaderboard.
-- Top items this week.
-- Items frequently ordered together.
+Status: candidate, not yet committed.
 
-Read-budget guardrail:
-- Cold-cache dashboard page render must stay at no more than 4 full-sheet reads:
-  - `orders`
-  - `order_items`
-  - `customers`
-  - `products`
+Planning should happen in a fresh conversation after M7 closure.
 
-### Next milestone candidates after M7
+Candidate staged scope:
+
+- M8.1: inbound WhatsApp message intake.
+- M8.2: outbound operator-confirmed messages.
+- M8.3: clarification flow, optional and only after M8.1/M8.2 are stable.
+
+Principles:
+
+- Keep operator-confirmation behavior configurable, not hard-coded.
+- Reuse existing service-layer logic where possible.
+- Do not bypass `OrderService`.
+- Keep dashboard compute functions reusable for future bot daily summaries.
+- Avoid committing to full bot autonomy before pilot feedback.
+
+### Deferred validation
+
+External restaurant-owner validation remains deferred until after M8.
+
+Reason:
+
+M7 and M8 are proceeding on internal product assumptions so the project can reach a testable pilot workflow before external validation.
+
+### Next milestone candidates after M8
 
 Status: pending selection.
 
 Possible next directions:
 
+- External restaurant-owner validation and feedback summary.
+- Dashboard improvements based on pilot feedback.
+- Customer profile editing UI.
+- Customer default address reuse.
+- Database-backed storage planning.
+- Deployment packaging for a real pilot user.
+
 ## Recently closed
+
+### M7 - Dashboard page for read-only pilot visibility
+
+Closed.
+
+Completed scope:
+
+- Added the read-only Streamlit dashboard page.
+- Implemented the locked eight-widget dashboard:
+  - today's pulse;
+  - week trend;
+  - status breakdown;
+  - time-of-day heatmap;
+  - customer mix;
+  - top customers leaderboard;
+  - top items this week;
+  - items frequently ordered together.
+- Kept dashboard compute logic in `src/duna_orders/services/dashboard.py`.
+- Kept dashboard rendering in `src/duna_orders/ui/dashboard_streamlit.py`.
+- Kept the dashboard page wrapped in a single `sheets_request_context(storage)`.
+- Preserved one locked scenario call per dashboard render.
+- Preserved the four-tab read union:
+  - `orders`;
+  - `order_items`;
+  - `customers`;
+  - `products`.
+- Verified cold-cache dashboard read budget remains at 4 full-sheet reads.
+
+Verification:
+
+- `python scripts/measure_sheets_reads.py` -> Pass: True, 4 full-sheet reads.
+- `pytest tests/ -v -m "not live_sheets and not live_api"` -> 140 passed, 16 deselected.
+- `pytest -m live_sheets -v` with `LIVE_SHEETS_TEST_DELAY_S=10` -> 15 passed, 141 deselected.
+- Streamlit smoke check -> dashboard opens and all eight widgets render.
+
+Deferred follow-ups:
+
+- M8 real WhatsApp bot integration planning.
+- External restaurant-owner validation conversation remains deferred until after M8.
+- Dashboard visual polish beyond simple M7.4 grouping remains deferred until pilot feedback.
+
+
 ### M6.5 - Sheets performance / cleanup slice
 
 Closed.
@@ -69,8 +122,8 @@ Verification:
 
 Deferred follow-ups:
 
-- Implement the actual dashboard UI in M7.
-- Complete one external restaurant-owner validation conversation before M7 starts.
+- Dashboard UI was implemented and closed in M7.
+- External restaurant-owner validation conversation remains deferred until after M8.
 ### M6 - Customer registry and repeat recognition
 
 Closed.
