@@ -128,7 +128,8 @@ def main() -> None:
         "Read-only pilot visibility for orders, sales, customers, "
         "items, and order patterns."
     )
-
+    if settings.is_dashboard_demo_target:
+        st.warning("DEMO DATA — El Fogón Colombiano")
     _bootstrap_session()
 
     storage = st.session_state.storage

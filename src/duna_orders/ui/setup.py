@@ -21,9 +21,18 @@ def get_storage() -> StorageInterface:
         return InMemoryStorage()
 
     if backend == "sheets":
-        if not settings.google_sheets_spreadsheet_id:
+        spreadsheet_id = settings.dashboard_spreadsheet_id
+
+        if settings.is_dashboard_demo_target and not spreadsheet_id:
             raise RuntimeError(
-                "DUNA_STORAGE_BACKEND=sheets requires GOOGLE_SHEETS_SPREADSHEET_ID."
+                "DASHBOARD_TARGET=demo requires "
+                "GOOGLE_SHEETS_DEMO_SPREADSHEET_ID."
+            )
+
+        if not spreadsheet_id:
+            raise RuntimeError(
+                "DUNA_STORAGE_BACKEND=sheets requires "
+                "GOOGLE_SHEETS_SPREADSHEET_ID."
             )
 
         if not settings.google_sheets_credentials_path:
@@ -32,7 +41,7 @@ def get_storage() -> StorageInterface:
             )
 
         return GoogleSheetsStorage(
-            spreadsheet_id=settings.google_sheets_spreadsheet_id,
+            spreadsheet_id=spreadsheet_id,
             credentials_path=str(settings.google_sheets_credentials_path),
         )
 

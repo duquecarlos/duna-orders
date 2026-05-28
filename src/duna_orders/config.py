@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     default_timezone: str = "America/Bogota"
     default_currency: str = "COP"
     duna_storage_backend: str = "memory"
+    dashboard_target: str = "runtime"
 
     # LLM
     llm_provider: str = "anthropic"
@@ -27,6 +28,24 @@ class Settings(BaseSettings):
     google_sheets_demo_spreadsheet_id: str | None = None
     active_client_sheet_id: str | None = None
     active_client_name: str = "demo"
+
+    @property
+    def resolved_dashboard_target(self) -> str:
+        if self.dashboard_target.strip().lower() == "demo":
+            return "demo"
+
+        return "runtime"
+
+    @property
+    def is_dashboard_demo_target(self) -> bool:
+        return self.resolved_dashboard_target == "demo"
+
+    @property
+    def dashboard_spreadsheet_id(self) -> str | None:
+        if self.is_dashboard_demo_target:
+            return self.google_sheets_demo_spreadsheet_id
+
+        return self.google_sheets_spreadsheet_id
 
 
 settings = Settings()
