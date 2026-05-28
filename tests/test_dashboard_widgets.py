@@ -13,6 +13,7 @@ from duna_orders.services.dashboard import (
     compute_top_customers,
     compute_top_items,
     compute_week_trend,
+    resolve_reference_date,
 )
 from tests.conftest import DEFAULT_TEST_TENANT_ID
 from tests.test_storage_contract import make_customer, make_order, make_product
@@ -127,6 +128,55 @@ def _heatmap_count_by_cell(result):
         (cell.weekday, cell.hour): cell.order_count
         for cell in result.cells
     }
+def test_resolve_reference_date_runtime_uses_today() -> None:
+    scenario = _scenario(
+        _order(
+            "ord_future_demo",
+            created_at=datetime(2026, 5, 30, 14, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+        ),
+    )
+
+    result = resolve_reference_date(
+        scenario.orders,
+        "runtime",
+        today=TODAY,
+    )
+
+    assert result == TODAY
+
+
+def test_resolve_reference_date_demo_uses_max_local_order_date() -> None:
+    scenario = _scenario(
+        _order(
+            "ord_older",
+            created_at=datetime(2026, 5, 25, 14, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+        ),
+        _order(
+            "ord_latest",
+            created_at=datetime(2026, 5, 27, 5, 30, tzinfo=timezone.utc),
+            total=Decimal("12000"),
+        ),
+    )
+
+    result = resolve_reference_date(
+        scenario.orders,
+        "demo",
+        today=TODAY,
+    )
+
+    assert result == date(2026, 5, 27)
+
+
+def test_resolve_reference_date_demo_without_orders_falls_back_to_today() -> None:
+    result = resolve_reference_date(
+        [],
+        "demo",
+        today=TODAY,
+    )
+
+    assert result == TODAY
 def test_compute_todays_pulse_counts_revenue_and_aov_for_today_orders():
     scenario = _scenario(
         _order(

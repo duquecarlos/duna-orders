@@ -16,6 +16,7 @@ from duna_orders.services.dashboard import (
     compute_top_customers,
     compute_top_items,
     compute_week_trend,
+    resolve_reference_date,
 )
 from duna_orders.services.dashboard_read_scenario import (
     run_locked_dashboard_read_scenario,
@@ -66,10 +67,8 @@ def _render_dashboard_body(
     tenant_id: str,
     now: datetime,
     timezone_name: str,
+    dashboard_mode: str,
 ) -> None:
-    today = now.date()
-    week_start = today - timedelta(days=6)
-
     try:
         with sheets_request_context(storage):
             scenario = run_locked_dashboard_read_scenario(
@@ -78,14 +77,23 @@ def _render_dashboard_body(
                 now=now,
                 timezone_name=timezone_name,
             )
+            reference_date = resolve_reference_date(
+                scenario.orders,
+                dashboard_mode,
+                today=now.date(),
+            )
+            week_start = reference_date - timedelta(days=6)
 
-            todays_pulse = compute_todays_pulse(scenario, today=today)
-            week_trend = compute_week_trend(scenario, today=today)
+            todays_pulse = compute_todays_pulse(scenario, today=reference_date)
+            week_trend = compute_week_trend(scenario, today=reference_date)
             status_breakdown = compute_status_breakdown(scenario)
             customer_mix = compute_customer_mix(scenario, week_start=week_start)
             top_customers = compute_top_customers(scenario, week_start=week_start)
             top_items = compute_top_items(scenario, week_start=week_start)
-            time_of_day_heatmap = compute_time_of_day_heatmap(scenario, today=today)
+            time_of_day_heatmap = compute_time_of_day_heatmap(
+                scenario,
+                today=reference_date,
+            )
             product_pairs = compute_product_pairs(scenario, week_start=week_start)
 
             st.header("Now")
@@ -128,8 +136,10 @@ def main() -> None:
         "Read-only pilot visibility for orders, sales, customers, "
         "items, and order patterns."
     )
+
     if settings.is_dashboard_demo_target:
         st.warning("DEMO DATA — El Fogón Colombiano")
+
     _bootstrap_session()
 
     storage = st.session_state.storage
@@ -144,6 +154,7 @@ def main() -> None:
         tenant_id=tenant_id,
         now=now,
         timezone_name=timezone_name,
+        dashboard_mode=settings.resolved_dashboard_target,
     )
 
 

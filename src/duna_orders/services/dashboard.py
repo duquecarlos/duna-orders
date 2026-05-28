@@ -5,13 +5,14 @@ from itertools import combinations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from duna_orders.domain.models import Customer, Order, OrderItem, Product
 
 
 DASHBOARD_TIMEZONE = "America/Bogota"
-
+DashboardMode = Literal["runtime", "demo"]
 
 @dataclass(frozen=True)
 class DashboardScenarioResult:
@@ -106,7 +107,32 @@ class ProductPairsResult:
 
 def _local_datetime(value: datetime) -> datetime:
     return value.astimezone(ZoneInfo(DASHBOARD_TIMEZONE))
+def resolve_reference_date(
+    orders: list[Order],
+    mode: DashboardMode,
+    *,
+    today: date | None = None,
+) -> date:
+    """Resolve the dashboard reference date.
 
+    Runtime mode uses the real current date. Demo mode uses the latest local
+    order date so seeded demos stay evergreen without reseeding.
+    """
+
+    runtime_today = today or date.today()
+
+    if mode != "demo":
+        return runtime_today
+
+    order_dates = [
+        _local_datetime(order.created_at).date()
+        for order in orders
+    ]
+
+    if not order_dates:
+        return runtime_today
+
+    return max(order_dates)
 
 def _status_bucket(status: str) -> str:
     if status == "draft":
