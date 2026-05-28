@@ -407,3 +407,73 @@ If the dashboard scenario load fails, the page shows a friendly message instead 
 
 Trade-off:
 The page now has slightly more rendering code, but the compute layer remains Streamlit-independent and reusable for a future web app or bot summaries.
+## M7.6 - Dashboard demo realism and widget lock revision
+
+Decision:
+Revise the dashboard demo and locked widget set so the dashboard is suitable for realistic demos, not only technical verification.
+
+Widget-set revision:
+
+* `status_breakdown` was replaced by `week_over_week`.
+* `top_items_this_week` was replaced by `top_items_by_category`.
+
+Current locked dashboard widget set:
+
+* `today_pulse`
+* `week_over_week`
+* `week_trend`
+* `time_of_day_heatmap`
+* `customer_mix`
+* `top_customers`
+* `top_items_by_category`
+* `item_pairs`
+
+Reference-date decision:
+Use a dashboard reference-date resolver:
+
+* Runtime mode uses the real current date.
+* Demo mode uses the max local order date from the loaded orders.
+
+Why:
+
+* The demo dataset is fixed and deterministic.
+* Without a demo reference date, current-period widgets become empty as real calendar time moves beyond the seeded order dates.
+* Using the max local order date keeps the demo evergreen without requiring a reseed ritual.
+* Runtime behavior remains unchanged because runtime mode still uses the real current date.
+
+Demo realism decisions:
+
+* Expanded the customer base from 30 to 730.
+* Rebalanced orders into regular, medium-tail, and one-time customers.
+* Replaced flat date cycling with deterministic demand-weighted daily volume.
+* Added curated signature item weighting and Colombian restaurant pairings.
+* Preserved deterministic generation through seed `42`.
+
+Why:
+
+* A 30-customer / 1,500-order dataset made the dashboard look artificial.
+* The dashboard needs visible long-tail customers, realistic daily rhythm, stronger food-item signals, and meaningful item-pair patterns.
+* The demo should be useful for internal validation and stakeholder conversations without touching runtime data.
+
+Week-over-week decision:
+Use week-to-date comparison:
+
+* Current period: Monday through reference date.
+* Previous period: previous Monday through the same weekday.
+
+Metrics:
+
+* Orders = total placed orders.
+* Revenue = sum of non-cancelled orders.
+* AOV = revenue divided by non-cancelled order count.
+* Cancellation rate = cancelled orders divided by total placed orders.
+
+Color semantics:
+
+* Orders, Revenue, and AOV use higher-is-better logic.
+* Cancellation rate uses lower-is-better logic.
+* A lower cancellation rate shows a green down-arrow.
+* A higher cancellation rate shows a red up-arrow.
+
+Trade-off:
+`week_over_week` removes the dedicated status breakdown widget, but cancellation visibility is preserved through cancellation rate while adding a stronger business comparison signal.

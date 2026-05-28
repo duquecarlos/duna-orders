@@ -50,6 +50,42 @@ Possible next directions:
 - Deployment packaging for a real pilot user.
 
 ## Recently closed
+### M7.6 - Dashboard demo realism and closure
+
+Closed.
+
+Completed scope:
+
+* Added a realistic seeded demo dataset for El Fogón Colombiano.
+* Expanded demo customers to support long-tail and one-time customer behavior.
+* Improved order generation with deterministic demand-weighted daily rhythm.
+* Improved item generation with curated Colombian restaurant pairings.
+* Added evergreen demo reference-date behavior.
+* Polished dashboard presentation for demo usage.
+* Updated the locked dashboard widget set to the current 8 widgets:
+
+  * Today’s pulse;
+  * Week over week;
+  * Week trend;
+  * Time-of-day heatmap;
+  * Customer mix;
+  * Top customers;
+  * Top items by category;
+  * Items frequently ordered together.
+* Preserved the cold-cache dashboard read budget at 4 full-sheet reads.
+
+Verification:
+
+* Focused dashboard tests passed.
+* Read-budget test passed.
+* Manual Streamlit demo check passed.
+* Services remained UI-free.
+
+Deferred follow-ups:
+
+* M8 real WhatsApp bot integration planning.
+* External restaurant-owner validation remains deferred until after M8.
+* Further dashboard improvements should be driven by pilot or validation feedback.
 
 ### M7 - Dashboard page for read-only pilot visibility
 

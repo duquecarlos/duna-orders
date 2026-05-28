@@ -1,4 +1,62 @@
 # Changelog
+## M7.6 - Dashboard demo realism and presentation closure
+
+Closed.
+
+### Delivered
+
+* Expanded demo customers from 30 to 730.
+* Rebalanced demo orders into regular, medium-tail, and one-time customers.
+* Replaced flat date cycling with deterministic demand-weighted daily volume.
+* Added curated signature item weighting and Colombian restaurant pairings.
+* Added demo reference-date behavior:
+
+  * demo mode uses the max local order date from loaded orders;
+  * runtime mode uses the real current date.
+* Fixed Today’s Pulse COP truncation.
+* Added today status strip.
+* Improved Week Trend readability with split visuals:
+
+  * orders line chart;
+  * revenue bar chart.
+* Replaced Top items this week with Top items by category.
+* Replaced Status breakdown with Week over week.
+* Added week-to-date versus prior week-to-date comparison using Monday-start periods.
+* Added inverted cancellation-rate color semantics:
+
+  * cancellation down = green down-arrow;
+  * cancellation up = red up-arrow.
+* Preserved the dashboard read-budget protection at 4 full-sheet reads.
+* Kept dashboard service code free of Streamlit imports.
+
+### Final demo dataset
+
+* Customers: 730
+* Products: 52
+* Orders: 1,500
+* Order items: 3,889
+* Seed: 42
+* Tenant: `el-fogon-colombiano`
+
+### Current dashboard widget set
+
+* Today’s pulse
+* Week over week
+* Week trend
+* Time-of-day heatmap
+* Customer mix
+* Top customers
+* Top items by category
+* Items frequently ordered together
+
+### Verification
+
+* Dashboard widget tests and read-budget tests passed.
+* `scripts/measure_sheets_reads.py` confirmed the cold-cache dashboard render remains at 4 full-sheet reads.
+* Services grep confirmed no Streamlit imports/use in the service layer.
+* `git diff --check` passed.
+* Manual Streamlit demo verification confirmed all eight widgets render with the demo banner.
+
 ## M7.4 - Dashboard polish and M7 closure
 
 ### Delivered
