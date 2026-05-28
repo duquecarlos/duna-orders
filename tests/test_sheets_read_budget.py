@@ -169,7 +169,7 @@ def test_locked_dashboard_scenario_definition_uses_four_tabs():
         "time_of_day_heatmap",
         "customer_mix",
         "top_customers",
-        "top_items_this_week",
+        "top_items_by_category",
         "item_pairs",
     }
     assert LOCKED_DASHBOARD_TAB_UNION == {

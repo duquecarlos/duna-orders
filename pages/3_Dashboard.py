@@ -13,8 +13,9 @@ from duna_orders.services.dashboard import (
     compute_status_breakdown,
     compute_time_of_day_heatmap,
     compute_todays_pulse,
+    compute_todays_status_strip,
     compute_top_customers,
-    compute_top_items,
+    compute_top_items_by_category,
     compute_week_trend,
     resolve_reference_date,
 )
@@ -31,7 +32,7 @@ from duna_orders.ui.dashboard_streamlit import (
     render_time_of_day_heatmap,
     render_todays_pulse,
     render_top_customers,
-    render_top_items,
+    render_top_items_by_category,
     render_week_trend,
 )
 from duna_orders.ui.setup import (
@@ -85,22 +86,28 @@ def _render_dashboard_body(
             week_start = reference_date - timedelta(days=6)
 
             todays_pulse = compute_todays_pulse(scenario, today=reference_date)
+            todays_status_strip = compute_todays_status_strip(
+                scenario,
+                today=reference_date,
+            )
             week_trend = compute_week_trend(scenario, today=reference_date)
             status_breakdown = compute_status_breakdown(scenario)
             customer_mix = compute_customer_mix(scenario, week_start=week_start)
             top_customers = compute_top_customers(scenario, week_start=week_start)
-            top_items = compute_top_items(scenario, week_start=week_start)
+            top_items_by_category = compute_top_items_by_category(
+                scenario,
+                week_start=week_start,
+            )
             time_of_day_heatmap = compute_time_of_day_heatmap(
                 scenario,
                 today=reference_date,
             )
             product_pairs = compute_product_pairs(scenario, week_start=week_start)
-
             st.header("Now")
             now_left_col, now_right_col = st.columns(2)
 
             with now_left_col:
-                render_todays_pulse(todays_pulse)
+                render_todays_pulse(todays_pulse, todays_status_strip)
 
             with now_right_col:
                 render_status_breakdown(status_breakdown)
@@ -114,7 +121,7 @@ def _render_dashboard_body(
 
             with week_right_col:
                 render_customer_mix(customer_mix)
-                render_top_items(top_items)
+                render_top_items_by_category(top_items_by_category)
                 render_product_pairs(product_pairs)
 
             st.header("Patterns")

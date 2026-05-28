@@ -15,6 +15,8 @@ from duna_orders.services.dashboard import (
     TopCustomersResult,
     TopItemsResult,
     WeekTrendDay,
+    TodaysStatusStrip,
+    TopItemsByCategoryResult,
 )
 
 
@@ -52,7 +54,12 @@ def _quantity(value: Decimal) -> str:
 
 def _pct(value: Decimal) -> str:
     return f"{value * Decimal('100'):.1f}%"
+def _date_window(start, end) -> str:
+    return f"{start.isoformat()} to {end.isoformat()}"
 
+
+def _category_label(value: str) -> str:
+    return value.replace("_", " ").replace("-", " ").title()
 
 def render_dashboard_load_error(error: Exception) -> None:
     st.error(
@@ -62,34 +69,59 @@ def render_dashboard_load_error(error: Exception) -> None:
     st.caption(f"Technical detail: {type(error).__name__}")
 
 
-def render_todays_pulse(result: TodaysPulse) -> None:
+def render_todays_pulse(
+    result: TodaysPulse,
+    status_strip: TodaysStatusStrip | None = None,
+) -> None:
     st.subheader("Today's pulse")
 
     if result.orders_count == 0:
         st.caption(EMPTY_TODAY)
 
-    col_orders, col_revenue, col_aov = st.columns(3)
+    orders_label = _count(result.orders_count)
+    revenue_label = _money(result.revenue)
+    aov_label = _money(result.aov)
 
-    with col_orders:
-        st.metric("Orders", _count(result.orders_count))
+    rows = [
+        {"Metric": "Orders", "Value": orders_label},
+        {"Metric": "Revenue", "Value": revenue_label},
+        {"Metric": "AOV", "Value": aov_label},
+    ]
 
-    with col_revenue:
-        st.metric("Revenue", _money(result.revenue))
+    st.dataframe(
+        pd.DataFrame(rows),
+        hide_index=True,
+        use_container_width=True,
+    )
 
-    with col_aov:
-        st.metric("AOV", _money(result.aov))
+    if status_strip is not None:
+        st.caption(
+            "Today status: "
+            f"completed {_count(status_strip.completed)} · "
+            f"pending {_count(status_strip.pending)} · "
+            f"cancelled {_count(status_strip.cancelled)}"
+        )
 
 
 def render_week_trend(result: list[WeekTrendDay]) -> None:
     st.subheader("Week trend")
 
-    if not result or all(item.orders_count == 0 for item in result):
+    if not result:
+        st.caption(EMPTY_WEEK)
+        return
+
+    window_start = result[0].date
+    window_end = result[-1].date
+    st.caption(f"Window: {_date_window(window_start, window_end)}")
+
+    if all(item.orders_count == 0 for item in result):
         st.caption(EMPTY_WEEK)
         return
 
     chart_rows = [
         {
             "date": item.date.isoformat(),
+            "weekday": WEEKDAY_LABELS[item.date.weekday()],
             "orders_count": item.orders_count,
             "revenue": float(item.revenue),
         }
@@ -98,6 +130,7 @@ def render_week_trend(result: list[WeekTrendDay]) -> None:
     table_rows = [
         {
             "Date": item.date.isoformat(),
+            "Weekday": WEEKDAY_LABELS[item.date.weekday()],
             "Orders": _count(item.orders_count),
             "Revenue": _money(item.revenue),
         }
@@ -106,17 +139,43 @@ def render_week_trend(result: list[WeekTrendDay]) -> None:
 
     chart_data = pd.DataFrame(chart_rows)
 
-    st.line_chart(
-        chart_data,
-        x="date",
-        y=["orders_count", "revenue"],
+    orders_chart = (
+        alt.Chart(chart_data)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("weekday:O", title="Weekday", sort=WEEKDAY_SORT),
+            y=alt.Y("orders_count:Q", title="Orders"),
+            tooltip=[
+                alt.Tooltip("date:O", title="Date"),
+                alt.Tooltip("weekday:O", title="Weekday"),
+                alt.Tooltip("orders_count:Q", title="Orders"),
+            ],
+        )
+        .properties(height=180)
     )
+
+    revenue_chart = (
+        alt.Chart(chart_data)
+        .mark_bar()
+        .encode(
+            x=alt.X("weekday:O", title="Weekday", sort=WEEKDAY_SORT),
+            y=alt.Y("revenue:Q", title="Revenue"),
+            tooltip=[
+                alt.Tooltip("date:O", title="Date"),
+                alt.Tooltip("weekday:O", title="Weekday"),
+                alt.Tooltip("revenue:Q", title="Revenue", format=",.0f"),
+            ],
+        )
+        .properties(height=180)
+    )
+
+    st.altair_chart(orders_chart, use_container_width=True)
+    st.altair_chart(revenue_chart, use_container_width=True)
     st.dataframe(
         pd.DataFrame(table_rows),
         hide_index=True,
         use_container_width=True,
     )
-
 
 def render_status_breakdown(result: StatusBreakdown) -> None:
     st.subheader("Status breakdown")
@@ -149,6 +208,7 @@ def render_status_breakdown(result: StatusBreakdown) -> None:
 
 def render_customer_mix(result: CustomerMix) -> None:
     st.subheader("Customer mix")
+    st.caption("Window: current reference week")
 
     total_customers = result.new_customers + result.repeat_customers
     if total_customers == 0:
@@ -179,6 +239,7 @@ def render_customer_mix(result: CustomerMix) -> None:
 
 def render_top_customers(result: TopCustomersResult) -> None:
     st.subheader("Top customers")
+    st.caption("Window: current reference week")
 
     if not result.entries:
         st.caption(EMPTY_WEEK)
@@ -221,7 +282,29 @@ def render_top_items(result: TopItemsResult) -> None:
         hide_index=True,
         use_container_width=True,
     )
+def render_top_items_by_category(result: TopItemsByCategoryResult) -> None:
+    st.subheader("Top items by category")
+    st.caption(f"Window: {_date_window(result.week_start, result.week_end)}")
 
+    if not result.entries:
+        st.caption(EMPTY_WEEK)
+        return
+
+    rows = [
+        {
+            "Category": _category_label(entry.category),
+            "Product": entry.product_name,
+            "Quantity": _quantity(entry.quantity),
+            "Revenue": _money(entry.revenue),
+        }
+        for entry in result.entries
+    ]
+
+    st.dataframe(
+        pd.DataFrame(rows),
+        hide_index=True,
+        use_container_width=True,
+    )
 
 def render_time_of_day_heatmap(result: TimeOfDayHeatmapResult) -> None:
     st.subheader("Time-of-day heatmap")
@@ -270,6 +353,7 @@ def render_time_of_day_heatmap(result: TimeOfDayHeatmapResult) -> None:
 
 def render_product_pairs(result: ProductPairsResult) -> None:
     st.subheader("Items frequently ordered together")
+    st.caption(f"Window starts: {result.week_start.isoformat()}")
 
     if not result.pairs:
         st.caption(EMPTY_WEEK)

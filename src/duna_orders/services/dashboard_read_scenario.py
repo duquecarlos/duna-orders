@@ -54,7 +54,7 @@ LOCKED_DASHBOARD_WIDGETS = (
         "tabs": frozenset({CUSTOMERS_TAB, ORDERS_TAB}),
     },
     {
-        "name": "top_items_this_week",
+        "name": "top_items_by_category",
         "description": "Top products by quantity sold this week.",
         "tabs": frozenset({ORDER_ITEMS_TAB, PRODUCTS_TAB}),
     },

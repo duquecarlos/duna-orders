@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
-
+from dataclasses import replace
 from duna_orders.services.dashboard import (
     DashboardScenarioResult,
     compute_customer_mix,
@@ -14,6 +14,8 @@ from duna_orders.services.dashboard import (
     compute_top_items,
     compute_week_trend,
     resolve_reference_date,
+    compute_todays_status_strip,
+    compute_top_items_by_category,
 )
 from tests.conftest import DEFAULT_TEST_TENANT_ID
 from tests.test_storage_contract import make_customer, make_order, make_product
@@ -1076,3 +1078,133 @@ def test_compute_product_pairs_uses_product_id_fallback_for_missing_catalog_prod
     assert result.pairs[0].product_name_a == "Arepa"
     assert result.pairs[0].product_id_b == "prd_missing"
     assert result.pairs[0].product_name_b == "prd_missing"
+def test_compute_todays_status_strip_counts_reference_day_statuses():
+    scenario = _scenario(
+        _order(
+            "ord_completed",
+            created_at=datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+            status="delivered",
+        ),
+        _order(
+            "ord_pending_confirmed",
+            created_at=datetime(2026, 5, 26, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("12000"),
+            status="confirmed",
+        ),
+        _order(
+            "ord_pending_ready",
+            created_at=datetime(2026, 5, 26, 16, 0, tzinfo=timezone.utc),
+            total=Decimal("14000"),
+            status="ready",
+        ),
+        _order(
+            "ord_cancelled",
+            created_at=datetime(2026, 5, 26, 17, 0, tzinfo=timezone.utc),
+            total=Decimal("16000"),
+            status="cancelled",
+        ),
+        _order(
+            "ord_old",
+            created_at=datetime(2026, 5, 25, 17, 0, tzinfo=timezone.utc),
+            total=Decimal("16000"),
+            status="delivered",
+        ),
+    )
+
+    result = compute_todays_status_strip(scenario, today=TODAY)
+
+    assert result.completed == 1
+    assert result.pending == 2
+    assert result.cancelled == 1
+def test_compute_top_items_by_category_groups_and_limits_per_category():
+    products = [
+        make_product(
+            "dash_",
+            product_id="prd_main_a",
+            product_name="Main A",
+        ).model_copy(update={"category": "platos_fuertes"}, deep=True),
+        make_product(
+            "dash_",
+            product_id="prd_main_b",
+            product_name="Main B",
+        ).model_copy(update={"category": "platos_fuertes"}, deep=True),
+        make_product(
+            "dash_",
+            product_id="prd_drink",
+            product_name="Drink",
+        ).model_copy(update={"category": "bebidas"}, deep=True),
+    ]
+    order = _order_with_items(
+        "ord_category_items",
+        created_at=datetime(2026, 5, 22, 14, 0, tzinfo=timezone.utc),
+        items=[
+            _item(
+                order_id="ord_category_items",
+                product_id="prd_main_a",
+                product_name="Main A",
+                quantity=Decimal("3"),
+            ),
+            _item(
+                order_id="ord_category_items",
+                product_id="prd_main_b",
+                product_name="Main B",
+                quantity=Decimal("1"),
+            ),
+            _item(
+                order_id="ord_category_items",
+                product_id="prd_drink",
+                product_name="Drink",
+                quantity=Decimal("5"),
+            ),
+        ],
+    )
+    scenario = _scenario(order)
+    scenario = replace(scenario, products=products)
+    result = compute_top_items_by_category(
+        scenario,
+        week_start=date(2026, 5, 20),
+        limit_per_category=1,
+    )
+
+    assert [(entry.category, entry.product_name, entry.quantity) for entry in result.entries] == [
+        ("bebidas", "Drink", Decimal("5")),
+        ("platos_fuertes", "Main A", Decimal("3")),
+    ]
+    assert result.week_start == date(2026, 5, 20)
+    assert result.week_end == date(2026, 5, 26)
+
+
+def test_compute_top_items_by_category_respects_time_window():
+    order_old = _order_with_items(
+        "ord_old_category",
+        created_at=datetime(2026, 5, 10, 14, 0, tzinfo=timezone.utc),
+        items=[
+            _item(
+                order_id="ord_old_category",
+                product_id="prd_jugo",
+                product_name="Jugo",
+                quantity=Decimal("99"),
+            ),
+        ],
+    )
+    order_week = _order_with_items(
+        "ord_week_category",
+        created_at=datetime(2026, 5, 22, 14, 0, tzinfo=timezone.utc),
+        items=[
+            _item(
+                order_id="ord_week_category",
+                product_id="prd_arepa",
+                product_name="Arepa",
+                quantity=Decimal("1"),
+            ),
+        ],
+    )
+
+    result = compute_top_items_by_category(
+        _scenario(order_old, order_week),
+        week_start=date(2026, 5, 20),
+    )
+
+    assert len(result.entries) == 1
+    assert result.entries[0].product_id == "prd_arepa"

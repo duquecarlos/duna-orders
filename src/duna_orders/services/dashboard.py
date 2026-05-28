@@ -27,7 +27,11 @@ class TodaysPulse:
     orders_count: int
     revenue: Decimal
     aov: Decimal
-
+@dataclass(frozen=True)
+class TodaysStatusStrip:
+    completed: int
+    pending: int
+    cancelled: int
 
 @dataclass(frozen=True)
 class WeekTrendDay:
@@ -75,7 +79,20 @@ class TopItemsEntry:
 @dataclass(frozen=True)
 class TopItemsResult:
     entries: list[TopItemsEntry]
+@dataclass(frozen=True)
+class TopItemsCategoryEntry:
+    category: str
+    product_id: str
+    product_name: str
+    quantity: Decimal
+    revenue: Decimal
 
+
+@dataclass(frozen=True)
+class TopItemsByCategoryResult:
+    entries: list[TopItemsCategoryEntry]
+    week_start: date
+    week_end: date
 @dataclass(frozen=True)
 class TimeOfDayCell:
     weekday: int
@@ -166,7 +183,23 @@ def compute_todays_pulse(
         revenue=revenue,
         aov=revenue / orders_count if orders_count else Decimal("0"),
     )
+def compute_todays_status_strip(
+    scenario: DashboardScenarioResult,
+    *,
+    today: date,
+) -> TodaysStatusStrip:
+    today_orders = [
+        order
+        for order in scenario.orders
+        if _local_datetime(order.created_at).date() == today
+    ]
+    status_counter = Counter(_status_bucket(order.status) for order in today_orders)
 
+    return TodaysStatusStrip(
+        completed=status_counter["completed"],
+        pending=status_counter["draft"] + status_counter["confirmed"],
+        cancelled=status_counter["cancelled"],
+    )
 
 def compute_week_trend(
     scenario: DashboardScenarioResult,
@@ -341,7 +374,65 @@ def compute_top_items(
     entries.sort(key=lambda item: (-item.quantity, item.product_name))
 
     return TopItemsResult(entries=entries[:limit])
+def compute_top_items_by_category(
+    scenario: DashboardScenarioResult,
+    *,
+    week_start: date,
+    limit_per_category: int = 3,
+) -> TopItemsByCategoryResult:
+    week_end = week_start + timedelta(days=6)
+    products_by_id = {
+        product.product_id: product
+        for product in scenario.products
+    }
 
+    quantity_by_product: dict[str, Decimal] = {}
+    revenue_by_product: dict[str, Decimal] = {}
+
+    for order in scenario.orders:
+        local_date = _local_datetime(order.created_at).date()
+        if not week_start <= local_date <= week_end:
+            continue
+
+        for item in order.items:
+            quantity_by_product[item.product_id] = (
+                quantity_by_product.get(item.product_id, Decimal("0")) + item.quantity
+            )
+            revenue_by_product[item.product_id] = (
+                revenue_by_product.get(item.product_id, Decimal("0")) + item.line_total
+            )
+
+    entries_by_category: dict[str, list[TopItemsCategoryEntry]] = {}
+
+    for product_id, quantity in quantity_by_product.items():
+        product = products_by_id.get(product_id)
+        category = product.category if product is not None else "unknown"
+        product_name = product.product_name if product is not None else product_id
+
+        entries_by_category.setdefault(category, []).append(
+            TopItemsCategoryEntry(
+                category=category,
+                product_id=product_id,
+                product_name=product_name,
+                quantity=quantity,
+                revenue=revenue_by_product[product_id],
+            )
+        )
+
+    entries: list[TopItemsCategoryEntry] = []
+
+    for category in sorted(entries_by_category):
+        category_entries = entries_by_category[category]
+        category_entries.sort(
+            key=lambda item: (-item.quantity, item.product_name)
+        )
+        entries.extend(category_entries[:limit_per_category])
+
+    return TopItemsByCategoryResult(
+        entries=entries,
+        week_start=week_start,
+        week_end=week_end,
+    )
 def compute_time_of_day_heatmap(
     scenario: DashboardScenarioResult,
     *,
