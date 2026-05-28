@@ -22,7 +22,11 @@ DEMO_TENANT_ID = "el-fogon-colombiano"
 DEFAULT_DEMO_ORDER_COUNT = 1500
 DEFAULT_DEMO_ANCHOR_DATE = date(2026, 5, 27)
 DEMO_TIMEZONE = "America/Bogota"
-
+REGULAR_CUSTOMER_COUNT = 30
+MEDIUM_TAIL_CUSTOMER_COUNT = 100
+ONE_TIME_CUSTOMER_COUNT = 600
+LOW_FREQUENCY_ORDER_SHARE = 0.60
+ONE_TIME_ORDER_SHARE = 0.40
 LOCAL_ORDER_HOURS = (
     8,
     9,
@@ -36,7 +40,25 @@ LOCAL_ORDER_HOURS = (
     19,
     20,
 )
+WEEKDAY_DEMAND_WEIGHTS = {
+    0: 0.75,  # Monday
+    1: 0.80,  # Tuesday
+    2: 0.95,  # Wednesday
+    3: 1.05,  # Thursday
+    4: 1.35,  # Friday
+    5: 1.25,  # Saturday
+    6: 1.55,  # Sunday
+}
 
+WEEK_DEMAND_MULTIPLIERS = (
+    0.86,
+    1.04,
+    0.92,
+    1.18,
+    1.00,
+)
+
+DAILY_NOISE_RANGE = (0.72, 1.28)
 DELIVERY_ZONES = (
     "Cedritos",
     "Contador",
@@ -92,28 +114,26 @@ def build_demo_order_dataset(
         raise ValueError("At least one active demo product is required.")
 
     rng = random.Random(seed)
-    week_start = anchor_date - timedelta(days=6)
-    old_customers = tenant_customers[: max(1, len(tenant_customers) - 6)]
-    new_customers = tenant_customers[len(old_customers):] or tenant_customers[-1:]
+    customer_plan = _build_customer_plan(
+        rng=random.Random(seed + 1_000),
+        customers=tenant_customers,
+        order_count=order_count,
+    )
+    local_dates = _build_local_dates(
+        rng=random.Random(seed + 2_000),
+        order_count=order_count,
+        anchor_date=anchor_date,
+    )
 
     orders: list[Order] = []
     order_items: list[OrderItem] = []
 
-    for index in range(1, order_count + 1):
-        local_date = anchor_date - timedelta(days=(index - 1) % 35)
+    for index, local_date in enumerate(local_dates, start=1):
         created_at = _created_at_for_order(
             rng=rng,
             local_date=local_date,
         )
-        customer = _choose_customer(
-            rng=rng,
-            local_date=local_date,
-            week_start=week_start,
-            order_index=index,
-            old_customers=old_customers,
-            new_customers=new_customers,
-            all_customers=tenant_customers,
-        )
+        customer = customer_plan[index - 1]
         status = _choose_status(
             rng=rng,
             local_date=local_date,
@@ -199,36 +219,134 @@ def _created_at_for_order(*, rng: random.Random, local_date: date) -> datetime:
     )
     return local_datetime.astimezone(timezone.utc)
 
-
-def _choose_customer(
+def _build_customer_plan(
     *,
     rng: random.Random,
-    local_date: date,
-    week_start: date,
-    order_index: int,
-    old_customers: Sequence[Customer],
-    new_customers: Sequence[Customer],
-    all_customers: Sequence[Customer],
-) -> Customer:
-    if local_date < week_start:
-        return _weighted_customer_choice(rng, old_customers)
+    customers: Sequence[Customer],
+    order_count: int,
+) -> list[Customer]:
+    required_customer_count = (
+        REGULAR_CUSTOMER_COUNT
+        + MEDIUM_TAIL_CUSTOMER_COUNT
+        + ONE_TIME_CUSTOMER_COUNT
+    )
 
-    if order_index % 11 == 0:
-        return new_customers[(order_index // 11) % len(new_customers)]
+    if len(customers) < required_customer_count:
+        return _fallback_weighted_customer_plan(
+            rng=rng,
+            customers=customers,
+            order_count=order_count,
+        )
 
-    return _weighted_customer_choice(rng, all_customers)
+    regular_customers = list(customers[:REGULAR_CUSTOMER_COUNT])
+    medium_tail_customers = list(
+        customers[
+            REGULAR_CUSTOMER_COUNT:
+            REGULAR_CUSTOMER_COUNT + MEDIUM_TAIL_CUSTOMER_COUNT
+        ]
+    )
+    one_time_customers = list(
+        customers[
+            REGULAR_CUSTOMER_COUNT + MEDIUM_TAIL_CUSTOMER_COUNT:
+            required_customer_count
+        ]
+    )
+
+    one_time_order_count = min(
+        len(one_time_customers),
+        int(order_count * ONE_TIME_ORDER_SHARE),
+    )
+    medium_tail_order_count = int(
+        order_count * (LOW_FREQUENCY_ORDER_SHARE - ONE_TIME_ORDER_SHARE)
+    )
+    medium_customer_count = min(
+        len(medium_tail_customers),
+        max(0, medium_tail_order_count // 3),
+    )
+
+    plan: list[Customer] = []
+    plan.extend(one_time_customers[:one_time_order_count])
+
+    for customer in medium_tail_customers[:medium_customer_count]:
+        plan.extend([customer, customer, customer])
+
+    remaining_orders = order_count - len(plan)
+    regular_weights = [
+        9 if index < 8 else 3
+        for index, _ in enumerate(regular_customers)
+    ]
+
+    plan.extend(
+        rng.choices(
+            regular_customers,
+            weights=regular_weights,
+            k=remaining_orders,
+        )
+    )
+
+    rng.shuffle(plan)
+    return plan
 
 
-def _weighted_customer_choice(
+def _fallback_weighted_customer_plan(
+    *,
     rng: random.Random,
     customers: Sequence[Customer],
-) -> Customer:
+    order_count: int,
+) -> list[Customer]:
     weights = [
         8 if index < 8 else 3 if index < 16 else 1
         for index, _ in enumerate(customers)
     ]
-    return rng.choices(list(customers), weights=weights, k=1)[0]
 
+    return rng.choices(
+        list(customers),
+        weights=weights,
+        k=order_count,
+    )
+
+
+def _build_local_dates(
+    *,
+    rng: random.Random,
+    order_count: int,
+    anchor_date: date,
+) -> list[date]:
+    date_range = [
+        anchor_date - timedelta(days=offset)
+        for offset in range(34, -1, -1)
+    ]
+    raw_weights: list[float] = []
+
+    for index, local_date in enumerate(date_range):
+        week_index = index // 7
+        weekday_weight = WEEKDAY_DEMAND_WEIGHTS[local_date.weekday()]
+        week_multiplier = WEEK_DEMAND_MULTIPLIERS[week_index]
+        noise = rng.uniform(*DAILY_NOISE_RANGE)
+        raw_weights.append(weekday_weight * week_multiplier * noise)
+
+    total_weight = sum(raw_weights)
+    exact_counts = [
+        order_count * weight / total_weight
+        for weight in raw_weights
+    ]
+    counts = [int(value) for value in exact_counts]
+    remainder = order_count - sum(counts)
+
+    fractional_order = sorted(
+        range(len(exact_counts)),
+        key=lambda index: exact_counts[index] - counts[index],
+        reverse=True,
+    )
+
+    for index in fractional_order[:remainder]:
+        counts[index] += 1
+
+    local_dates: list[date] = []
+    for local_date, count in zip(date_range, counts):
+        local_dates.extend([local_date] * count)
+
+    return local_dates
 
 def _choose_status(
     *,

@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from duna_orders.domain.models import OrderItem
+from duna_orders.domain.models import Customer, OrderItem
 from tests.conftest import DEFAULT_TEST_TENANT_ID
 from tests.test_storage_contract import make_order
 
@@ -107,3 +107,34 @@ def test_bulk_delete_orders_by_id_prefix_deletes_orders_and_items(
 
     assert deleted_rows == 2
     assert saved_order is None
+
+def test_bulk_create_customers_round_trips_small_batch(
+    live_sheets_storage,
+    live_sheets_run_tokens,
+):
+    token = "bulk_customers_"
+    live_sheets_run_tokens.append(token)
+    created_at = datetime(2026, 5, 27, 12, 0, tzinfo=timezone.utc)
+
+    customers = [
+        Customer(
+            tenant_id=DEFAULT_TEST_TENANT_ID,
+            customer_id=f"{token}cus_{index}",
+            customer_name=f"Cliente Bulk {index}",
+            customer_phone=f"30000000{index}",
+            default_address=None,
+            notes=None,
+            created_at=created_at,
+            updated_at=created_at,
+            last_order_at=None,
+        )
+        for index in range(2)
+    ]
+
+    live_sheets_storage.bulk_create_customers(customers)
+
+    saved_customer = live_sheets_storage.get_customer(f"{token}cus_0")
+
+    assert saved_customer is not None
+    assert saved_customer.customer_id == f"{token}cus_0"
+    assert saved_customer.customer_name == "Cliente Bulk 0"

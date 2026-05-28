@@ -10,8 +10,7 @@ Manual smoke test:
     2. Run:
        python scripts/seed_demo_data.py --target demo --wipe --seed 42
     3. Run the same command again.
-    4. Confirm the customers tab contains the same 30 demo customers in the
-       same order.
+    4. Confirm the customers tab contains the same deterministic demo customers
 
 Safety:
     --target demo is the default.
@@ -39,9 +38,16 @@ Target = Literal["demo", "runtime"]
 
 DEMO_TENANT_ID = "el-fogon-colombiano"
 DEMO_TENANT_NAME = "El Fogón Colombiano"
-DEMO_CUSTOMER_COUNT = 30
 NAMED_REGULAR_COUNT = 8
-BACKGROUND_CUSTOMER_COUNT = DEMO_CUSTOMER_COUNT - NAMED_REGULAR_COUNT
+BACKGROUND_REGULAR_COUNT = 22
+REGULAR_CUSTOMER_COUNT = NAMED_REGULAR_COUNT + BACKGROUND_REGULAR_COUNT
+MEDIUM_TAIL_CUSTOMER_COUNT = 100
+ONE_TIME_CUSTOMER_COUNT = 600
+DEMO_CUSTOMER_COUNT = (
+    REGULAR_CUSTOMER_COUNT
+    + MEDIUM_TAIL_CUSTOMER_COUNT
+    + ONE_TIME_CUSTOMER_COUNT
+)
 DEMO_CUSTOMER_ID_PREFIX = "demo_cus_"
 DEMO_CREATED_AT = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
 
@@ -173,6 +179,71 @@ BACKGROUND_LAST_NAMES = (
     "Cifuentes",
     "Camacho",
 )
+TAIL_FIRST_NAMES = (
+    "Ana María",
+    "Carlos Andrés",
+    "María Camila",
+    "Juan Sebastián",
+    "Laura Marcela",
+    "José David",
+    "Valentina",
+    "Sergio Andrés",
+    "Paola Andrea",
+    "Miguel Ángel",
+    "Daniela",
+    "Julián",
+    "Natalia",
+    "Felipe",
+    "Carolina",
+    "Andrés",
+    "Diana Marcela",
+    "Juan Camilo",
+    "Luisa Fernanda",
+    "Cristian David",
+    "Mónica",
+    "Ricardo",
+    "Patricia",
+    "Alejandra",
+    "Óscar Mauricio",
+    "Sandra Milena",
+    "Camilo",
+    "Viviana",
+    "Hernán",
+    "Claudia Patricia",
+)
+
+TAIL_LAST_NAMES = (
+    "García",
+    "Rodríguez",
+    "Martínez",
+    "López",
+    "González",
+    "Pérez",
+    "Sánchez",
+    "Ramírez",
+    "Torres",
+    "Flores",
+    "Rivera",
+    "Gómez",
+    "Díaz",
+    "Reyes",
+    "Morales",
+    "Ortiz",
+    "Vargas",
+    "Castro",
+    "Jiménez",
+    "Rojas",
+    "Moreno",
+    "Muñoz",
+    "Álvarez",
+    "Romero",
+    "Suárez",
+    "Herrera",
+    "Medina",
+    "Cortés",
+    "Arias",
+    "Cárdenas",
+)
 
 
 def _customer_id(index: int) -> str:
@@ -202,6 +273,28 @@ def _background_customer_names(*, seed: int, count: int) -> list[str]:
     rng.shuffle(names)
     return names[:count]
 
+def _tail_customer_names(*, seed: int, count: int) -> list[str]:
+    rng = random.Random(seed + 20_000)
+    names: list[str] = []
+    seen: set[str] = set()
+
+    while len(names) < count:
+        first_name = rng.choice(TAIL_FIRST_NAMES)
+        first_last_name = rng.choice(TAIL_LAST_NAMES)
+        second_last_name = rng.choice(TAIL_LAST_NAMES)
+
+        if first_last_name == second_last_name:
+            continue
+
+        name = f"{first_name} {first_last_name} {second_last_name}"
+
+        if name in seen:
+            continue
+
+        seen.add(name)
+        names.append(name)
+
+    return names
 
 def build_demo_customers(
     *,
@@ -233,9 +326,8 @@ def build_demo_customers(
 
     background_names = _background_customer_names(
         seed=seed,
-        count=BACKGROUND_CUSTOMER_COUNT,
+        count=BACKGROUND_REGULAR_COUNT,
     )
-
     for offset, customer_name in enumerate(
         background_names,
         start=len(customers) + 1,
@@ -252,7 +344,25 @@ def build_demo_customers(
                 last_order_at=None,
             )
         )
+    tail_names = _tail_customer_names(
+        seed=seed,
+        count=MEDIUM_TAIL_CUSTOMER_COUNT + ONE_TIME_CUSTOMER_COUNT,
+    )
 
+    for customer_name in tail_names:
+        offset = len(customers) + 1
+        customers.append(
+            Customer(
+                tenant_id=tenant_id,
+                customer_id=_customer_id(offset),
+                customer_name=customer_name,
+                customer_phone=phones[offset - 1],
+                notes="Cliente ocasional de demo.",
+                created_at=DEMO_CREATED_AT,
+                updated_at=DEMO_CREATED_AT,
+                last_order_at=None,
+            )
+        )
     _validate_demo_customers(customers)
     return customers
 
@@ -344,14 +454,20 @@ def seed_demo_customers(
     deleted_customers: int = 0,
     delay_s: float = 3.0,
 ) -> SeedResult:
-    seeded_customers = 0
+    bulk_create_customers = getattr(storage, "bulk_create_customers", None)
 
-    for customer in customers:
-        storage.create_customer(customer)
-        seeded_customers += 1
+    if callable(bulk_create_customers):
+        bulk_create_customers(customers)
+        seeded_customers = len(customers)
+    else:
+        seeded_customers = 0
 
-        if delay_s > 0:
-            time.sleep(delay_s)
+        for customer in customers:
+            storage.create_customer(customer)
+            seeded_customers += 1
+
+            if delay_s > 0:
+                time.sleep(delay_s)
 
     return SeedResult(
         target=target,

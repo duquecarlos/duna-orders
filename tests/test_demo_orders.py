@@ -2,7 +2,8 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
-
+from collections import Counter
+from zoneinfo import ZoneInfo
 from duna_orders.demo_catalog import load_demo_catalog
 from duna_orders.demo_orders import (
     DEFAULT_DEMO_ANCHOR_DATE,
@@ -167,3 +168,46 @@ def test_build_demo_order_dataset_rejects_empty_inputs() -> None:
             products=_products(),
             order_count=0,
         )
+
+def test_build_demo_order_dataset_has_realistic_customer_long_tail() -> None:
+    dataset = build_demo_order_dataset(
+        customers=_customers(),
+        products=_products(),
+        seed=42,
+    )
+
+    customer_counts = Counter(order.customer_id for order in dataset.orders)
+    low_frequency_orders = sum(
+        count for count in customer_counts.values() if 1 <= count <= 4
+    )
+    one_time_customers = sum(
+        1 for count in customer_counts.values() if count == 1
+    )
+    low_frequency_share = low_frequency_orders / len(dataset.orders)
+
+    assert 650 <= len(customer_counts) <= 760
+    assert one_time_customers >= 550
+    assert 0.55 <= low_frequency_share <= 0.65
+def test_build_demo_order_dataset_has_non_uniform_daily_volume() -> None:
+    dataset = build_demo_order_dataset(
+        customers=_customers(),
+        products=_products(),
+        seed=42,
+    )
+    timezone = ZoneInfo("America/Bogota")
+    daily_counts = Counter(
+        order.created_at.astimezone(timezone).date()
+        for order in dataset.orders
+    )
+    weekday_counts = Counter(
+        day.weekday()
+        for day, count in daily_counts.items()
+        for _ in range(count)
+    )
+
+    assert len(daily_counts) == 35
+    assert max(daily_counts.values()) - min(daily_counts.values()) >= 30
+    assert weekday_counts[6] > weekday_counts[0]
+    assert weekday_counts[4] > weekday_counts[1]
+    assert max(daily_counts.values()) >= 65
+    assert min(daily_counts.values()) <= 30

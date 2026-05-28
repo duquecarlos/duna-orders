@@ -647,6 +647,23 @@ class GoogleSheetsStorage(StorageInterface):
         self._run_gspread(lambda: worksheet.append_row(row))
 
         return customer.model_copy(deep=True)
+    def bulk_create_customers(self, customers: list[Customer]) -> None:
+        """Trusted bulk operation. Skips uniqueness checks.
+
+        Caller is responsible for ID integrity. Intended for seeding, migration,
+        and restore — not normal customer flow. Do NOT use from request-handling
+        code paths.
+        """
+
+        if not customers:
+            return
+
+        rows = [self._customer_to_row(customer) for customer in customers]
+
+        self._run_gspread(
+            lambda: self._worksheet(CUSTOMERS_TAB).append_rows(rows)
+        )
+        self._invalidate_records_cache(CUSTOMERS_TAB)
 
     def create_order(self, order: Order) -> Order:
         existing_row = self._find_row_index(
