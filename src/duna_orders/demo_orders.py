@@ -69,7 +69,51 @@ DELIVERY_ZONES = (
     "Alhambra",
     "Mazurén",
 )
+CURATED_ORDER_PROBABILITY = 0.70
 
+SIGNATURE_MAIN_WEIGHTS = {
+    "plato-bandeja-paisa": 48,
+    "plato-frijoles-garra": 44,
+    "plato-pollo-guisado-criollo": 38,
+    "parrilla-picada-fogon-dos": 30,
+    "plato-cazuela-mariscos": 16,
+    "plato-arroz-con-camarones": 16,
+}
+
+CURATED_PAIRINGS_BY_MAIN_NAME = {
+    "Bandeja paisa": (
+        ("Aguapanela con limón", Decimal("1"), 0.82),
+        ("Patacón", Decimal("1"), 0.42),
+        ("Chorizo antioqueño con arepa", Decimal("1"), 0.22),
+    ),
+    "Fríjoles con garra": (
+        ("Aguapanela con limón", Decimal("1"), 0.78),
+        ("Arroz con coco", Decimal("1"), 0.36),
+        ("Patacón", Decimal("1"), 0.30),
+    ),
+    "Pollo guisado criollo": (
+        ("Gaseosa personal", Decimal("1"), 0.72),
+        ("Yuca frita", Decimal("1"), 0.38),
+        ("Limonada natural", Decimal("1"), 0.30),
+    ),
+    "Picada Fogón para dos": (
+        ("Limonada cerezada", Decimal("2"), 0.70),
+        ("Gaseosa personal", Decimal("2"), 0.55),
+        ("Morcilla con arepa", Decimal("1"), 0.28),
+    ),
+    "Punta de anca 200gr": (
+        ("Limonada de coco", Decimal("1"), 0.62),
+        ("Yuca frita", Decimal("1"), 0.34),
+    ),
+    "Punta de anca 400gr": (
+        ("Limonada de coco", Decimal("2"), 0.66),
+        ("Patacón", Decimal("1"), 0.34),
+    ),
+    "Mojarra frita con arroz con coco": (
+        ("Limonada de coco", Decimal("1"), 0.70),
+        ("Arroz con coco", Decimal("1"), 0.24),
+    ),
+}
 PAYMENT_METHODS: tuple[PaymentMethod, ...] = (
     "nequi",
     "daviplata",
@@ -413,16 +457,41 @@ def _build_order_items(
         )
     )
 
-    optional_groups = [
-        ("bebida-", Decimal("1"), 0.78),
-        ("acompanamiento-", Decimal("1"), 0.36),
-        ("entrada-", Decimal("1"), 0.24),
-        ("postre-", Decimal("1"), 0.16),
-        ("adicion-", Decimal("1"), 0.20),
-    ]
-
     item_index = 2
     used_product_ids = {main_product.product_id}
+    is_curated_order = rng.random() < CURATED_ORDER_PROBABILITY
+
+    if is_curated_order:
+        item_index = _append_curated_pairing_items(
+            rng=rng,
+            products=products,
+            main_product=main_product,
+            local_date=local_date,
+            used_product_ids=used_product_ids,
+            items=items,
+            order_id=order_id,
+            order_index=order_index,
+            item_index=item_index,
+            tenant_id=tenant_id,
+        )
+
+    optional_groups = (
+        [
+            ("bebida-", Decimal("1"), 0.18),
+            ("acompanamiento-", Decimal("1"), 0.18),
+            ("entrada-", Decimal("1"), 0.10),
+            ("postre-", Decimal("1"), 0.12),
+            ("adicion-", Decimal("1"), 0.08),
+        ]
+        if is_curated_order
+        else [
+            ("bebida-", Decimal("1"), 0.78),
+            ("acompanamiento-", Decimal("1"), 0.36),
+            ("entrada-", Decimal("1"), 0.24),
+            ("postre-", Decimal("1"), 0.16),
+            ("adicion-", Decimal("1"), 0.20),
+        ]
+    )
 
     for prefix, quantity, probability in optional_groups:
         if rng.random() > probability:
@@ -457,8 +526,71 @@ def _build_order_items(
         item_index += 1
 
     return items
+def _append_curated_pairing_items(
+    *,
+    rng: random.Random,
+    products: Sequence[Product],
+    main_product: Product,
+    local_date: date,
+    used_product_ids: set[str],
+    items: list[OrderItem],
+    order_id: str,
+    order_index: int,
+    item_index: int,
+    tenant_id: str,
+) -> int:
+    pairings = CURATED_PAIRINGS_BY_MAIN_NAME.get(main_product.product_name, ())
+
+    for product_name, quantity, probability in pairings:
+        if rng.random() > probability:
+            continue
+
+        product = _available_product_by_name(
+            products=products,
+            product_name=product_name,
+            local_date=local_date,
+            used_product_ids=used_product_ids,
+        )
+
+        if product is None:
+            continue
+
+        used_product_ids.add(product.product_id)
+        items.append(
+            _make_item(
+                product=product,
+                order_id=order_id,
+                order_index=order_index,
+                item_index=item_index,
+                quantity=quantity,
+                tenant_id=tenant_id,
+            )
+        )
+        item_index += 1
+
+    return item_index
 
 
+def _available_product_by_name(
+    *,
+    products: Sequence[Product],
+    product_name: str,
+    local_date: date,
+    used_product_ids: set[str],
+) -> Product | None:
+    for product in products:
+        if product.product_id in used_product_ids:
+            continue
+
+        if product.product_name != product_name:
+            continue
+
+        if not _product_available_on(product, local_date):
+            continue
+
+        return product
+
+    return None
 def _choose_main_product(
     rng: random.Random,
     products: Sequence[Product],
@@ -480,28 +612,19 @@ def _choose_main_product(
 def _main_product_weight(product: Product) -> int:
     product_id = product.product_id
 
-    if product_id in {
-        "plato-bandeja-paisa",
-        "plato-pollo-guisado-criollo",
-        "plato-frijoles-garra",
-    }:
-        return 8
+    if product_id in SIGNATURE_MAIN_WEIGHTS:
+        return SIGNATURE_MAIN_WEIGHTS[product_id]
 
     if product_id.startswith("parrilla-"):
-        return 5
+        return 12
 
     if product_id.startswith("sopa-"):
-        return 3
+        return 5
 
-    if product_id in {
-        "plato-cazuela-mariscos",
-        "plato-arroz-con-camarones",
-        "parrilla-picada-fogon-dos",
-    }:
-        return 2
+    if product_id.startswith("plato-"):
+        return 7
 
-    return 4
-
+    return 3
 
 def _products_by_prefix(
     products: Sequence[Product],

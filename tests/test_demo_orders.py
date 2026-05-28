@@ -1,6 +1,6 @@
 from datetime import timedelta
 from decimal import Decimal
-
+from itertools import combinations
 import pytest
 from collections import Counter
 from zoneinfo import ZoneInfo
@@ -211,3 +211,51 @@ def test_build_demo_order_dataset_has_non_uniform_daily_volume() -> None:
     assert weekday_counts[4] > weekday_counts[1]
     assert max(daily_counts.values()) >= 65
     assert min(daily_counts.values()) <= 30
+def test_build_demo_order_dataset_prioritizes_signature_mains() -> None:
+    dataset = build_demo_order_dataset(
+        customers=_customers(),
+        products=_products(),
+        seed=42,
+    )
+
+    quantity_by_product_id = Counter()
+    for item in dataset.order_items:
+        quantity_by_product_id[item.product_id] += int(item.quantity)
+
+    top_10_product_ids = [
+        product_id
+        for product_id, _ in quantity_by_product_id.most_common(10)
+    ]
+    top_10_main_count = sum(
+        1
+        for product_id in top_10_product_ids
+        if product_id is not None
+        and product_id.startswith(("plato-", "parrilla-", "sopa-"))
+    )
+
+    assert quantity_by_product_id["plato-bandeja-paisa"] >= 180
+    assert quantity_by_product_id["plato-frijoles-garra"] >= 160
+    assert quantity_by_product_id["plato-pollo-guisado-criollo"] >= 140
+    assert top_10_main_count >= 4
+
+
+def test_build_demo_order_dataset_has_strong_signature_pairings() -> None:
+    dataset = build_demo_order_dataset(
+        customers=_customers(),
+        products=_products(),
+        seed=42,
+    )
+
+    pair_counts = Counter()
+
+    for order in dataset.orders:
+        product_names = sorted(
+            {item.product_name_snapshot for item in order.items}
+        )
+
+        for left, right in combinations(product_names, 2):
+            pair_counts[(left, right)] += 1
+
+    assert pair_counts[("Aguapanela con limón", "Bandeja paisa")] >= 60
+    assert pair_counts[("Aguapanela con limón", "Fríjoles con garra")] >= 50
+    assert max(pair_counts.values()) >= 60
