@@ -165,7 +165,7 @@ def test_locked_dashboard_scenario_definition_uses_four_tabs():
     assert widget_names == {
         "today_pulse",
         "week_trend",
-        "status_breakdown",
+        "week_over_week",
         "time_of_day_heatmap",
         "customer_mix",
         "top_customers",

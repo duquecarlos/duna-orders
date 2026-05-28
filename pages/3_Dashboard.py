@@ -10,7 +10,7 @@ from duna_orders.demo_catalog import DemoCatalogFile
 from duna_orders.services.dashboard import (
     compute_customer_mix,
     compute_product_pairs,
-    compute_status_breakdown,
+    compute_week_over_week,
     compute_time_of_day_heatmap,
     compute_todays_pulse,
     compute_todays_status_strip,
@@ -28,7 +28,7 @@ from duna_orders.ui.dashboard_streamlit import (
     render_customer_mix,
     render_dashboard_load_error,
     render_product_pairs,
-    render_status_breakdown,
+    render_week_over_week,
     render_time_of_day_heatmap,
     render_todays_pulse,
     render_top_customers,
@@ -91,7 +91,10 @@ def _render_dashboard_body(
                 today=reference_date,
             )
             week_trend = compute_week_trend(scenario, today=reference_date)
-            status_breakdown = compute_status_breakdown(scenario)
+            week_over_week = compute_week_over_week(
+                scenario,
+                reference_date=reference_date,
+            )
             customer_mix = compute_customer_mix(scenario, week_start=week_start)
             top_customers = compute_top_customers(scenario, week_start=week_start)
             top_items_by_category = compute_top_items_by_category(
@@ -110,7 +113,7 @@ def _render_dashboard_body(
                 render_todays_pulse(todays_pulse, todays_status_strip)
 
             with now_right_col:
-                render_status_breakdown(status_breakdown)
+                render_week_over_week(week_over_week)
 
             st.header("This week")
             week_left_col, week_right_col = st.columns(2)

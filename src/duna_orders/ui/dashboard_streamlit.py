@@ -17,6 +17,8 @@ from duna_orders.services.dashboard import (
     WeekTrendDay,
     TodaysStatusStrip,
     TopItemsByCategoryResult,
+    WeekOverWeekMetric,
+    WeekOverWeekResult,
 )
 
 
@@ -60,7 +62,55 @@ def _date_window(start, end) -> str:
 
 def _category_label(value: str) -> str:
     return value.replace("_", " ").replace("-", " ").title()
+def _compact_money(value: Decimal) -> str:
+    absolute = abs(value)
 
+    if absolute >= Decimal("1000000"):
+        return f"COP {value / Decimal('1000000'):.1f}M"
+
+    if absolute >= Decimal("1000"):
+        return f"COP {value / Decimal('1000'):.0f}K"
+
+    return _money(value)
+
+
+def _format_wow_value(metric: WeekOverWeekMetric) -> str:
+    if metric.value_format == "count":
+        return _count(int(metric.value))
+
+    if metric.value_format == "money":
+        return _compact_money(metric.value)
+
+    if metric.value_format == "percent":
+        return _pct(metric.value)
+
+    return str(metric.value)
+
+
+def _format_wow_delta(metric: WeekOverWeekMetric) -> str | None:
+    if metric.delta is None:
+        return None
+
+    if metric.delta_unit == "percentage_points":
+        return f"{metric.delta * Decimal('100'):+.1f} pp"
+
+    if metric.value_format == "count":
+        return f"{int(metric.delta):+d}"
+
+    if metric.value_format == "money":
+        return _compact_money(metric.delta)
+
+    if metric.value_format == "percent":
+        return _pct(metric.delta)
+
+    return str(metric.delta)
+
+
+def _wow_delta_color(metric: WeekOverWeekMetric) -> str:
+    if metric.color == "neutral":
+        return "off"
+
+    return "normal" if metric.higher_is_better else "inverse"
 def render_dashboard_load_error(error: Exception) -> None:
     st.error(
         "Dashboard data could not be loaded. "
@@ -97,7 +147,7 @@ def render_todays_pulse(
     if status_strip is not None:
         st.caption(
             "Today status: "
-            f"completed {_count(status_strip.completed)} · "
+            f"completed {_count(status_strip.completed)} \u00b7 "
             f"pending {_count(status_strip.pending)} · "
             f"cancelled {_count(status_strip.cancelled)}"
         )
@@ -176,7 +226,36 @@ def render_week_trend(result: list[WeekTrendDay]) -> None:
         hide_index=True,
         use_container_width=True,
     )
+def render_week_over_week(result: WeekOverWeekResult) -> None:
+    st.subheader("Week over week")
+    st.caption(
+        f"Current: {_date_window(result.current_period.start_date, result.current_period.end_date)}"
+    )
 
+    if result.previous_period is None:
+        st.caption("No prior week to compare.")
+    else:
+        st.caption(
+            "Previous: "
+            f"{_date_window(result.previous_period.start_date, result.previous_period.end_date)}"
+        )
+
+    metric_rows = [
+        result.metrics[:2],
+        result.metrics[2:],
+    ]
+
+    for metric_row in metric_rows:
+        columns = st.columns(2)
+
+        for column, metric in zip(columns, metric_row):
+            with column:
+                st.metric(
+                    metric.label,
+                    _format_wow_value(metric),
+                    delta=_format_wow_delta(metric),
+                    delta_color=_wow_delta_color(metric),
+                )
 def render_status_breakdown(result: StatusBreakdown) -> None:
     st.subheader("Status breakdown")
 

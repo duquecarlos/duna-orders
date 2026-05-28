@@ -34,8 +34,8 @@ LOCKED_DASHBOARD_WIDGETS = (
         "tabs": frozenset({ORDERS_TAB, ORDER_ITEMS_TAB}),
     },
     {
-        "name": "status_breakdown",
-        "description": "Counts by draft, confirmed, completed, cancelled.",
+        "name": "week_over_week",
+        "description": "Current week-to-date KPIs compared with prior week-to-date.",
         "tabs": frozenset({ORDERS_TAB}),
     },
     {

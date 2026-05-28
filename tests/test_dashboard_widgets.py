@@ -16,6 +16,7 @@ from duna_orders.services.dashboard import (
     resolve_reference_date,
     compute_todays_status_strip,
     compute_top_items_by_category,
+    compute_week_over_week,
 )
 from tests.conftest import DEFAULT_TEST_TENANT_ID
 from tests.test_storage_contract import make_customer, make_order, make_product
@@ -130,6 +131,8 @@ def _heatmap_count_by_cell(result):
         (cell.weekday, cell.hour): cell.order_count
         for cell in result.cells
     }
+def _metric_by_label(result, label: str):
+    return next(metric for metric in result.metrics if metric.label == label)
 def test_resolve_reference_date_runtime_uses_today() -> None:
     scenario = _scenario(
         _order(
@@ -220,7 +223,27 @@ def test_compute_todays_pulse_returns_zero_values_when_no_orders_today():
     assert result.revenue == Decimal("0")
     assert result.aov == Decimal("0")
 
+def test_compute_todays_pulse_excludes_cancelled_orders_from_revenue_and_aov():
+    scenario = _scenario(
+        _order(
+            "ord_today_confirmed",
+            created_at=datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc),
+            total=Decimal("20000"),
+            status="confirmed",
+        ),
+        _order(
+            "ord_today_cancelled",
+            created_at=datetime(2026, 5, 26, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("999000"),
+            status="cancelled",
+        ),
+    )
 
+    result = compute_todays_pulse(scenario, today=TODAY)
+
+    assert result.orders_count == 2
+    assert result.revenue == Decimal("20000")
+    assert result.aov == Decimal("20000")
 def test_compute_week_trend_aggregates_last_seven_days_with_zero_day_gap():
     scenario = _scenario(
         _order(
@@ -1208,3 +1231,166 @@ def test_compute_top_items_by_category_respects_time_window():
 
     assert len(result.entries) == 1
     assert result.entries[0].product_id == "prd_arepa"
+def test_compute_week_over_week_compares_monday_to_reference_weekday():
+    scenario = _scenario(
+        _order(
+            "ord_current_monday",
+            created_at=datetime(2026, 5, 25, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+        ),
+        _order(
+            "ord_current_wednesday",
+            created_at=datetime(2026, 5, 27, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("20000"),
+        ),
+        _order(
+            "ord_previous_monday",
+            created_at=datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("5000"),
+        ),
+        _order(
+            "ord_previous_wednesday",
+            created_at=datetime(2026, 5, 20, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("7000"),
+        ),
+        _order(
+            "ord_previous_sunday_excluded",
+            created_at=datetime(2026, 5, 24, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("90000"),
+        ),
+    )
+
+    result = compute_week_over_week(
+        scenario,
+        reference_date=date(2026, 5, 27),
+    )
+
+    assert result.current_period.start_date == date(2026, 5, 25)
+    assert result.current_period.end_date == date(2026, 5, 27)
+    assert result.previous_period is not None
+    assert result.previous_period.start_date == date(2026, 5, 18)
+    assert result.previous_period.end_date == date(2026, 5, 20)
+    assert _metric_by_label(result, "Orders").value == Decimal("2")
+    assert _metric_by_label(result, "Revenue").value == Decimal("30000")
+
+
+def test_compute_week_over_week_cancellation_down_is_green_down_pp_delta():
+    scenario = _scenario(
+        _order(
+            "ord_current_ok_1",
+            created_at=datetime(2026, 5, 25, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+            status="confirmed",
+        ),
+        _order(
+            "ord_current_ok_2",
+            created_at=datetime(2026, 5, 26, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+            status="confirmed",
+        ),
+        _order(
+            "ord_current_ok_3",
+            created_at=datetime(2026, 5, 27, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+            status="confirmed",
+        ),
+        _order(
+            "ord_current_cancelled",
+            created_at=datetime(2026, 5, 27, 16, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+            status="cancelled",
+        ),
+        _order(
+            "ord_previous_ok_1",
+            created_at=datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+            status="confirmed",
+        ),
+        _order(
+            "ord_previous_ok_2",
+            created_at=datetime(2026, 5, 19, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+            status="confirmed",
+        ),
+        _order(
+            "ord_previous_cancelled_1",
+            created_at=datetime(2026, 5, 20, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+            status="cancelled",
+        ),
+        _order(
+            "ord_previous_cancelled_2",
+            created_at=datetime(2026, 5, 20, 16, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+            status="cancelled",
+        ),
+    )
+
+    result = compute_week_over_week(
+        scenario,
+        reference_date=date(2026, 5, 27),
+    )
+    metric = _metric_by_label(result, "Cancellation rate")
+
+    assert metric.value == Decimal("0.25")
+    assert metric.previous_value == Decimal("0.5")
+    assert metric.delta == Decimal("-0.25")
+    assert metric.delta_unit == "percentage_points"
+    assert metric.arrow == "down"
+    assert metric.color == "green"
+
+
+def test_compute_week_over_week_orders_down_is_red_down_delta():
+    scenario = _scenario(
+        _order(
+            "ord_current_only",
+            created_at=datetime(2026, 5, 25, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+        ),
+        _order(
+            "ord_previous_1",
+            created_at=datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+        ),
+        _order(
+            "ord_previous_2",
+            created_at=datetime(2026, 5, 19, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+        ),
+    )
+
+    result = compute_week_over_week(
+        scenario,
+        reference_date=date(2026, 5, 27),
+    )
+    metric = _metric_by_label(result, "Orders")
+
+    assert metric.value == Decimal("1")
+    assert metric.previous_value == Decimal("2")
+    assert metric.delta == Decimal("-1")
+    assert metric.arrow == "down"
+    assert metric.color == "red"
+
+
+def test_compute_week_over_week_insufficient_history_has_no_fake_delta():
+    scenario = _scenario(
+        _order(
+            "ord_current_only",
+            created_at=datetime(2026, 5, 25, 15, 0, tzinfo=timezone.utc),
+            total=Decimal("10000"),
+        ),
+    )
+
+    result = compute_week_over_week(
+        scenario,
+        reference_date=date(2026, 5, 27),
+    )
+
+    assert result.has_comparison is False
+    assert result.previous_period is None
+
+    for metric in result.metrics:
+        assert metric.previous_value is None
+        assert metric.delta is None
+        assert metric.arrow == "none"
+        assert metric.color == "neutral"
