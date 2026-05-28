@@ -6,7 +6,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Sequence
 from zoneinfo import ZoneInfo
-
+from duna_orders.demo_ids import DEMO_ORDER_ID_PREFIX, DEMO_ORDER_ITEM_ID_PREFIX
 from duna_orders.domain.models import (
     Customer,
     FulfillmentType,
@@ -121,7 +121,7 @@ def build_demo_order_dataset(
         )
         fulfillment_type = _choose_fulfillment_type(rng)
         payment_method = rng.choice(PAYMENT_METHODS)
-        order_id = f"demo_ord_{index:05d}"
+        order_id = f"{DEMO_ORDER_ID_PREFIX}{index:05d}"
 
         items = _build_order_items(
             rng=rng,
@@ -419,7 +419,7 @@ def _make_item(
 ) -> OrderItem:
     return OrderItem(
         tenant_id=tenant_id,
-        order_item_id=f"demo_oit_{order_index:05d}_{item_index:02d}",
+        order_item_id=f"{DEMO_ORDER_ITEM_ID_PREFIX}{order_index:05d}_{item_index:02d}",
         order_id=order_id,
         product_id=product.product_id,
         product_name_snapshot=product.product_name,

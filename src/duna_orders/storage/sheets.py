@@ -211,6 +211,30 @@ class GoogleSheetsStorage(StorageInterface):
         return None
 
     @staticmethod
+    def _row_value(row: list[str], index: int) -> str:
+        return row[index].strip() if index < len(row) else ""
+
+    @staticmethod
+    def _contiguous_ranges(row_indexes: list[int]) -> list[tuple[int, int]]:
+        if not row_indexes:
+            return []
+
+        ranges: list[tuple[int, int]] = []
+        start = row_indexes[0]
+        previous = row_indexes[0]
+
+        for row_index in row_indexes[1:]:
+            if row_index == previous + 1:
+                previous = row_index
+                continue
+
+            ranges.append((start, previous))
+            start = row_index
+            previous = row_index
+
+        ranges.append((start, previous))
+        return ranges
+    @staticmethod
     def _optional_string(value: Any) -> str | None:
         if value in ("", None):
             return None
@@ -646,7 +670,104 @@ class GoogleSheetsStorage(StorageInterface):
         self._run_gspread(lambda: self._worksheet(ORDERS_TAB).append_row(order_row))
 
         return order.model_copy(deep=True)
+    def bulk_create_orders(self, orders: list[Order]) -> None:
+        """Trusted bulk operation. Skips uniqueness checks.
 
+        Caller is responsible for ID integrity. Intended for seeding, migration,
+        and restore — not normal order flow. Do NOT use from request-handling
+        code paths.
+        """
+
+        if not orders:
+            return
+
+        rows = [self._order_to_row(order) for order in orders]
+
+        self._run_gspread(
+            lambda: self._worksheet(ORDERS_TAB).append_rows(rows)
+        )
+        self._invalidate_records_cache(ORDERS_TAB)
+
+    def bulk_create_order_items(self, items: list[OrderItem]) -> None:
+        """Trusted bulk operation. Skips uniqueness checks.
+
+        Caller is responsible for ID integrity. Intended for seeding, migration,
+        and restore — not normal order flow. Do NOT use from request-handling
+        code paths.
+        """
+
+        if not items:
+            return
+
+        rows = [self._order_item_to_row(item) for item in items]
+
+        self._run_gspread(
+            lambda: self._worksheet(ORDER_ITEMS_TAB).append_rows(rows)
+        )
+        self._invalidate_records_cache(ORDER_ITEMS_TAB)
+
+    def bulk_delete_orders_by_id_prefix(
+        self,
+        tenant_id: str,
+        prefix: str,
+    ) -> int:
+        """Trusted bulk operation. Skips uniqueness checks.
+
+        Caller is responsible for ID integrity. Intended for seeding, migration,
+        and restore — not normal order flow. Do NOT use from request-handling
+        code paths.
+
+        Deletes matching order_items first, then matching orders. A row matches
+        only when tenant_id equals the provided tenant_id and order_id starts
+        with the provided prefix.
+        """
+
+        deleted_order_items = self._delete_rows_by_tenant_and_id_prefix(
+            tab_name=ORDER_ITEMS_TAB,
+            id_column="order_id",
+            tenant_id=tenant_id,
+            prefix=prefix,
+        )
+        deleted_orders = self._delete_rows_by_tenant_and_id_prefix(
+            tab_name=ORDERS_TAB,
+            id_column="order_id",
+            tenant_id=tenant_id,
+            prefix=prefix,
+        )
+
+        return deleted_order_items + deleted_orders
+
+    def _delete_rows_by_tenant_and_id_prefix(
+        self,
+        *,
+        tab_name: str,
+        id_column: str,
+        tenant_id: str,
+        prefix: str,
+    ) -> int:
+        worksheet = self._worksheet(tab_name)
+        values = self._run_gspread(lambda: worksheet.get_all_values())
+
+        headers = TABS[tab_name]
+        id_col_index = headers.index(id_column)
+        tenant_id_col_index = headers.index("tenant_id")
+
+        rows_to_delete = [
+            row_index
+            for row_index, row in enumerate(values[1:], start=2)
+            if self._row_value(row, tenant_id_col_index) == tenant_id
+            and self._row_value(row, id_col_index).startswith(prefix)
+        ]
+
+        for start, end in reversed(self._contiguous_ranges(rows_to_delete)):
+            self._run_gspread(
+                lambda start=start, end=end: worksheet.delete_rows(start, end)
+            )
+
+        if rows_to_delete:
+            self._invalidate_records_cache(tab_name)
+
+        return len(rows_to_delete)
     def _orders_from_records(
         self,
         record_set: _SheetsRecordSet,

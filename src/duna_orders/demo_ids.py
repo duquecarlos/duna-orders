@@ -1,0 +1,2 @@
+DEMO_ORDER_ID_PREFIX = "demo_ord_"
+DEMO_ORDER_ITEM_ID_PREFIX = "demo_oit_"

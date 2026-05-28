@@ -1,20 +1,20 @@
-"""Seed a limited batch of deterministic demo orders into the demo spreadsheet.
+"""Bulk seed deterministic demo orders into the demo spreadsheet.
 
 Usage:
-    python scripts/seed_demo_orders.py --target demo --wipe --limit 25 --delay-s 6
-    python scripts/seed_demo_orders.py --target demo --limit 25 --delay-s 6
+    python scripts/seed_demo_orders.py --target demo --wipe --limit 100
+    python scripts/seed_demo_orders.py --target demo --wipe --limit 1500
 
 Safety:
     - Only demo target is allowed in this slice.
     - Runtime target is blocked.
-    - --wipe deletes only rows with demo order/order-item prefixes.
+    - --wipe deletes only rows where tenant_id is el-fogon-colombiano and
+      order_id starts with the demo order prefix.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,19 +24,15 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from duna_orders.config import settings
 from duna_orders.demo_catalog import load_demo_catalog
+from duna_orders.demo_ids import DEMO_ORDER_ID_PREFIX
 from duna_orders.demo_orders import (
     DEFAULT_DEMO_ORDER_COUNT,
     DEMO_TENANT_ID,
     build_demo_order_dataset,
 )
 from duna_orders.domain.models import Order
-from duna_orders.storage.schema import ORDER_ITEMS_TAB, ORDERS_TAB, TABS
 from duna_orders.storage.sheets import GoogleSheetsStorage
 from scripts.seed_demo_data import build_demo_customers
-
-
-DEMO_ORDER_ID_PREFIX = "demo_ord_"
-DEMO_ORDER_ITEM_ID_PREFIX = "demo_oit_"
 
 
 @dataclass(frozen=True)
@@ -45,8 +41,7 @@ class OrderSeedResult:
     limit: int
     seed: int
     wipe: bool
-    deleted_orders: int
-    deleted_order_items: int
+    deleted_rows: int
     seeded_orders: int
     seeded_order_items: int
 
@@ -78,80 +73,6 @@ def make_demo_storage() -> GoogleSheetsStorage:
     )
 
 
-def _row_value(row: list[str], index: int) -> str:
-    return row[index].strip() if index < len(row) else ""
-
-
-def _contiguous_ranges(row_indexes: list[int]) -> list[tuple[int, int]]:
-    if not row_indexes:
-        return []
-
-    ranges: list[tuple[int, int]] = []
-    start = row_indexes[0]
-    previous = row_indexes[0]
-
-    for row_index in row_indexes[1:]:
-        if row_index == previous + 1:
-            previous = row_index
-            continue
-
-        ranges.append((start, previous))
-        start = row_index
-        previous = row_index
-
-    ranges.append((start, previous))
-    return ranges
-
-
-def _delete_prefixed_rows(
-    storage: GoogleSheetsStorage,
-    *,
-    tab_name: str,
-    id_column: str,
-    id_prefix: str,
-) -> int:
-    worksheet = storage._worksheet(tab_name)
-    values = storage._run_gspread(lambda: worksheet.get_all_values())
-
-    headers = TABS[tab_name]
-    id_col_index = headers.index(id_column)
-    tenant_id_col_index = headers.index("tenant_id")
-
-    rows_to_delete = [
-        row_index
-        for row_index, row in enumerate(values[1:], start=2)
-        if _row_value(row, tenant_id_col_index) == DEMO_TENANT_ID
-        and _row_value(row, id_col_index).startswith(id_prefix)
-    ]
-
-    for start, end in reversed(_contiguous_ranges(rows_to_delete)):
-        storage._run_gspread(
-            lambda start=start, end=end: worksheet.delete_rows(start, end)
-        )
-
-    if rows_to_delete:
-        storage._invalidate_records_cache(tab_name)
-
-    return len(rows_to_delete)
-
-
-def wipe_demo_orders(storage: GoogleSheetsStorage) -> tuple[int, int]:
-    deleted_order_items = _delete_prefixed_rows(
-        storage,
-        tab_name=ORDER_ITEMS_TAB,
-        id_column="order_item_id",
-        id_prefix=DEMO_ORDER_ITEM_ID_PREFIX,
-    )
-    deleted_orders = _delete_prefixed_rows(
-        storage,
-        tab_name=ORDERS_TAB,
-        id_column="order_id",
-        id_prefix=DEMO_ORDER_ID_PREFIX,
-    )
-
-    return deleted_orders, deleted_order_items
-
-
 def build_limited_demo_orders(
     *,
     limit: int,
@@ -177,29 +98,22 @@ def build_limited_demo_orders(
     return dataset.orders
 
 
-def seed_demo_orders(
+def seed_demo_orders_bulk(
     *,
     storage: GoogleSheetsStorage,
     orders: list[Order],
-    delay_s: float,
 ) -> tuple[int, int]:
-    seeded_orders = 0
-    seeded_order_items = 0
+    order_items = [item for order in orders for item in order.items]
 
-    for order in orders:
-        storage.create_order(order)
-        seeded_orders += 1
-        seeded_order_items += len(order.items)
+    storage.bulk_create_order_items(order_items)
+    storage.bulk_create_orders(orders)
 
-        if delay_s > 0:
-            time.sleep(delay_s)
-
-    return seeded_orders, seeded_order_items
+    return len(orders), len(order_items)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Seed a limited deterministic demo order batch into Sheets."
+        description="Bulk seed deterministic demo orders into Sheets."
     )
     parser.add_argument(
         "--target",
@@ -215,20 +129,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--limit",
         type=int,
-        default=25,
-        help="Number of demo orders to write. Defaults to 25.",
+        default=100,
+        help="Number of demo orders to write. Defaults to 100.",
     )
     parser.add_argument(
         "--seed",
         type=int,
         default=42,
         help="Seed for deterministic demo order generation.",
-    )
-    parser.add_argument(
-        "--delay-s",
-        type=float,
-        default=6.0,
-        help="Delay between order writes to reduce Google Sheets quota pressure.",
     )
     return parser.parse_args()
 
@@ -246,15 +154,16 @@ def main() -> int:
             seed=args.seed,
         )
 
-        deleted_orders = 0
-        deleted_order_items = 0
+        deleted_rows = 0
         if args.wipe:
-            deleted_orders, deleted_order_items = wipe_demo_orders(storage)
+            deleted_rows = storage.bulk_delete_orders_by_id_prefix(
+                tenant_id=DEMO_TENANT_ID,
+                prefix=DEMO_ORDER_ID_PREFIX,
+            )
 
-        seeded_orders, seeded_order_items = seed_demo_orders(
+        seeded_orders, seeded_order_items = seed_demo_orders_bulk(
             storage=storage,
             orders=orders,
-            delay_s=args.delay_s,
         )
 
         result = OrderSeedResult(
@@ -262,8 +171,7 @@ def main() -> int:
             limit=args.limit,
             seed=args.seed,
             wipe=args.wipe,
-            deleted_orders=deleted_orders,
-            deleted_order_items=deleted_order_items,
+            deleted_rows=deleted_rows,
             seeded_orders=seeded_orders,
             seeded_order_items=seeded_order_items,
         )
@@ -278,8 +186,7 @@ def main() -> int:
     print(f"Limit: {result.limit}")
     print(f"Seed: {result.seed}")
     print(f"Wipe: {result.wipe}")
-    print(f"Deleted existing orders: {result.deleted_orders}")
-    print(f"Deleted existing order items: {result.deleted_order_items}")
+    print(f"Deleted existing order/order_item rows: {result.deleted_rows}")
     print(f"Seeded order items: {result.seeded_order_items}")
 
     return 0
