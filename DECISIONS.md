@@ -1,4 +1,383 @@
 # Architectural Decisions
+## M8 - WhatsApp conversational ordering and Postgres runtime foundation
+
+Status: locked for M8.0.
+
+M8 introduces WhatsApp conversational ordering and moves the runtime storage foundation from Google Sheets to Postgres. This is a platform-hardening milestone, not only a channel integration.
+
+### Decision: M8 starts with Postgres before WhatsApp behavior
+
+Duna Orders will introduce Postgres as the runtime backend before enabling WhatsApp conversation logic.
+
+Reason:
+
+* Conversational ordering requires transactions, idempotency, queueing, session versioning, outbox semantics, delivery status callbacks, and safe operator confirmation.
+* Google Sheets remains useful for early visibility and previous pilot workflows, but it should not own concurrent conversational state.
+* StorageInterface remains the boundary, so the storage backend can change without rewriting the service layer.
+
+Implementation direction:
+
+* Introduce `PostgresStorage`.
+* Keep `InMemoryStorage` for deterministic unit tests.
+* Keep `GoogleSheetsStorage` as historical/legacy backend, not M8 runtime target.
+* Re-seed deterministic demo data fresh into Postgres instead of migrating rows from Sheets.
+
+### Decision: M8 keeps channels replaceable
+
+WhatsApp is the first conversational channel, but not the product itself.
+
+The product remains the order engine:
+
+* tenant resolution;
+* conversation session state;
+* draft order creation;
+* operator confirmation;
+* order persistence;
+* outbound policy;
+* telemetry.
+
+Twilio WhatsApp Sandbox is the M8 provider. Future Meta direct WhatsApp, Telegram, or other channels must plug in through channel adapters without changing the core services.
+
+### Decision: FastAPI handles webhooks; Streamlit remains operator UI
+
+M8 adds a FastAPI webhook service for inbound provider callbacks and status callbacks.
+
+FastAPI responsibilities:
+
+* receive Twilio inbound webhook;
+* verify Twilio signature;
+* resolve tenant-channel binding;
+* persist inbound message;
+* enqueue processing job;
+* expose outbound status callback endpoint;
+* run background conversation and outbound dispatcher loops for the M8 pilot.
+
+Streamlit remains the operator-facing UI.
+
+Streamlit is not a webhook server and is not treated as a real-time chat surface. It is a polling operator control panel.
+
+### Decision: webhook acknowledgement is separated from conversation processing
+
+Inbound webhooks must return quickly.
+
+The webhook endpoint performs only:
+
+1. signature verification;
+2. tenant-channel binding lookup;
+3. inbound message persistence;
+4. idempotency handling;
+5. job enqueue;
+6. HTTP 200 response.
+
+LLM calls, session updates, and outbound decisions happen after acknowledgement through background job processing.
+
+Reason:
+
+* A slow LLM call must not cause Twilio retries.
+* Message ingestion must be durable before conversation processing starts.
+* Duplicate inbound provider events must not create duplicate sessions or turns.
+
+### Decision: Postgres-as-queue is acceptable for M8 pilot
+
+M8 uses a `Job` table as a Postgres-backed queue.
+
+Jobs are claimed with row-level locking and `SKIP LOCKED`.
+
+Reason:
+
+* Avoid introducing an external queue before the product needs it.
+* Keep the pilot deployable with Railway + Neon.
+* Preserve durability and retry behavior using the same database.
+
+Limitation:
+
+* M8 assumes a single FastAPI service instance for worker partitioning correctness.
+* Multi-instance horizontal scaling requires stronger Postgres coordination or an external queue and is deferred post-M8.
+
+### Decision: session processing uses optimistic versioning
+
+Sessions use a monotonic `version`.
+
+A worker reads session version `N`, processes the turn, and writes only if the current version is still `N`.
+
+On conflict:
+
+1. reload latest session state;
+2. retry once;
+3. on second conflict, mark the session failed or requiring operator review.
+
+Reason:
+
+* Customers may send messages quickly.
+* Operator confirmation may race with inbound customer messages.
+* Versioning prevents stale writes and stale confirmations.
+
+### Decision: session status represents business state, not worker state
+
+The persisted `Session.status` values for M8 are:
+
+* `open`
+* `awaiting_operator`
+* `confirmed`
+* `cancelled`
+* `expired`
+* `failed`
+
+`processing` is not persisted as a session business status in M8.
+
+Reason:
+
+* Processing state belongs to the `Job` table.
+* Persisted `processing` can become stale if a worker crashes.
+* Session status should describe the business lifecycle of the conversation.
+
+### Decision: conversation history is append-only
+
+M8 stores conversation history as `ConversationEvent` rows, not as one growing JSON blob inside `Session`.
+
+Reason:
+
+* Easier replay/debugging.
+* Safer concurrency.
+* Better auditability.
+* Easier future analytics and eval harness creation.
+
+`Session` stores only the latest materialized snapshot, including current draft and version.
+
+### Decision: outbound uses an outbox pattern
+
+Outbound messages must be persisted before any send attempt.
+
+Flow:
+
+1. create `OutboundMessage`;
+2. enqueue outbound dispatch job;
+3. policy engine evaluates guards;
+4. suppressed messages are stored with reason;
+5. approved messages are sent through channel adapter;
+6. provider status callbacks update delivery state.
+
+Reason:
+
+* Prevents real customer messages from being sent without a durable internal record.
+* Makes retries and suppressed messages visible.
+* Keeps sending behavior auditable.
+
+### Decision: outbound policy is separate from channel dispatch
+
+M8 separates:
+
+* `OutboxService`
+* `OutboundPolicyEngine`
+* `ChannelDispatcher`
+* `StatusCallbackHandler`
+* `ChannelAdapter`
+
+Reason:
+
+* Business safety rules should not live inside Twilio-specific code.
+* Provider adapters should only translate between Duna messages and provider APIs.
+* Safety guards must be independently testable.
+
+### Decision: outbound is blocked by default
+
+Outbound defaults are safe in all environments.
+
+Default posture:
+
+* outbound disabled;
+* log-only mode;
+* non-production allowlist required;
+* commitment messages require operator identity and exact session version match.
+
+The policy engine evaluates 12 guards in order:
+
+1. tenant channel enabled;
+2. environment binding matches;
+3. kill switch;
+4. mode check;
+5. allowlist;
+6. session status allows outbound;
+7. idempotency;
+8. WhatsApp window or template;
+9. rate limit;
+10. length and basic content;
+11. commitment requires operator;
+12. opt-out list.
+
+Each guard must be independently testable.
+
+### Decision: outbound intent is explicit
+
+M8 uses an `OutboundIntent` taxonomy:
+
+* `CLARIFY_MISSING_INFO`
+* `CLARIFY_SUBSTITUTION`
+* `ACKNOWLEDGE_RECEIPT`
+* `OPERATOR_REVIEW_NOTICE`
+* `COMMITMENT_CONFIRMATION`
+* `FAILURE_OR_HANDOFF`
+* `PAYMENT_REQUEST`
+
+`PAYMENT_REQUEST` is deferred and inactive in M8.
+
+The LLM may propose an intent, but the policy engine validates whether that intent is allowed.
+
+### Decision: commitment outbound is always operator-gated
+
+The bot can ask clarification questions autonomously, subject to safety policy.
+
+The bot cannot confirm an order by itself in M8.
+
+Commitment flow requires:
+
+* session status `awaiting_operator`;
+* operator identity from configured pool;
+* current session version match;
+* atomic order creation;
+* deterministic commitment message rendering;
+* outbound policy approval.
+
+The LLM never writes the final commitment message.
+
+### Decision: M8 uses structured LLM output
+
+M8 introduces a capability-aware `StructuredTurnClient`.
+
+The initial provider is Anthropic Claude Haiku 4.5.
+
+Provider-native structured outputs are required where available, followed by local validation.
+
+The LLM output must include:
+
+* action;
+* draft patch;
+* draft completeness;
+* catalog resolution;
+* next question when needed;
+* operator summary;
+* confidence;
+* safety flags.
+
+Malformed or low-confidence output escalates to operator review instead of sending unsafe outbound messages.
+
+### Decision: catalog context is versioned
+
+Every LLM turn records the catalog snapshot used.
+
+Catalog context includes:
+
+* tenant id;
+* catalog snapshot id;
+* product count;
+* generated timestamp;
+* catalog hash;
+* prompt cache key.
+
+Reason:
+
+* Parser behavior must be debuggable.
+* If the bot offers an unavailable or stale item, the exact catalog context can be inspected.
+
+### Decision: operator identity is lightweight for M8
+
+M8 uses an honor-system operator identity pool configured for the pilot.
+
+This is not real authentication.
+
+Reason:
+
+* Good enough for a known-operator pilot.
+* Avoids blocking M8 on full auth.
+* Real authentication is deferred until the operator UI moves beyond Streamlit or requires broader access.
+
+### Decision: operator confirmation is atomic
+
+Order confirmation happens inside one Postgres transaction.
+
+The transaction includes:
+
+* create order;
+* link session to order;
+* advance session status;
+* bump session version;
+* create commitment outbound row;
+* append operator action.
+
+If the commitment send later fails, the order remains confirmed and the failed outbound is surfaced for operator retry.
+
+### Decision: PII is intentionally constrained
+
+M8 stores operationally necessary customer and conversation data, but avoids unrestricted raw logging.
+
+Policy:
+
+* phones normalized to E.164;
+* phones masked by default in UI;
+* raw provider payloads environment-gated;
+* production prompt logs store hashes and structured variables, not full prompt text by default;
+* delivery addresses masked in listings and visible in detail views;
+* operator actions retained as audit trail.
+
+### Decision: Railway + Neon are the M8 pilot deployment targets
+
+M8 pilot deployment target:
+
+* Railway for FastAPI webhook service;
+* Railway for Streamlit operator UI;
+* Neon Postgres for database.
+
+ngrok is for local development only.
+
+Reason:
+
+* Low operational overhead.
+* Public HTTPS endpoint for webhooks.
+* Simple enough for pilot.
+* Does not require AWS-level infrastructure before validation.
+
+### Decision: cost circuit breaker protects against runaway loops
+
+M8 defines a per-tenant daily LLM cost cap.
+
+Default pilot cap:
+
+* 2 USD per tenant per day.
+
+At 80%:
+
+* operator UI warning.
+
+At 100%:
+
+* autonomous outbound disabled;
+* new LLM calls disabled or downgraded to operator-review-only mode;
+* affected sessions surfaced as cost-paused or needing operator attention.
+
+Reason:
+
+* Prevent runaway LLM loops.
+* Bound pilot risk.
+* Detect prompt-injection or retry failures early.
+
+### Decision: M8 slicing starts with storage foundation
+
+M8 implementation order:
+
+1. lock architecture;
+2. introduce Postgres foundation;
+3. preserve existing runtime/demo behavior on Postgres;
+4. add webhook inbound;
+5. add queue/session lifecycle;
+6. add outbox and safety harness;
+7. add structured LLM turn handling;
+8. enable first real clarification sends;
+9. enable operator-gated commitment;
+10. add multi-model/eval scaffolding;
+11. close with runbook and docs.
+
+WhatsApp behavior does not start until the transactional foundation is stable.
+
 ## M6 — Customer recognition is service-owned and phone-based
 
 Decision:

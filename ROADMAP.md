@@ -6,48 +6,290 @@ Detailed completed work belongs in `CHANGELOG.md`. This file only keeps mileston
 
 ## High priority
 
-### Next milestone candidate
+## M8 - WhatsApp conversational ordering and Postgres runtime foundation
 
-M8 - Real WhatsApp bot integration.
+Status: planned.
 
-Status: candidate, not yet committed.
+M8 adds WhatsApp conversational ordering and moves the runtime foundation from Google Sheets to Postgres. The milestone is both a platform-hardening milestone and the first conversational-channel milestone.
 
-Planning should happen in a fresh conversation after M7 closure.
+Primary goals:
 
-Candidate staged scope:
+- Introduce Postgres as the runtime backend.
+- Preserve existing order-management and dashboard behavior on Postgres.
+- Add FastAPI webhook ingestion for Twilio WhatsApp Sandbox.
+- Add durable inbound idempotency and tenant-channel binding.
+- Add session lifecycle for multi-turn customer conversations.
+- Add Postgres-backed job processing.
+- Add outbox-based outbound messaging with safety guards.
+- Add structured LLM conversational turn handling.
+- Allow autonomous clarification messages only after safety harness validation.
+- Require operator confirmation for commitment messages.
+- Prepare multi-model evaluation and future provider/channel replacement.
 
-- M8.1: inbound WhatsApp message intake.
-- M8.2: outbound operator-confirmed messages.
-- M8.3: clarification flow, optional and only after M8.1/M8.2 are stable.
+### M8.0 - Architecture lock
 
-Principles:
+Status: closed.
 
-- Keep operator-confirmation behavior configurable, not hard-coded.
-- Reuse existing service-layer logic where possible.
-- Do not bypass `OrderService`.
-- Keep dashboard compute functions reusable for future bot daily summaries.
-- Avoid committing to full bot autonomy before pilot feedback.
+Scope:
 
-### Deferred validation
+- Create `ARCHITECTURE-M8.md`.
+- Update `DECISIONS.md` with locked M8 architecture decisions.
+- Update `ROADMAP.md` with M8 execution route.
+- No implementation code.
 
-External restaurant-owner validation remains deferred until after M8.
+### M8.1A - Postgres foundation
 
-Reason:
+Status: planned.
 
-M7 and M8 are proceeding on internal product assumptions so the project can reach a testable pilot workflow before external validation.
+Scope:
 
-### Next milestone candidates after M8
+- Add SQLAlchemy 2.0 foundation.
+- Add Alembic migration foundation.
+- Introduce `PostgresStorage`.
+- Create the core existing runtime tables needed to support current Duna Orders flows.
+- Keep `InMemoryStorage` for deterministic unit tests.
+- Do not introduce webhook, Twilio, queue, LLM, or outbound behavior yet.
 
-Status: pending selection.
+Exit criteria:
 
-Possible next directions:
+- Existing storage/service behavior can be represented through the Postgres-backed implementation.
+- Focused tests pass for the storage foundation.
+- No WhatsApp-specific runtime behavior exists yet.
 
-- External restaurant-owner validation and feedback summary.
-- Dashboard improvements based on pilot feedback.
-- Customer profile editing UI.
-- Customer default address reuse.
-- Database-backed storage planning.
-- Deployment packaging for a real pilot user.
+### M8.1B - Demo/runtime model parity
+
+Status: planned.
+
+Scope:
+
+- Map current domain persistence into Postgres.
+- Support current runtime order/customer/product/stock/order-item flows through `PostgresStorage`.
+- Preserve existing service-layer boundaries.
+- Keep services free of Streamlit imports.
+- Keep StorageInterface as the persistence boundary.
+
+Exit criteria:
+
+- Existing service tests pass against Postgres-compatible behavior.
+- No service-layer dependency on SQLAlchemy models leaks into business logic.
+
+### M8.1C - Deterministic demo reseed and dashboard parity
+
+Status: planned.
+
+Scope:
+
+- Re-seed deterministic demo data fresh into Postgres.
+- Preserve demo tenant `el-fogon-colombiano`.
+- Preserve demo reference-date behavior.
+- Verify dashboard renders from Postgres-backed data.
+- Adjust dashboard assumptions for Postgres where needed.
+
+Exit criteria:
+
+- Demo data is reproducible from seeders.
+- Dashboard works from Postgres.
+- Existing locked dashboard widgets remain intact.
+
+### M8.1D - FastAPI inbound skeleton
+
+Status: planned.
+
+Scope:
+
+- Add FastAPI webhook service skeleton.
+- Add `/health`.
+- Add `POST /webhook/whatsapp`.
+- Add Twilio signature verification.
+- Add `TenantChannelBinding`.
+- Add `InboundMessage`.
+- Add Twilio `MessageSid` idempotency.
+- Acknowledge inbound webhook quickly after persistence.
+
+Explicitly excluded:
+
+- Session lifecycle.
+- LLM.
+- Outbound.
+- Real sends.
+
+Exit criteria:
+
+- Valid Twilio Sandbox inbound payload can be verified and persisted.
+- Duplicate provider message IDs do not enqueue duplicate work.
+- Unknown tenant/channel binding is logged but not processed.
+- Webhook returns quickly without running conversation logic.
+
+### M8.2 - Job queue and session lifecycle
+
+Status: planned.
+
+Scope:
+
+- Add Postgres-backed `Job` table.
+- Add job claim pattern using row-level locking.
+- Add worker scaffolding.
+- Add `Session`.
+- Add append-only `ConversationEvent`.
+- Resolve sessions by tenant, channel, and customer phone.
+- Add optimistic session versioning.
+- Add idle session expiry behavior.
+
+Explicitly excluded:
+
+- LLM.
+- Outbound.
+- Real sends.
+
+Exit criteria:
+
+- Inbound messages become ordered conversation events.
+- Session versions prevent stale writes.
+- Idle sessions can expire.
+- Same-customer messages are serialized or conflict safely.
+
+### M8.3 - Outbox, policy engine, and status callback
+
+Status: planned.
+
+Scope:
+
+- Add `OutboundMessage`.
+- Add `OutboundStatusEvent`.
+- Add `OutboxService`.
+- Add `OutboundPolicyEngine`.
+- Add `ChannelDispatcher`.
+- Add `MockChannelAdapter`.
+- Add `POST /webhook/twilio/status`.
+- Implement and test the 12 outbound safety guards.
+
+Explicitly excluded:
+
+- Real Twilio sends.
+- LLM-driven outbound.
+- Commitment sends.
+
+Exit criteria:
+
+- Outbound rows are persisted before any send attempt.
+- Suppressed messages are logged with reasons.
+- Each safety guard suppresses independently.
+- Mock channel adapter cannot reach Twilio.
+- Status callbacks can be recorded and safely interpreted.
+
+### M8.4 - Structured LLM turn handler and active sessions UI
+
+Status: planned.
+
+Scope:
+
+- Add `StructuredTurnClient`.
+- Add Anthropic Claude Haiku adapter.
+- Add `TurnOutputSchema`.
+- Validate provider structured output with Pydantic.
+- Add catalog snapshot/versioning.
+- Add prompt caching context.
+- Add malformed-output and low-confidence policies.
+- Add `LLMCallLog`.
+- Add active sessions operator UI.
+- Add operator identity dropdown.
+- Add stale-view detection.
+
+Explicitly excluded:
+
+- Real WhatsApp sends unless already allowed by safety harness in later slice.
+- Commitment outbound.
+
+Exit criteria:
+
+- Bot can produce structured draft updates.
+- Bot can propose clarification or operator-review actions.
+- LLM errors never produce unsafe outbound.
+- Active sessions are visible to the operator.
+- Stale operator views cannot confirm.
+
+### M8.5 - First real clarification sends
+
+Status: planned.
+
+Scope:
+
+- Enable Twilio Sandbox real sends for allowlisted test numbers only.
+- Allow clarification intents only.
+- Observe status callbacks end-to-end.
+- Keep commitment outbound blocked.
+
+Exit criteria:
+
+- Customer can send a WhatsApp message.
+- Bot can ask a safe clarification question through Twilio Sandbox.
+- Real sends are impossible outside the allowlist/safety harness.
+- Delivery status is logged.
+
+### M8.6 - Operator-gated commitment
+
+Status: planned.
+
+Scope:
+
+- Add atomic operator confirmation transaction.
+- Require configured operator identity.
+- Enforce session version match.
+- Create order from confirmed session draft.
+- Link session to order.
+- Render deterministic commitment message.
+- Send commitment only after policy approval.
+- Add failed-send retry flow.
+- Add post-confirm amendment-session behavior.
+- Add cost circuit breaker.
+
+Exit criteria:
+
+- Operator can confirm a session into an order.
+- Commitment message is deterministic and operator-gated.
+- Failed commitment sends are visible and recoverable.
+- Customer corrections after confirmation do not mutate the confirmed order autonomously.
+- Daily cost cap behavior is enforced.
+
+### M8.7 - Multi-model and eval scaffolding
+
+Status: planned.
+
+Scope:
+
+- Add OpenAI structured adapter.
+- Add Gemini structured adapter.
+- Add capability-aware structured provider interface.
+- Add read-only shadow mode.
+- Add eval harness skeleton using logged conversation examples.
+
+Exit criteria:
+
+- Alternative models can run in shadow mode without affecting customer state.
+- Logged examples can be replayed for future evaluation.
+- Core session/order behavior remains provider-independent.
+
+### M8.8 - Closure and runbook
+
+Status: planned.
+
+Scope:
+
+- Update README.
+- Add operations runbook.
+- Document Twilio Sandbox setup.
+- Document ngrok local development flow.
+- Document Railway deployment notes.
+- Document stuck session recovery.
+- Document retry procedures.
+- Update CHANGELOG.
+- Update ROADMAP.
+- Verify required M8 test matrix.
+
+Exit criteria:
+
+- M8 is documented, testable, and operable.
+- Claude review can be requested with the final architecture, decisions, roadmap, and verification output.
 
 ## Recently closed
 ### M7.6 - Dashboard demo realism and closure

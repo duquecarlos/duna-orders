@@ -211,3 +211,9 @@ The first demo tenant remains:
 - currency: `COP`
 
 The parser does not infer tenant identity from customer message text. The caller supplies tenant context explicitly.
+
+## M8 - WhatsApp conversational ordering
+
+M8 introduces WhatsApp conversational ordering and migrates runtime storage to Postgres to support transactional session state, queueing, idempotency, outbox semantics, and operator-gated order confirmation.
+
+Detailed design: see ARCHITECTURE-M8.md.
