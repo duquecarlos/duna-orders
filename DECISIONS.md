@@ -884,3 +884,32 @@ The original M8.1A description mixed foundation setup with storage implementatio
 
 Trade-off:
 M8.1A delivers less runtime functionality than the original slice wording implied, but it creates a safer base for M8.1B. The next slice must explicitly cover table models, migration generation, and `PostgresStorage` parity.
+
+## M8.1B - PostgresStorage parity before runtime wiring
+
+Decision:
+Implement `PostgresStorage` behind the existing `StorageInterface` before changing runtime backend selection or Streamlit wiring.
+
+Completed parity:
+
+* Products.
+* Customers.
+* Orders.
+* Order items.
+* Stock movements.
+* Parse logs.
+
+Contract verification:
+`PostgresStorage` was added to the shared storage contract fixture as a default non-live backend using a temporary SQLite-backed database. The storage contract now runs against memory and Postgres by default, while Sheets remains behind the `live_sheets` marker.
+
+Why:
+The service layer already depends on `StorageInterface`. Proving Postgres parity at that boundary keeps business logic independent from SQLAlchemy and avoids leaking database models into services or UI code.
+
+Migration decision:
+The first migration creates only the current non-WhatsApp runtime tables. WhatsApp-specific tables such as sessions, inbound messages, jobs, outbox, status events, and LLM call logs remain deferred to later M8 slices.
+
+Datetime decision:
+SQLite-backed tests return naive datetimes even when SQLAlchemy columns are declared with `timezone=True`. `PostgresStorage` normalizes datetimes read from the database to UTC-aware domain values so contract behavior remains stable in local tests.
+
+Trade-off:
+Using SQLite for default PostgresStorage tests does not prove every Postgres-specific behavior. It is still useful for fast contract parity and row-to-domain mapping. Live Postgres or Neon verification remains a separate future slice.

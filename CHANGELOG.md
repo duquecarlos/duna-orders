@@ -1,6 +1,5 @@
 # Changelog
 ## M8.1A - Postgres foundation
-
 Closed.
 
 ### Delivered
@@ -41,6 +40,68 @@ Closed.
 * No `PostgresStorage` implementation.
 * No real Postgres connection.
 * No runtime backend selection changes.
+* No webhook.
+* No Twilio.
+* No queue.
+* No LLM.
+* No outbound messaging.
+
+## M8.1B - Postgres runtime model parity
+
+Closed.
+
+### Delivered
+
+* Added SQLAlchemy table models for the current runtime persistence entities:
+
+  * `products`;
+  * `customers`;
+  * `orders`;
+  * `order_items`;
+  * `stock_movements`;
+  * `parse_log`.
+* Added the first Alembic migration:
+
+  * `2026_06_01_1557-aec69eff0019_create_current_runtime_tables.py`.
+* Added `PostgresStorage`.
+* Implemented product and customer persistence methods.
+* Implemented order and order-item persistence methods.
+* Implemented stock movement and parse-log persistence methods.
+* Added UTC-aware datetime normalization for SQLite-backed test reads.
+* Added focused SQLite-backed tests for Postgres storage behavior.
+* Added `PostgresStorage` to the shared storage contract fixture.
+* Verified the storage contract now runs against:
+
+  * `InMemoryStorage`;
+  * `PostgresStorage`;
+  * `GoogleSheetsStorage` only when `live_sheets` is enabled.
+
+### Verification
+
+* `pytest tests/test_postgres_models.py -q` -> 8 passed.
+* `pytest tests/test_alembic_scaffold.py -q` -> 5 passed.
+* `pytest tests/test_postgres_foundation.py -q` -> 4 passed.
+* `pytest tests/test_postgres_storage_products_customers.py -q` -> 5 passed.
+* `pytest tests/test_postgres_storage_orders.py -q` -> 7 passed.
+* `pytest tests/test_postgres_storage_stock_parse.py -q` -> 6 passed.
+* `pytest tests/test_storage_contract.py -q` -> 30 passed, 15 deselected.
+* SQLite Alembic smoke test passed:
+
+  * `alembic upgrade head`;
+  * `alembic downgrade base`;
+  * `alembic upgrade head`;
+  * `alembic current` -> `aec69eff0019 (head)`.
+* `ruff check` passed for the Postgres storage and migration-related files.
+* `git diff --check` passed.
+* `git status --short` was clean.
+
+### Explicitly not included
+
+* No runtime backend selection.
+* No Streamlit wiring to Postgres.
+* No live Postgres or Neon connection.
+* No demo reseeding into Postgres.
+* No FastAPI.
 * No webhook.
 * No Twilio.
 * No queue.

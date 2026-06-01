@@ -68,20 +68,32 @@ Exit result:
 
 ### M8.1B - Demo/runtime model parity
 
-Status: planned.
+Status: closed.
 
-Scope:
+Scope completed:
 
-- Map current domain persistence into Postgres.
-- Support current runtime order/customer/product/stock/order-item flows through `PostgresStorage`.
-- Preserve existing service-layer boundaries.
-- Keep services free of Streamlit imports.
-- Keep StorageInterface as the persistence boundary.
+* Added SQLAlchemy table models for current runtime persistence.
+* Added the first Alembic migration for current runtime tables.
+* Implemented `PostgresStorage`.
+* Supported current product, customer, order, order-item, stock movement, and parse-log flows through `PostgresStorage`.
+* Preserved `StorageInterface` as the persistence boundary.
+* Kept services free of SQLAlchemy model dependencies.
+* Added `PostgresStorage` to the default non-live storage contract suite.
 
-Exit criteria:
+Exit result:
 
-- Existing service tests pass against Postgres-compatible behavior.
-- No service-layer dependency on SQLAlchemy models leaks into business logic.
+* Current domain persistence can be represented in Postgres.
+* Existing storage contract tests pass against both memory and Postgres by default.
+* Sheets remains available only through the `live_sheets` marker.
+* No WhatsApp-specific runtime behavior exists yet.
+
+Explicitly deferred to later slices:
+
+* Runtime backend selection.
+* Live Postgres or Neon connection.
+* Streamlit wiring to Postgres.
+* Deterministic demo reseeding into Postgres.
+
 
 ### M8.1C - Deterministic demo reseed and dashboard parity
 
