@@ -12,7 +12,9 @@ from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.storage.schema import TABS
 from duna_orders.storage.sheets import GoogleSheetsStorage
-
+from duna_orders.storage.postgres import PostgresStorage
+from duna_orders.storage.postgres_base import Base
+from duna_orders.storage.postgres_session import make_engine, make_session_factory
 DEFAULT_TEST_TENANT_ID = "test-tenant"
 
 @dataclass(frozen=True)
@@ -70,12 +72,14 @@ def live_sheets_storage(
 @pytest.fixture(
     params=[
         "memory",
+        "postgres",
         pytest.param("sheets", marks=pytest.mark.live_sheets),
     ]
 )
 def storage_case(
     request: pytest.FixtureRequest,
     live_sheets_run_tokens: list[str],
+    tmp_path,
 ) -> StorageCase:
     backend = request.param
     run_token = f"test_run_{uuid.uuid4().hex[:8]}_"
@@ -87,7 +91,17 @@ def storage_case(
             run_token=run_token,
         )
         return
+    if backend == "postgres":
+        database_path = tmp_path / "postgres_storage_contract_test.db"
+        engine = make_engine(f"sqlite:///{database_path}")
+        Base.metadata.create_all(engine)
 
+        yield StorageCase(
+            backend=backend,
+            storage=PostgresStorage(make_session_factory(engine)),
+            run_token=run_token,
+        )
+        return
     storage = request.getfixturevalue("live_sheets_storage")
     live_sheets_run_tokens.append(run_token)
 
