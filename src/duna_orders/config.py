@@ -12,7 +12,8 @@ class Settings(BaseSettings):
     default_currency: str = "COP"
     duna_storage_backend: str = "memory"
     dashboard_target: str = "runtime"
-
+    # Database
+    database_url: str | None = None
     # LLM
     llm_provider: str = "anthropic"
     llm_model: str = "claude-sonnet-4-5"

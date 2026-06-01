@@ -11,12 +11,16 @@ dependencies = [
     "pydantic-settings",
     "streamlit",
     "tenacity",
+    "sqlalchemy>=2.0",
+    "alembic",
+    "psycopg[binary]",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
     "pytest-mock",
+    "ruff",
 ]
 
 [tool.setuptools.packages.find]
