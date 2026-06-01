@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from duna_orders.domain.models import Customer, Order, ParseLogEntry, Product, StockMovement
+from duna_orders.domain.models import (
+    Customer,
+    Order,
+    OrderItem,
+    ParseLogEntry,
+    Product,
+    StockMovement,
+    utc_now,
+)
 from duna_orders.domain.phone import normalize_customer_phone
 from duna_orders.storage.base import StorageInterface
-from duna_orders.storage.postgres_models import CustomerRow, ProductRow
+from duna_orders.storage.postgres_models import CustomerRow, OrderItemRow, OrderRow, ProductRow
 from duna_orders.storage.postgres_session import session_scope
 
 
@@ -101,10 +109,27 @@ class PostgresStorage(StorageInterface):
             return _customer_from_row(row)
 
     def create_order(self, order: Order) -> Order:
-        raise NotImplementedError("Postgres order persistence is not implemented in M8.1B-2A.")
+        with session_scope(self._session_factory) as session:
+            existing = session.get(OrderRow, order.order_id)
+
+            if existing is not None:
+                raise ValueError(f"Order already exists: {order.order_id}")
+
+            row = _order_to_row(order)
+            session.add(row)
+            session.flush()
+
+            return _order_from_row(row)
 
     def get_order(self, order_id: str) -> Order | None:
-        raise NotImplementedError("Postgres order persistence is not implemented in M8.1B-2A.")
+        with session_scope(self._session_factory) as session:
+            row = session.scalar(
+                select(OrderRow)
+                .options(selectinload(OrderRow.items))
+                .where(OrderRow.order_id == order_id)
+            )
+
+            return _order_from_row(row) if row is not None else None
 
     def list_orders(
         self,
@@ -112,7 +137,20 @@ class PostgresStorage(StorageInterface):
         status: str | None = None,
         since: datetime | None = None,
     ) -> list[Order]:
-        raise NotImplementedError("Postgres order persistence is not implemented in M8.1B-2A.")
+        with session_scope(self._session_factory) as session:
+            statement = select(OrderRow).options(selectinload(OrderRow.items))
+
+            if status is not None:
+                statement = statement.where(OrderRow.status == status)
+
+            if since is not None:
+                statement = statement.where(OrderRow.created_at >= since)
+
+            statement = statement.order_by(OrderRow.order_id)
+
+            rows = session.scalars(statement).all()
+
+            return [_order_from_row(row) for row in rows]
 
     def get_customer_order_history(
         self,
@@ -121,7 +159,17 @@ class PostgresStorage(StorageInterface):
         *,
         limit: int = 10,
     ) -> list[Order]:
-        raise NotImplementedError("Postgres order history is not implemented in M8.1B-2A.")
+        with session_scope(self._session_factory) as session:
+            rows = session.scalars(
+                select(OrderRow)
+                .options(selectinload(OrderRow.items))
+                .where(OrderRow.tenant_id == tenant_id)
+                .where(OrderRow.customer_id == customer_id)
+                .order_by(OrderRow.created_at.desc())
+                .limit(limit)
+            ).all()
+
+            return [_order_from_row(row) for row in rows]
 
     def update_order_status(
         self,
@@ -130,7 +178,27 @@ class PostgresStorage(StorageInterface):
         confirmed_at: datetime | None = None,
         status_updated_at: datetime | None = None,
     ) -> Order:
-        raise NotImplementedError("Postgres order status updates are not implemented in M8.1B-2A.")
+        with session_scope(self._session_factory) as session:
+            row = session.scalar(
+                select(OrderRow)
+                .options(selectinload(OrderRow.items))
+                .where(OrderRow.order_id == order_id)
+            )
+
+            if row is None:
+                raise KeyError(f"Order not found: {order_id}")
+
+            now = utc_now()
+            row.status = status
+            row.updated_at = now
+            row.status_updated_at = status_updated_at or confirmed_at or now
+
+            if confirmed_at is not None:
+                row.confirmed_at = confirmed_at
+
+            session.flush()
+
+            return _order_from_row(row)
 
     def append_stock_movement(self, movement: StockMovement) -> StockMovement:
         raise NotImplementedError("Postgres stock movements are not implemented in M8.1B-2A.")
@@ -145,7 +213,14 @@ class PostgresStorage(StorageInterface):
     ) -> list[StockMovement]:
         raise NotImplementedError("Postgres stock movements are not implemented in M8.1B-2A.")
 
+def _utc_aware(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
 
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+
+    return value
 def _product_to_row(product: Product) -> ProductRow:
     return ProductRow(
         product_id=product.product_id,
@@ -195,8 +270,8 @@ def _product_from_row(row: ProductRow) -> Product:
         current_stock=row.current_stock,
         min_stock=row.min_stock,
         notes=row.notes,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
+        created_at=_utc_aware(row.created_at),
+        updated_at=_utc_aware(row.updated_at),
     )
 
 
@@ -222,7 +297,105 @@ def _customer_from_row(row: CustomerRow) -> Customer:
         customer_phone=row.customer_phone,
         default_address=row.default_address,
         notes=row.notes,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-        last_order_at=row.last_order_at,
+        created_at=_utc_aware(row.created_at),
+        updated_at=_utc_aware(row.updated_at),
+        last_order_at=_utc_aware(row.last_order_at),
+    )
+
+def _order_to_row(order: Order) -> OrderRow:
+    return OrderRow(
+        order_id=order.order_id,
+        tenant_id=order.tenant_id,
+        created_at=order.created_at,
+        updated_at=order.updated_at,
+        customer_id=order.customer_id,
+        customer_name_snapshot=order.customer_name_snapshot,
+        customer_phone_snapshot=order.customer_phone_snapshot,
+        raw_message=order.raw_message,
+        status=order.status,
+        confirmed_at=order.confirmed_at,
+        status_updated_at=order.status_updated_at,
+        subtotal=order.subtotal,
+        delivery_fee=order.delivery_fee,
+        packaging_fee=order.packaging_fee,
+        total=order.total,
+        fulfillment_type=order.fulfillment_type,
+        delivery_zone=order.delivery_zone,
+        customer_notes=order.customer_notes,
+        payment_method=order.payment_method,
+        delivery_date=order.delivery_date,
+        delivery_address=order.delivery_address,
+        notes=order.notes,
+        confirmation_message=order.confirmation_message,
+        created_by=order.created_by,
+        items=[_order_item_to_row(item) for item in order.items],
+    )
+
+
+def _order_from_row(row: OrderRow) -> Order:
+    items = [
+        _order_item_from_row(item)
+        for item in sorted(row.items, key=lambda item: item.order_item_id)
+    ]
+
+    return Order(
+        tenant_id=row.tenant_id,
+        order_id=row.order_id,
+        created_at=_utc_aware(row.created_at),
+        updated_at=_utc_aware(row.updated_at),
+        customer_id=row.customer_id,
+        customer_name_snapshot=row.customer_name_snapshot,
+        customer_phone_snapshot=row.customer_phone_snapshot,
+        raw_message=row.raw_message,
+        status=row.status,
+        confirmed_at=_utc_aware(row.confirmed_at),
+        status_updated_at=_utc_aware(row.status_updated_at),
+        items=items,
+        subtotal=row.subtotal,
+        delivery_fee=row.delivery_fee,
+        packaging_fee=row.packaging_fee,
+        total=row.total,
+        fulfillment_type=row.fulfillment_type,
+        delivery_zone=row.delivery_zone,
+        customer_notes=row.customer_notes,
+        payment_method=row.payment_method,
+        delivery_date=row.delivery_date,
+        delivery_address=row.delivery_address,
+        notes=row.notes,
+        confirmation_message=row.confirmation_message,
+        created_by=row.created_by,
+    )
+
+
+def _order_item_to_row(item: OrderItem) -> OrderItemRow:
+    return OrderItemRow(
+        order_item_id=item.order_item_id,
+        tenant_id=item.tenant_id,
+        order_id=item.order_id,
+        product_id=item.product_id,
+        product_name_snapshot=item.product_name_snapshot,
+        unit_snapshot=item.unit_snapshot,
+        quantity=item.quantity,
+        unit_price_snapshot=item.unit_price_snapshot,
+        line_total=item.line_total,
+        modifications=item.modifications,
+        validation_status=item.validation_status,
+        notes=item.notes,
+    )
+
+
+def _order_item_from_row(row: OrderItemRow) -> OrderItem:
+    return OrderItem(
+        tenant_id=row.tenant_id,
+        order_item_id=row.order_item_id,
+        order_id=row.order_id,
+        product_id=row.product_id,
+        product_name_snapshot=row.product_name_snapshot,
+        unit_snapshot=row.unit_snapshot,
+        quantity=row.quantity,
+        unit_price_snapshot=row.unit_price_snapshot,
+        line_total=row.line_total,
+        modifications=row.modifications,
+        validation_status=row.validation_status,
+        notes=row.notes,
     )
