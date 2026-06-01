@@ -3,7 +3,6 @@ from __future__ import annotations
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any
 
 
 @dataclass(frozen=True)
