@@ -17,7 +17,14 @@ from duna_orders.domain.models import (
 )
 from duna_orders.domain.phone import normalize_customer_phone
 from duna_orders.storage.base import StorageInterface
-from duna_orders.storage.postgres_models import CustomerRow, OrderItemRow, OrderRow, ProductRow
+from duna_orders.storage.postgres_models import (
+    CustomerRow,
+    OrderItemRow,
+    OrderRow,
+    ParseLogRow,
+    ProductRow,
+    StockMovementRow,
+)
 from duna_orders.storage.postgres_session import session_scope
 
 
@@ -201,17 +208,45 @@ class PostgresStorage(StorageInterface):
             return _order_from_row(row)
 
     def append_stock_movement(self, movement: StockMovement) -> StockMovement:
-        raise NotImplementedError("Postgres stock movements are not implemented in M8.1B-2A.")
+        with session_scope(self._session_factory) as session:
+            existing = session.get(StockMovementRow, movement.stock_movement_id)
+
+            if existing is not None:
+                raise ValueError(f"Stock movement already exists: {movement.stock_movement_id}")
+
+            row = _stock_movement_to_row(movement)
+            session.add(row)
+            session.flush()
+
+            return _stock_movement_from_row(row)
 
     def append_parse_log(self, entry: ParseLogEntry) -> ParseLogEntry:
-        raise NotImplementedError("Postgres parse logs are not implemented in M8.1B-2A.")
+        with session_scope(self._session_factory) as session:
+            existing = session.get(ParseLogRow, entry.parse_id)
+
+            if existing is not None:
+                raise ValueError(f"Parse log {entry.parse_id} already exists")
+
+            row = _parse_log_to_row(entry)
+            session.add(row)
+            session.flush()
+
+            return _parse_log_from_row(row)
 
     def list_stock_movements(
         self,
         *,
         product_id: str | None = None,
     ) -> list[StockMovement]:
-        raise NotImplementedError("Postgres stock movements are not implemented in M8.1B-2A.")
+        with session_scope(self._session_factory) as session:
+            statement = select(StockMovementRow).order_by(StockMovementRow.stock_movement_id)
+
+            if product_id is not None:
+                statement = statement.where(StockMovementRow.product_id == product_id)
+
+            rows = session.scalars(statement).all()
+
+            return [_stock_movement_from_row(row) for row in rows]
 
 def _utc_aware(value: datetime | None) -> datetime | None:
     if value is None:
@@ -398,4 +433,60 @@ def _order_item_from_row(row: OrderItemRow) -> OrderItem:
         modifications=row.modifications,
         validation_status=row.validation_status,
         notes=row.notes,
+    )
+def _stock_movement_to_row(movement: StockMovement) -> StockMovementRow:
+    return StockMovementRow(
+        stock_movement_id=movement.stock_movement_id,
+        tenant_id=movement.tenant_id,
+        created_at=movement.created_at,
+        product_id=movement.product_id,
+        quantity_delta=movement.quantity_delta,
+        reason=movement.reason,
+        reference_id=movement.reference_id,
+        notes=movement.notes,
+        created_by=movement.created_by,
+    )
+
+
+def _stock_movement_from_row(row: StockMovementRow) -> StockMovement:
+    return StockMovement(
+        tenant_id=row.tenant_id,
+        stock_movement_id=row.stock_movement_id,
+        created_at=_utc_aware(row.created_at),
+        product_id=row.product_id,
+        quantity_delta=row.quantity_delta,
+        reason=row.reason,
+        reference_id=row.reference_id,
+        notes=row.notes,
+        created_by=row.created_by,
+    )
+
+
+def _parse_log_to_row(entry: ParseLogEntry) -> ParseLogRow:
+    return ParseLogRow(
+        parse_id=entry.parse_id,
+        tenant_id=entry.tenant_id,
+        created_at=entry.created_at,
+        raw_message=entry.raw_message,
+        parsed_json=entry.parsed_json,
+        model=entry.model,
+        prompt_version=entry.prompt_version,
+        latency_ms=entry.latency_ms,
+        success=entry.success,
+        error=entry.error,
+    )
+
+
+def _parse_log_from_row(row: ParseLogRow) -> ParseLogEntry:
+    return ParseLogEntry(
+        tenant_id=row.tenant_id,
+        parse_id=row.parse_id,
+        created_at=_utc_aware(row.created_at),
+        raw_message=row.raw_message,
+        parsed_json=row.parsed_json,
+        model=row.model,
+        prompt_version=row.prompt_version,
+        latency_ms=row.latency_ms,
+        success=row.success,
+        error=row.error,
     )
