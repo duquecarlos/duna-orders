@@ -856,3 +856,31 @@ Color semantics:
 
 Trade-off:
 `week_over_week` removes the dedicated status breakdown widget, but cancellation visibility is preserved through cancellation rate while adding a stronger business comparison signal.
+
+## M8.1A - Postgres foundation scope split
+
+Decision:
+Close M8.1A as a narrow Postgres foundation slice.
+
+Completed foundation:
+
+* SQLAlchemy 2.0 dependency and shared declarative metadata.
+* Stable naming convention for future database constraints and indexes.
+* Postgres engine/session utilities.
+* Alembic scaffold wired to project settings and `Base.metadata`.
+* Alembic scaffold tests that run without a real Postgres server.
+* Generated `egg-info` cleanup and Ruff availability for future migration hooks.
+
+Deferred to M8.1B:
+
+* SQLAlchemy table models.
+* First migration.
+* `PostgresStorage`.
+* Existing domain persistence parity.
+* Runtime backend selection.
+
+Why:
+The original M8.1A description mixed foundation setup with storage implementation and table modeling. Splitting it keeps the first database change reviewable and low-risk. It also gives Claude a clean checkpoint before the project introduces schema design decisions that will be harder to reverse.
+
+Trade-off:
+M8.1A delivers less runtime functionality than the original slice wording implied, but it creates a safer base for M8.1B. The next slice must explicitly cover table models, migration generation, and `PostgresStorage` parity.

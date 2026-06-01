@@ -8,7 +8,7 @@ Detailed completed work belongs in `CHANGELOG.md`. This file only keeps mileston
 
 ## M8 - WhatsApp conversational ordering and Postgres runtime foundation
 
-Status: planned.
+Status: in progress.
 
 M8 adds WhatsApp conversational ordering and moves the runtime foundation from Google Sheets to Postgres. The milestone is both a platform-hardening milestone and the first conversational-channel milestone.
 
@@ -39,22 +39,32 @@ Scope:
 
 ### M8.1A - Postgres foundation
 
-Status: planned.
+Status: closed.
 
-Scope:
+Scope completed:
 
-- Add SQLAlchemy 2.0 foundation.
-- Add Alembic migration foundation.
-- Introduce `PostgresStorage`.
-- Create the core existing runtime tables needed to support current Duna Orders flows.
-- Keep `InMemoryStorage` for deterministic unit tests.
-- Do not introduce webhook, Twilio, queue, LLM, or outbound behavior yet.
+* Added SQLAlchemy 2.0 foundation.
+* Added Alembic migration scaffold.
+* Added Postgres database URL configuration.
+* Added shared SQLAlchemy metadata naming conventions.
+* Added session factory and transaction-scope utilities.
+* Added scaffold tests that do not require a real Postgres server.
+* Removed generated `egg-info` artifacts from Git tracking.
 
-Exit criteria:
+Explicitly deferred to M8.1B:
 
-- Existing storage/service behavior can be represented through the Postgres-backed implementation.
-- Focused tests pass for the storage foundation.
-- No WhatsApp-specific runtime behavior exists yet.
+* `PostgresStorage`.
+* SQLAlchemy table models.
+* First migration.
+* Current domain persistence parity.
+* Runtime backend selection.
+
+Exit result:
+
+* Storage and migration foundation exists.
+* Existing storage contract tests still pass.
+* No WhatsApp-specific runtime behavior exists yet.
+
 
 ### M8.1B - Demo/runtime model parity
 

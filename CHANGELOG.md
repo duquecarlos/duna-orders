@@ -1,4 +1,52 @@
 # Changelog
+## M8.1A - Postgres foundation
+
+Closed.
+
+### Delivered
+
+* Added SQLAlchemy 2.0 foundation.
+* Added Alembic migration scaffold.
+* Added `psycopg[binary]` for future Postgres connectivity.
+* Added `ruff` to development dependencies.
+* Added `database_url` to project settings.
+* Added shared SQLAlchemy declarative `Base` with stable naming conventions.
+* Added Postgres session utilities:
+
+  * `make_engine(...)`;
+  * `make_session_factory(...)`;
+  * `session_scope(...)`.
+* Added Alembic configuration using project settings instead of a hardcoded database URL.
+* Connected Alembic autogenerate metadata to `Base.metadata`.
+* Enabled Alembic comparison for column types and server defaults.
+* Added scaffold tests that do not require a real Postgres server.
+* Removed generated `src/duna_orders.egg-info/*` artifacts from Git tracking.
+* Ignored future `*.egg-info/` generated folders.
+* Removed an unrelated unused import found by the wider Ruff check.
+
+### Verification
+
+* `pytest tests/test_alembic_scaffold.py -q` -> 5 passed.
+* `pytest tests/test_postgres_foundation.py -q` -> 4 passed.
+* `pytest tests/test_storage_contract.py -q` -> 15 passed, 15 deselected.
+* `alembic history` -> no revisions, no error.
+* `ruff check src\duna_orders\storage alembic tests\test_alembic_scaffold.py tests\test_postgres_foundation.py` -> all checks passed.
+* `git diff --check` -> clean.
+* `git status --short` -> clean.
+
+### Explicitly not included
+
+* No SQLAlchemy table models.
+* No migrations.
+* No `PostgresStorage` implementation.
+* No real Postgres connection.
+* No runtime backend selection changes.
+* No webhook.
+* No Twilio.
+* No queue.
+* No LLM.
+* No outbound messaging.
+
 ## M7.6 - Dashboard demo realism and presentation closure
 
 Closed.
