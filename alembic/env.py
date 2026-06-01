@@ -2,7 +2,7 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
-
+from importlib import import_module
 from alembic import context
 from duna_orders.config import settings
 from duna_orders.storage.postgres_base import Base
@@ -17,6 +17,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+import_module("duna_orders.storage.postgres_models")
 target_metadata = Base.metadata
 
 
