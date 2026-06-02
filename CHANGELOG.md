@@ -1,4 +1,37 @@
 # Changelog
+## M8.1C-0 - Live Postgres verification harness
+
+Closed.
+
+### Delivered
+
+* Added `live_postgres` as an opt-in pytest marker.
+* Kept live Postgres tests excluded from the default test run.
+* Added a live Postgres smoke test for Alembic `upgrade head`.
+* Added a live Postgres smoke test for the current `PostgresStorage` product, customer, and order flow.
+* Documented `DATABASE_URL` in `.env.example`.
+* Verified the current migration and storage layer against Neon Postgres.
+
+### Verification
+
+* `python -c "from duna_orders.config import settings; print('DATABASE_URL configured:', bool(settings.database_url)); print('Host/db:', settings.database_url.split('@')[-1] if settings.database_url else None)"` -> configured against Neon.
+* `pytest tests/test_postgres_live_smoke.py -q` -> 2 deselected.
+* `pytest tests/test_postgres_live_smoke.py -q -m live_postgres` -> 2 passed.
+* `pytest tests/test_alembic_scaffold.py tests/test_postgres_storage_products_customers.py tests/test_postgres_storage_orders.py -q` -> 17 passed.
+* `git diff --check` -> clean.
+
+### Explicitly not included
+
+* No runtime backend selection.
+* No Streamlit wiring to Postgres.
+* No dashboard changes.
+* No demo reseeding into Postgres.
+* No FastAPI webhook.
+* No Twilio.
+* No queue.
+* No session lifecycle.
+* No LLM or outbound messaging.
+
 ## M8.1A - Postgres foundation
 Closed.
 

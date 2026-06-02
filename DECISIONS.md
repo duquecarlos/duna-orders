@@ -913,3 +913,26 @@ SQLite-backed tests return naive datetimes even when SQLAlchemy columns are decl
 
 Trade-off:
 Using SQLite for default PostgresStorage tests does not prove every Postgres-specific behavior. It is still useful for fast contract parity and row-to-domain mapping. Live Postgres or Neon verification remains a separate future slice.
+## M8.1C-0 - Live Postgres verification before runtime wiring
+
+Decision:
+Add a live Postgres verification harness before changing runtime backend selection, Streamlit wiring, demo seeding, or dashboard behavior.
+
+Scope:
+The live harness uses the existing `DATABASE_URL`, Alembic configuration, and `PostgresStorage`.
+
+It verifies:
+
+* Alembic `upgrade head` against real Neon Postgres.
+* Basic `PostgresStorage` product persistence.
+* Basic `PostgresStorage` customer persistence.
+* Basic `PostgresStorage` order and order-item persistence.
+
+Test isolation:
+The live storage smoke test creates UUID-based IDs and a unique temporary `tenant_id`. Cleanup deletes only rows matching that temporary tenant.
+
+Why:
+M8.1B proved storage parity through fast SQLite-backed tests, but SQLite does not prove all real Postgres behavior. Before using Postgres as the runtime backend or reseeding demo data into Postgres, the migration and storage layer must be exercised against a real Postgres database.
+
+Trade-off:
+The live test depends on external infrastructure and is slower than the default suite. It stays behind the `live_postgres` marker and remains excluded from default test runs.
