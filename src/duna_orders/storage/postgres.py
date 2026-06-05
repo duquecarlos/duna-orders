@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
-from sqlalchemy import select
+from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session, selectinload
 
 from duna_orders.domain.models import (
@@ -15,6 +15,7 @@ from duna_orders.domain.models import (
     StockMovement,
     utc_now,
 )
+from duna_orders.demo_dataset import DemoDataset
 from duna_orders.domain.phone import normalize_customer_phone
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.postgres_models import (
@@ -247,6 +248,195 @@ class PostgresStorage(StorageInterface):
             rows = session.scalars(statement).all()
 
             return [_stock_movement_from_row(row) for row in rows]
+    def bulk_create_products(
+        self,
+        products: list[Product],
+        *,
+        session: Session | None = None,
+    ) -> int:
+        """Bulk seeding/migration utility. NOT part of StorageInterface.
+
+        Do not call from application code.
+        """
+        if session is not None:
+            return _bulk_insert_products(session, products)
+
+        with session_scope(self._session_factory) as scoped_session:
+            return _bulk_insert_products(scoped_session, products)
+
+    def bulk_create_customers(
+        self,
+        customers: list[Customer],
+        *,
+        session: Session | None = None,
+    ) -> int:
+        """Bulk seeding/migration utility. NOT part of StorageInterface.
+
+        Do not call from application code.
+        """
+        if session is not None:
+            return _bulk_insert_customers(session, customers)
+
+        with session_scope(self._session_factory) as scoped_session:
+            return _bulk_insert_customers(scoped_session, customers)
+
+    def bulk_create_orders(
+        self,
+        orders: list[Order],
+        *,
+        session: Session | None = None,
+    ) -> int:
+        """Bulk seeding/migration utility. NOT part of StorageInterface.
+
+        Do not call from application code.
+        """
+        if session is not None:
+            return _bulk_insert_orders(session, orders)
+
+        with session_scope(self._session_factory) as scoped_session:
+            return _bulk_insert_orders(scoped_session, orders)
+
+    def bulk_create_order_items(
+        self,
+        items: list[OrderItem],
+        *,
+        session: Session | None = None,
+    ) -> int:
+        """Bulk seeding/migration utility. NOT part of StorageInterface.
+
+        Do not call from application code.
+        """
+        if session is not None:
+            return _bulk_insert_order_items(session, items)
+
+        with session_scope(self._session_factory) as scoped_session:
+            return _bulk_insert_order_items(scoped_session, items)
+
+    def wipe_tenant_data(self, tenant_id: str) -> dict[str, int]:
+        """Bulk seeding/migration utility. NOT part of StorageInterface.
+
+        Do not call from application code.
+        """
+        with session_scope(self._session_factory) as session:
+            return _wipe_tenant_data(session, tenant_id)
+
+    def reseed_demo_dataset(self, dataset: DemoDataset) -> dict[str, int]:
+        """Bulk seeding/migration utility. NOT part of StorageInterface.
+
+        Do not call from application code.
+        """
+        with session_scope(self._session_factory) as session:
+            _wipe_tenant_data(session, dataset.tenant_id)
+
+            self.bulk_create_products(dataset.products, session=session)
+            self.bulk_create_customers(dataset.customers, session=session)
+            self.bulk_create_orders(dataset.orders, session=session)
+            self.bulk_create_order_items(dataset.order_items, session=session)
+
+            session.flush()
+
+            return _tenant_row_counts(session, dataset.tenant_id)
+
+def _require_tenant_id(tenant_id: str) -> str:
+    if not tenant_id or not tenant_id.strip():
+        raise ValueError("tenant_id is required for tenant-scoped Postgres operations")
+
+    return tenant_id
+
+
+def _bulk_insert_products(session: Session, products: list[Product]) -> int:
+    if not products:
+        return 0
+
+    session.execute(
+        insert(ProductRow),
+        [_product_to_values(product) for product in products],
+    )
+    return len(products)
+
+
+def _bulk_insert_customers(session: Session, customers: list[Customer]) -> int:
+    if not customers:
+        return 0
+
+    session.execute(
+        insert(CustomerRow),
+        [_customer_to_values(customer) for customer in customers],
+    )
+    return len(customers)
+
+
+def _bulk_insert_orders(session: Session, orders: list[Order]) -> int:
+    if not orders:
+        return 0
+
+    session.execute(
+        insert(OrderRow).execution_options(render_nulls=True),
+        [_order_to_values(order) for order in orders],
+    )
+    return len(orders)
+
+
+def _bulk_insert_order_items(session: Session, items: list[OrderItem]) -> int:
+    if not items:
+        return 0
+
+    session.execute(
+        insert(OrderItemRow),
+        [_order_item_to_values(item) for item in items],
+    )
+    return len(items)
+
+
+def _delete_tenant_rows(session: Session, row_type: type, tenant_id: str) -> int:
+    scoped_tenant_id = _require_tenant_id(tenant_id)
+    result = session.execute(
+        delete(row_type).where(row_type.tenant_id == scoped_tenant_id)
+    )
+
+    return int(result.rowcount or 0)
+
+
+def _wipe_tenant_data(session: Session, tenant_id: str) -> dict[str, int]:
+    scoped_tenant_id = _require_tenant_id(tenant_id)
+
+    return {
+        "order_items": _delete_tenant_rows(session, OrderItemRow, scoped_tenant_id),
+        "stock_movements": _delete_tenant_rows(
+            session,
+            StockMovementRow,
+            scoped_tenant_id,
+        ),
+        "parse_log": _delete_tenant_rows(session, ParseLogRow, scoped_tenant_id),
+        "orders": _delete_tenant_rows(session, OrderRow, scoped_tenant_id),
+        "products": _delete_tenant_rows(session, ProductRow, scoped_tenant_id),
+        "customers": _delete_tenant_rows(session, CustomerRow, scoped_tenant_id),
+    }
+
+
+def _tenant_count(session: Session, row_type: type, tenant_id: str) -> int:
+    scoped_tenant_id = _require_tenant_id(tenant_id)
+
+    count = session.scalar(
+        select(func.count())
+        .select_from(row_type)
+        .where(row_type.tenant_id == scoped_tenant_id)
+    )
+
+    return int(count or 0)
+
+
+def _tenant_row_counts(session: Session, tenant_id: str) -> dict[str, int]:
+    scoped_tenant_id = _require_tenant_id(tenant_id)
+
+    return {
+        "products": _tenant_count(session, ProductRow, scoped_tenant_id),
+        "customers": _tenant_count(session, CustomerRow, scoped_tenant_id),
+        "orders": _tenant_count(session, OrderRow, scoped_tenant_id),
+        "order_items": _tenant_count(session, OrderItemRow, scoped_tenant_id),
+        "stock_movements": _tenant_count(session, StockMovementRow, scoped_tenant_id),
+        "parse_log": _tenant_count(session, ParseLogRow, scoped_tenant_id),
+    }
 
 def _utc_aware(value: datetime | None) -> datetime | None:
     if value is None:

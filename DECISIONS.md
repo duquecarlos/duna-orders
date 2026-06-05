@@ -936,3 +936,23 @@ M8.1B proved storage parity through fast SQLite-backed tests, but SQLite does no
 
 Trade-off:
 The live test depends on external infrastructure and is slower than the default suite. It stays behind the `live_postgres` marker and remains excluded from default test runs.
+
+## M8.1C-1B - Postgres demo reseed with bulk helpers
+
+Decision:
+Add Postgres-specific bulk seeding helpers as trusted seeding/migration utilities, not as `StorageInterface` methods.
+
+Details:
+
+* Bulk helpers use SQLAlchemy insert-many through `session.execute(insert(Model), rows)`.
+* Bulk helpers reuse the same domain-to-row value mapping used by single-row Postgres creates.
+* `PostgresStorage.reseed_demo_dataset(...)` performs wipe-then-seed inside one transaction.
+* If any insert fails, the transaction rolls back and avoids a partial reseed.
+* Tenant-scoped wipe requires a non-empty `tenant_id`.
+* Every delete path applies `WHERE tenant_id = ...`.
+* The wipe clears all six tenant tables: order items, stock movements, parse log, orders, products, and customers.
+* The seed inserts only the four entity types present in `DemoDataset`: products, customers, orders, and order items.
+* The live reseed test intentionally leaves the deterministic demo dataset in the dev Postgres branch. The test is idempotent because reseed starts with a tenant-scoped wipe.
+
+Why:
+M8.1C-1A made demo data generation storage-agnostic. M8.1C-1B adds a fast, repeatable way to materialize that locked dataset into Postgres before runtime backend selection or dashboard parity work.

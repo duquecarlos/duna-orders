@@ -1,4 +1,39 @@
 # Changelog
+## M8.1C-1B - Postgres demo reseed with bulk helpers
+
+Closed.
+
+### Delivered
+
+* Added Postgres-specific bulk seeding helpers for products, customers, orders, and order items.
+* Kept bulk helpers outside `StorageInterface`; they are trusted seeding/migration utilities only.
+* Added tenant-scoped wipe behavior across products, customers, orders, order items, stock movements, and parse logs.
+* Added a mandatory `tenant_id` guard for tenant-scoped delete operations.
+* Added atomic `PostgresStorage.reseed_demo_dataset(...)` orchestration.
+* Added `scripts/reseed_postgres.py` as a thin `DATABASE_URL`-driven CLI wrapper.
+* Added non-live SQLite-backed reseed tests.
+* Added live Neon reseed coverage behind the `live_postgres` marker.
+
+### Verification
+
+* `pytest tests/test_postgres_reseed.py -q`
+* `pytest tests/test_postgres_reseed.py -q -m live_postgres`
+* `python scripts/reseed_postgres.py`
+* `pytest -q`
+* `ruff check` on touched files
+* `git diff --check`
+
+### Explicitly not included
+
+* No runtime backend selection.
+* No Streamlit/Postgres wiring.
+* No dashboard changes.
+* No new models or migrations.
+* No FastAPI webhook.
+* No Twilio.
+* No queue.
+* No session lifecycle.
+* No LLM or outbound messaging.
 ## M8.1C-0 - Live Postgres verification harness
 
 Closed.
