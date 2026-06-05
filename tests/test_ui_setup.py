@@ -6,7 +6,6 @@ from duna_orders.services.orders import OrderService
 from duna_orders.services.parsing import ParsingService
 from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.ui import setup
-from duna_orders.storage.sheets import GoogleSheetsStorage
 import pytest
 
 
@@ -43,6 +42,7 @@ def test_get_storage_raises_for_invalid_backend(monkeypatch) -> None:
 
 def test_get_storage_raises_for_sheets_backend_without_spreadsheet_id(monkeypatch) -> None:
     monkeypatch.setattr(setup.settings, "duna_storage_backend", "sheets")
+    monkeypatch.setattr(setup.settings, "dashboard_target", "runtime")
     monkeypatch.setattr(setup.settings, "google_sheets_spreadsheet_id", None)
 
     with pytest.raises(RuntimeError, match="GOOGLE_SHEETS_SPREADSHEET_ID"):
@@ -57,6 +57,7 @@ def test_get_storage_builds_google_sheets_storage_when_configured(monkeypatch) -
             calls["credentials_path"] = credentials_path
 
     monkeypatch.setattr(setup.settings, "duna_storage_backend", "sheets")
+    monkeypatch.setattr(setup.settings, "dashboard_target", "runtime")
     monkeypatch.setattr(setup.settings, "google_sheets_spreadsheet_id", "sheet-123")
     monkeypatch.setattr(
         setup.settings,
@@ -73,6 +74,36 @@ def test_get_storage_builds_google_sheets_storage_when_configured(monkeypatch) -
         "credentials_path": "credentials/test-service-account.json",
     }
 
+def test_get_storage_builds_google_sheets_storage_for_demo_target(monkeypatch) -> None:
+    calls = {}
+
+    class FakeGoogleSheetsStorage:
+        def __init__(self, *, spreadsheet_id: str, credentials_path: str) -> None:
+            calls["spreadsheet_id"] = spreadsheet_id
+            calls["credentials_path"] = credentials_path
+
+    monkeypatch.setattr(setup.settings, "duna_storage_backend", "sheets")
+    monkeypatch.setattr(setup.settings, "dashboard_target", "demo")
+    monkeypatch.setattr(setup.settings, "google_sheets_spreadsheet_id", "runtime-sheet")
+    monkeypatch.setattr(
+        setup.settings,
+        "google_sheets_demo_spreadsheet_id",
+        "demo-sheet-456",
+    )
+    monkeypatch.setattr(
+        setup.settings,
+        "google_sheets_credentials_path",
+        "credentials/test-service-account.json",
+    )
+    monkeypatch.setattr(setup, "GoogleSheetsStorage", FakeGoogleSheetsStorage)
+
+    storage = setup.get_storage()
+
+    assert isinstance(storage, FakeGoogleSheetsStorage)
+    assert calls == {
+        "spreadsheet_id": "demo-sheet-456",
+        "credentials_path": "credentials/test-service-account.json",
+    }
 
 def test_get_order_service_returns_service_bound_to_storage() -> None:
     storage = InMemoryStorage()

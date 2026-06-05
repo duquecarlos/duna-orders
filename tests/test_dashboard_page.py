@@ -47,6 +47,7 @@ def test_dashboard_page_shows_friendly_error_when_scenario_load_fails(
         tenant_id="tenant",
         now=datetime(2026, 5, 27, 12, 0, tzinfo=ZoneInfo("America/Bogota")),
         timezone_name="America/Bogota",
+        dashboard_mode="runtime",
     )
 
     assert isinstance(captured["error"], RuntimeError)
