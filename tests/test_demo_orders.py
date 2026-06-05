@@ -22,7 +22,7 @@ from duna_orders.services.dashboard import (
     compute_top_items,
     compute_week_trend,
 )
-from scripts.seed_demo_data import build_demo_customers
+from duna_orders.demo_customers import build_demo_customers
 
 
 def _customers():

@@ -13,14 +13,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from duna_orders.demo_catalog import load_demo_catalog
-from duna_orders.demo_orders import (
+from duna_orders.demo_catalog import load_demo_catalog  # noqa: E402
+from duna_orders.demo_customers import build_demo_customers  # noqa: E402
+from duna_orders.demo_orders import (  # noqa: E402
     DEFAULT_DEMO_ANCHOR_DATE,
     DEFAULT_DEMO_ORDER_COUNT,
     DEMO_TIMEZONE,
     build_demo_order_dataset,
 )
-from duna_orders.services.dashboard import (
+from duna_orders.services.dashboard import (  # noqa: E402
     DashboardScenarioResult,
     compute_customer_mix,
     compute_product_pairs,
@@ -31,7 +32,6 @@ from duna_orders.services.dashboard import (
     compute_top_items,
     compute_week_trend,
 )
-from scripts.seed_demo_data import build_demo_customers
 
 
 WEEKDAY_LABELS = {

@@ -22,17 +22,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from duna_orders.config import settings
-from duna_orders.demo_catalog import load_demo_catalog
-from duna_orders.demo_ids import DEMO_ORDER_ID_PREFIX
-from duna_orders.demo_orders import (
+from duna_orders.config import settings  # noqa: E402
+from duna_orders.demo_catalog import load_demo_catalog  # noqa: E402
+from duna_orders.demo_customers import build_demo_customers  # noqa: E402
+from duna_orders.demo_ids import DEMO_ORDER_ID_PREFIX  # noqa: E402
+from duna_orders.demo_orders import (  # noqa: E402
     DEFAULT_DEMO_ORDER_COUNT,
     DEMO_TENANT_ID,
     build_demo_order_dataset,
 )
-from duna_orders.domain.models import Order
-from duna_orders.storage.sheets import GoogleSheetsStorage
-from scripts.seed_demo_data import build_demo_customers
+from duna_orders.domain.models import Order  # noqa: E402
+from duna_orders.storage.sheets import GoogleSheetsStorage  # noqa: E402
 
 
 @dataclass(frozen=True)
