@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timezone
-
+from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -256,24 +256,27 @@ def _utc_aware(value: datetime | None) -> datetime | None:
         return value.replace(tzinfo=timezone.utc)
 
     return value
-def _product_to_row(product: Product) -> ProductRow:
-    return ProductRow(
-        product_id=product.product_id,
-        tenant_id=product.tenant_id,
-        product_name=product.product_name,
-        aliases=product.aliases,
-        category=product.category,
-        available_days=product.available_days,
-        unit=product.unit,
-        unit_price=product.unit_price,
-        active=product.active,
-        current_stock=product.current_stock,
-        min_stock=product.min_stock,
-        notes=product.notes,
-        created_at=product.created_at,
-        updated_at=product.updated_at,
-    )
+def _product_to_values(product: Product) -> dict[str, Any]:
+    return {
+        "product_id": product.product_id,
+        "tenant_id": product.tenant_id,
+        "product_name": product.product_name,
+        "aliases": product.aliases,
+        "category": product.category,
+        "available_days": product.available_days,
+        "unit": product.unit,
+        "unit_price": product.unit_price,
+        "active": product.active,
+        "current_stock": product.current_stock,
+        "min_stock": product.min_stock,
+        "notes": product.notes,
+        "created_at": product.created_at,
+        "updated_at": product.updated_at,
+    }
 
+
+def _product_to_row(product: Product) -> ProductRow:
+    return ProductRow(**_product_to_values(product))
 
 def _update_product_row(row: ProductRow, product: Product) -> None:
     row.tenant_id = product.tenant_id
@@ -310,18 +313,22 @@ def _product_from_row(row: ProductRow) -> Product:
     )
 
 
+def _customer_to_values(customer: Customer) -> dict[str, Any]:
+    return {
+        "customer_id": customer.customer_id,
+        "tenant_id": customer.tenant_id,
+        "customer_name": customer.customer_name,
+        "customer_phone": customer.customer_phone,
+        "default_address": customer.default_address,
+        "notes": customer.notes,
+        "created_at": customer.created_at,
+        "updated_at": customer.updated_at,
+        "last_order_at": customer.last_order_at,
+    }
+
+
 def _customer_to_row(customer: Customer) -> CustomerRow:
-    return CustomerRow(
-        customer_id=customer.customer_id,
-        tenant_id=customer.tenant_id,
-        customer_name=customer.customer_name,
-        customer_phone=customer.customer_phone,
-        default_address=customer.default_address,
-        notes=customer.notes,
-        created_at=customer.created_at,
-        updated_at=customer.updated_at,
-        last_order_at=customer.last_order_at,
-    )
+    return CustomerRow(**_customer_to_values(customer))
 
 
 def _customer_from_row(row: CustomerRow) -> Customer:
@@ -337,35 +344,40 @@ def _customer_from_row(row: CustomerRow) -> Customer:
         last_order_at=_utc_aware(row.last_order_at),
     )
 
+def _order_to_values(order: Order) -> dict[str, Any]:
+    return {
+        "order_id": order.order_id,
+        "tenant_id": order.tenant_id,
+        "created_at": order.created_at,
+        "updated_at": order.updated_at,
+        "customer_id": order.customer_id,
+        "customer_name_snapshot": order.customer_name_snapshot,
+        "customer_phone_snapshot": order.customer_phone_snapshot,
+        "raw_message": order.raw_message,
+        "status": order.status,
+        "confirmed_at": order.confirmed_at,
+        "status_updated_at": order.status_updated_at,
+        "subtotal": order.subtotal,
+        "delivery_fee": order.delivery_fee,
+        "packaging_fee": order.packaging_fee,
+        "total": order.total,
+        "fulfillment_type": order.fulfillment_type,
+        "delivery_zone": order.delivery_zone,
+        "customer_notes": order.customer_notes,
+        "payment_method": order.payment_method,
+        "delivery_date": order.delivery_date,
+        "delivery_address": order.delivery_address,
+        "notes": order.notes,
+        "confirmation_message": order.confirmation_message,
+        "created_by": order.created_by,
+    }
+
+
 def _order_to_row(order: Order) -> OrderRow:
     return OrderRow(
-        order_id=order.order_id,
-        tenant_id=order.tenant_id,
-        created_at=order.created_at,
-        updated_at=order.updated_at,
-        customer_id=order.customer_id,
-        customer_name_snapshot=order.customer_name_snapshot,
-        customer_phone_snapshot=order.customer_phone_snapshot,
-        raw_message=order.raw_message,
-        status=order.status,
-        confirmed_at=order.confirmed_at,
-        status_updated_at=order.status_updated_at,
-        subtotal=order.subtotal,
-        delivery_fee=order.delivery_fee,
-        packaging_fee=order.packaging_fee,
-        total=order.total,
-        fulfillment_type=order.fulfillment_type,
-        delivery_zone=order.delivery_zone,
-        customer_notes=order.customer_notes,
-        payment_method=order.payment_method,
-        delivery_date=order.delivery_date,
-        delivery_address=order.delivery_address,
-        notes=order.notes,
-        confirmation_message=order.confirmation_message,
-        created_by=order.created_by,
+        **_order_to_values(order),
         items=[_order_item_to_row(item) for item in order.items],
     )
-
 
 def _order_from_row(row: OrderRow) -> Order:
     items = [
@@ -402,21 +414,25 @@ def _order_from_row(row: OrderRow) -> Order:
     )
 
 
+def _order_item_to_values(item: OrderItem) -> dict[str, Any]:
+    return {
+        "order_item_id": item.order_item_id,
+        "tenant_id": item.tenant_id,
+        "order_id": item.order_id,
+        "product_id": item.product_id,
+        "product_name_snapshot": item.product_name_snapshot,
+        "unit_snapshot": item.unit_snapshot,
+        "quantity": item.quantity,
+        "unit_price_snapshot": item.unit_price_snapshot,
+        "line_total": item.line_total,
+        "modifications": item.modifications,
+        "validation_status": item.validation_status,
+        "notes": item.notes,
+    }
+
+
 def _order_item_to_row(item: OrderItem) -> OrderItemRow:
-    return OrderItemRow(
-        order_item_id=item.order_item_id,
-        tenant_id=item.tenant_id,
-        order_id=item.order_id,
-        product_id=item.product_id,
-        product_name_snapshot=item.product_name_snapshot,
-        unit_snapshot=item.unit_snapshot,
-        quantity=item.quantity,
-        unit_price_snapshot=item.unit_price_snapshot,
-        line_total=item.line_total,
-        modifications=item.modifications,
-        validation_status=item.validation_status,
-        notes=item.notes,
-    )
+    return OrderItemRow(**_order_item_to_values(item))
 
 
 def _order_item_from_row(row: OrderItemRow) -> OrderItem:
