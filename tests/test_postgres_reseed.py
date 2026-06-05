@@ -9,13 +9,19 @@ from alembic.command import upgrade
 from alembic.config import Config
 from duna_orders.config import settings
 from duna_orders.demo_dataset import generate_demo_dataset
-from duna_orders.storage.postgres import PostgresStorage
+from duna_orders.storage.postgres import (
+    PostgresStorage,
+    _delete_tenant_rows,
+    _wipe_tenant_data,
+)
 from duna_orders.storage.postgres_base import Base
 from duna_orders.storage.postgres_models import (
     CustomerRow,
     OrderItemRow,
     OrderRow,
+    ParseLogRow,
     ProductRow,
+    StockMovementRow,
 )
 from duna_orders.storage.postgres_session import make_engine, make_session_factory
 
@@ -64,7 +70,13 @@ def _expected_demo_counts() -> dict[str, int]:
         "orders": 1500,
         "order_items": 3889,
     }
+class RecordingSession:
+    def __init__(self) -> None:
+        self.executed_statements: list[object] = []
 
+    def execute(self, statement: object) -> None:
+        self.executed_statements.append(statement)
+        raise AssertionError("DELETE should not execute for invalid tenant_id")
 
 def test_reseed_demo_dataset_returns_and_persists_locked_counts(
     postgres_storage: PostgresStorage,
@@ -98,13 +110,40 @@ def test_reseed_demo_dataset_is_idempotent(
     } == _expected_demo_counts()
     assert _queried_counts(postgres_storage, dataset.tenant_id) == _expected_demo_counts()
 
-
-def test_wipe_tenant_data_requires_tenant_id(
-    postgres_storage: PostgresStorage,
+@pytest.mark.parametrize("tenant_id", [None, ""])
+def test_wipe_tenant_data_fails_before_delete_for_invalid_tenant_id(
+    tenant_id: str | None,
 ) -> None:
-    with pytest.raises(ValueError, match="tenant_id is required"):
-        postgres_storage.wipe_tenant_data("")
+    session = RecordingSession()
 
+    with pytest.raises(ValueError, match="tenant_id is required"):
+        _wipe_tenant_data(session, tenant_id)
+
+    assert session.executed_statements == []
+
+
+@pytest.mark.parametrize("tenant_id", [None, ""])
+@pytest.mark.parametrize(
+    "row_type",
+    [
+        OrderItemRow,
+        StockMovementRow,
+        ParseLogRow,
+        OrderRow,
+        ProductRow,
+        CustomerRow,
+    ],
+)
+def test_delete_tenant_rows_guard_protects_each_tenant_table(
+    row_type: type,
+    tenant_id: str | None,
+) -> None:
+    session = RecordingSession()
+
+    with pytest.raises(ValueError, match="tenant_id is required"):
+        _delete_tenant_rows(session, row_type, tenant_id)
+
+    assert session.executed_statements == []
 
 def test_reseed_demo_dataset_rolls_back_on_bulk_failure(
     postgres_storage: PostgresStorage,

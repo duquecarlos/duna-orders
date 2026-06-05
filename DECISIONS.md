@@ -956,3 +956,9 @@ Details:
 
 Why:
 M8.1C-1A made demo data generation storage-agnostic. M8.1C-1B adds a fast, repeatable way to materialize that locked dataset into Postgres before runtime backend selection or dashboard parity work.
+
+Additional batching decision:
+The live Neon diagnostic showed that order bulk inserts fragmented into 964 cursor executions for 1500 rows because heterogeneous nullable order fields produced many insert shapes. We fixed this by applying `render_nulls=True` to the `OrderRow` bulk insert, forcing a uniform column set with explicit NULLs.
+
+Correctness check:
+The nullable order fields that receive explicit NULLs have no server defaults, so rendering NULL does not override any database-generated value. This preserves the single-row persistence contract while restoring batching.
