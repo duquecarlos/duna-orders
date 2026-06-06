@@ -9,15 +9,22 @@ Closed.
 * Counted only SQL `SELECT` statements through SQLAlchemy `before_cursor_execute`.
 * Drove the budget through the locked dashboard scenario and the same dashboard compute functions used by the Streamlit dashboard page.
 * Confirmed `PostgresStorage.list_orders()` already uses `selectinload(OrderRow.items)`, so order items load through one bounded secondary `SELECT` instead of N+1 lazy loading.
-* Locked the full dashboard compute path to `<= 4` SQL `SELECT` statements:
+* Locked the deterministic small dashboard scenario to `<= 4` SQL `SELECT` statements:
   * orders query;
-  * order-items `selectinload` query;
+  * one bounded order-items `selectinload` query;
   * customers query;
   * products query.
+* Live Neon full-demo diagnostics observed `select_count: 6` for 1500 orders:
+  * 1 orders query;
+  * 3 bounded order-items `selectinload` batch queries;
+  * 1 customers query;
+  * 1 products query.
+* The extra order-item queries are accepted because they are bounded `selectinload` batching, not N+1 lazy loading.
 * Kept the existing Sheets read-budget test unchanged.
 
 ### Verification
-
+* Manual Streamlit check with `DUNA_STORAGE_BACKEND=postgres`, Neon `DATABASE_URL`, and `DASHBOARD_TARGET=demo` rendered all 8 dashboard widgets with populated demo data.
+* Live Neon dashboard compute diagnostic observed `select_count: 6` for the full 1500-order demo dataset.
 * `pytest tests/test_postgres_dashboard_query_budget.py -q` -> 1 passed.
 * `pytest tests/test_postgres_dashboard_query_budget.py tests/test_sheets_read_budget.py tests/test_dashboard_widgets.py tests/test_dashboard_page.py -q` -> 45 passed.
 
