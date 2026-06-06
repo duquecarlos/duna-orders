@@ -962,3 +962,29 @@ The live Neon diagnostic showed that order bulk inserts fragmented into 964 curs
 
 Correctness check:
 The nullable order fields that receive explicit NULLs have no server defaults, so rendering NULL does not override any database-generated value. This preserves the single-row persistence contract while restoring batching.
+## M8.1C-2 - Storage factory and Postgres backend selection
+
+Decision:
+Add `postgres` as a third value on the existing `DUNA_STORAGE_BACKEND` persistence axis.
+
+Accepted values now are:
+
+* `memory`
+* `sheets`
+* `postgres`
+
+Details:
+
+* `memory` remains the default backend.
+* `sheets` keeps the existing Google Sheets construction behavior, including the current dashboard target spreadsheet resolution.
+* `postgres` builds `PostgresStorage` from `DATABASE_URL`.
+* No runtime `sqlite` backend is introduced. SQLite remains a test engine for `PostgresStorage`, not a product backend.
+* Storage construction is centralized in a UI-independent factory.
+* `ui.setup.get_storage()` delegates to the factory while preserving construct-per-call behavior.
+* The factory adds no caching or memoization.
+* Postgres construction creates one engine/session factory per constructed `PostgresStorage` instance and does not connect at construction time.
+
+Deferred:
+
+* Revisit whether Sheets dashboard target / spreadsheet ID resolution belongs in the shared factory or should move back toward the UI layer when the webhook process adopts the factory.
+* Revisit Postgres engine/pool reuse under Streamlit reruns in a later slice.

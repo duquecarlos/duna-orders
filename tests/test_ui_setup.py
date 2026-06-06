@@ -7,7 +7,8 @@ from duna_orders.services.parsing import ParsingService
 from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.ui import setup
 import pytest
-
+from duna_orders.storage import factory as storage_factory
+from duna_orders.storage.postgres import PostgresStorage
 
 class FakeParser(ParserInterface):
     @property
@@ -64,7 +65,7 @@ def test_get_storage_builds_google_sheets_storage_when_configured(monkeypatch) -
         "google_sheets_credentials_path",
         "credentials/test-service-account.json",
     )
-    monkeypatch.setattr(setup, "GoogleSheetsStorage", FakeGoogleSheetsStorage)
+    monkeypatch.setattr(storage_factory, "GoogleSheetsStorage", FakeGoogleSheetsStorage)
 
     storage = setup.get_storage()
 
@@ -95,7 +96,7 @@ def test_get_storage_builds_google_sheets_storage_for_demo_target(monkeypatch) -
         "google_sheets_credentials_path",
         "credentials/test-service-account.json",
     )
-    monkeypatch.setattr(setup, "GoogleSheetsStorage", FakeGoogleSheetsStorage)
+    monkeypatch.setattr(storage_factory, "GoogleSheetsStorage", FakeGoogleSheetsStorage)
 
     storage = setup.get_storage()
 
@@ -182,7 +183,13 @@ def test_prepare_storage_catalog_returns_true_for_seeded_sheets_storage(monkeypa
     assert ready is True
     assert storage.upsert_calls == 0
 
+def test_get_storage_builds_postgres_storage_when_configured(monkeypatch) -> None:
+    monkeypatch.setattr(setup.settings, "duna_storage_backend", "postgres")
+    monkeypatch.setattr(setup.settings, "database_url", "sqlite:///ui-postgres-test.db")
 
+    storage = setup.get_storage()
+
+    assert isinstance(storage, PostgresStorage)
 def test_prepare_storage_catalog_returns_false_for_unseeded_sheets_storage(monkeypatch) -> None:
     catalog = setup.get_demo_catalog()
 

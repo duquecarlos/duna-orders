@@ -1,4 +1,26 @@
 # Changelog
+## M8.1C-2 - Storage factory and Postgres backend selection
+
+Closed.
+
+### Delivered
+
+* Added a UI-independent storage factory.
+* Preserved existing `DUNA_STORAGE_BACKEND=memory` and `DUNA_STORAGE_BACKEND=sheets` behavior.
+* Added `DUNA_STORAGE_BACKEND=postgres` to build `PostgresStorage` from `DATABASE_URL`.
+* Kept the default backend as `memory`.
+* Kept Postgres construction lazy; storage construction does not connect to the database.
+* Updated `get_storage()` to delegate to the storage factory.
+* Added factory-level tests for memory, sheets runtime/demo targets, postgres, missing `DATABASE_URL`, and invalid backend values.
+* Added UI setup coverage for postgres backend selection.
+
+### Explicitly not included
+
+* No dashboard/Postgres parity work.
+* No Streamlit page changes beyond `get_storage()` delegation.
+* No runtime `sqlite` backend.
+* No engine/pool lifecycle optimization.
+* No webhook, Twilio, queue, session lifecycle, LLM, or outbound messaging.
 ## M8.1C-1B - Postgres demo reseed with bulk helpers
 
 Closed.

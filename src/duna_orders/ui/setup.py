@@ -3,7 +3,7 @@ from __future__ import annotations
 from duna_orders.config import settings
 
 import streamlit as st
-
+from duna_orders.storage.factory import build_storage
 from duna_orders.demo_catalog import DemoCatalogFile, load_demo_catalog
 from duna_orders.demo_messages import DemoMessagesFile, load_demo_messages
 from duna_orders.parsing.base import ParserInterface
@@ -15,41 +15,7 @@ from duna_orders.storage.sheets import GoogleSheetsStorage
 
 
 def get_storage() -> StorageInterface:
-    backend = settings.duna_storage_backend.strip().lower()
-
-    if backend in {"", "memory"}:
-        return InMemoryStorage()
-
-    if backend == "sheets":
-        spreadsheet_id = settings.dashboard_spreadsheet_id
-
-        if settings.is_dashboard_demo_target and not spreadsheet_id:
-            raise RuntimeError(
-                "DASHBOARD_TARGET=demo requires "
-                "GOOGLE_SHEETS_DEMO_SPREADSHEET_ID."
-            )
-
-        if not spreadsheet_id:
-            raise RuntimeError(
-                "DUNA_STORAGE_BACKEND=sheets requires "
-                "GOOGLE_SHEETS_SPREADSHEET_ID."
-            )
-
-        if not settings.google_sheets_credentials_path:
-            raise RuntimeError(
-                "DUNA_STORAGE_BACKEND=sheets requires GOOGLE_SHEETS_CREDENTIALS_PATH."
-            )
-
-        return GoogleSheetsStorage(
-            spreadsheet_id=spreadsheet_id,
-            credentials_path=str(settings.google_sheets_credentials_path),
-        )
-
-    raise RuntimeError(
-        "DUNA_STORAGE_BACKEND must be 'memory' or 'sheets'. "
-        f"Received: {settings.duna_storage_backend!r}"
-    )
-
+    return build_storage(settings)
 
 def get_order_service(storage: StorageInterface) -> OrderService:
     return OrderService(storage)
