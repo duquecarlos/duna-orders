@@ -1010,3 +1010,29 @@ Creating or retrieving the engine/session factory remains lazy. SQLAlchemy `crea
 
 Trade-off:
 A module-level cache introduces process-global state, so tests need an explicit reset hook. This is acceptable because the cache models the desired production behavior: one pool per database URL per running process.
+## M8.1C-3C - Postgres dashboard query-budget guard
+
+Decision:
+Postgres dashboard performance is guarded by a SQL `SELECT` query-budget test for the locked dashboard scenario.
+
+Details:
+
+* The budget counts SQL `SELECT` statements through SQLAlchemy `before_cursor_execute`.
+* The test uses a real SQLAlchemy engine with `PostgresStorage`.
+* The test drives the same backend compute path as the dashboard page:
+  * `run_locked_dashboard_read_scenario(...)`;
+  * reference-date resolution;
+  * all eight dashboard widget compute functions.
+* The locked budget is `<= 4` `SELECT` statements per full dashboard compute render.
+* Expected query shape:
+  * `list_orders()` performs one `orders` query;
+  * `selectinload(OrderRow.items)` performs one bounded order-items query;
+  * `list_customers()` performs one customers query;
+  * `list_products(active_only=False)` performs one products query.
+* `selectinload` is preferred over `joinedload` because it avoids row multiplication while keeping the number of item-loading queries independent of order count.
+
+Sheets read-budget status:
+The Sheets read-budget test remains backend-specific coverage for Google Sheets full-tab reads. It is not removed in this slice. The Postgres query-budget test is the runtime performance guard for the Postgres dashboard path.
+
+Trade-off:
+The query-budget test uses SQLite-backed SQLAlchemy for deterministic default CI. It proves ORM query shape and catches N+1 regressions, but live Neon latency still needs manual/opt-in verification when running the dashboard against the reseeded Neon database.

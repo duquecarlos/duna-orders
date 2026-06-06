@@ -1,4 +1,32 @@
 # Changelog
+## M8.1C-3C - Postgres dashboard parity and query-budget assertion
+
+Closed.
+
+### Delivered
+
+* Added a Postgres dashboard query-budget test using a real SQLAlchemy engine.
+* Counted only SQL `SELECT` statements through SQLAlchemy `before_cursor_execute`.
+* Drove the budget through the locked dashboard scenario and the same dashboard compute functions used by the Streamlit dashboard page.
+* Confirmed `PostgresStorage.list_orders()` already uses `selectinload(OrderRow.items)`, so order items load through one bounded secondary `SELECT` instead of N+1 lazy loading.
+* Locked the full dashboard compute path to `<= 4` SQL `SELECT` statements:
+  * orders query;
+  * order-items `selectinload` query;
+  * customers query;
+  * products query.
+* Kept the existing Sheets read-budget test unchanged.
+
+### Verification
+
+* `pytest tests/test_postgres_dashboard_query_budget.py -q` -> 1 passed.
+* `pytest tests/test_postgres_dashboard_query_budget.py tests/test_sheets_read_budget.py tests/test_dashboard_widgets.py tests/test_dashboard_page.py -q` -> 45 passed.
+
+### Explicitly not included
+
+* No FastAPI, Twilio, queue, conversation-state, LLM, or outbound messaging.
+* No `StorageInterface` changes.
+* No deletion of Sheets read-budget coverage.
+* No new models or migrations.
 ## M8.1C-3B - Per-process Postgres engine cache
 
 Closed.
