@@ -1023,16 +1023,21 @@ Details:
   * `run_locked_dashboard_read_scenario(...)`;
   * reference-date resolution;
   * all eight dashboard widget compute functions.
-* The locked budget is `<= 4` `SELECT` statements per full dashboard compute render.
-* Expected query shape:
-  * `list_orders()` performs one `orders` query;
-  * `selectinload(OrderRow.items)` performs one bounded order-items query;
-  * `list_customers()` performs one customers query;
-  * `list_products(active_only=False)` performs one products query.
-* `selectinload` is preferred over `joinedload` because it avoids row multiplication while keeping the number of item-loading queries independent of order count.
+The deterministic query-budget test locks the small locked dashboard scenario to `<= 4` SQL `SELECT` statements. This guards against N+1 behavior in the default test suite.
+
+For larger datasets, `selectinload(OrderRow.items)` may issue multiple bounded item-loading queries because SQLAlchemy batches parent IDs. The live Neon 1500-order demo diagnostic observed 6 total SELECTs: 1 orders query, 3 order-item batch queries, 1 customers query, and 1 products query. This is accepted for M8.1C because it is bounded batching, not per-order lazy loading.
+Expected small-scenario query shape:
+
+* `list_orders()` performs one `orders` query.
+* `selectinload(OrderRow.items)` performs one bounded order-items query.
+* `list_customers()` performs one customers query.
+* `list_products(active_only=False)` performs one products query.
+
+`selectinload` remains preferred over `joinedload` because it avoids row multiplication while preventing N+1 lazy loading.
+while keeping the number of item-loading queries independent of order count.
 
 Sheets read-budget status:
 The Sheets read-budget test remains backend-specific coverage for Google Sheets full-tab reads. It is not removed in this slice. The Postgres query-budget test is the runtime performance guard for the Postgres dashboard path.
 
 Trade-off:
-The query-budget test uses SQLite-backed SQLAlchemy for deterministic default CI. It proves ORM query shape and catches N+1 regressions, but live Neon latency still needs manual/opt-in verification when running the dashboard against the reseeded Neon database.
+The query-budget test uses SQLite-backed SQLAlchemy for deterministic default CI. It proves ORM query shape and catches N+1 regressions in the small locked scenario. Live Neon verification remains useful because larger datasets can trigger additional bounded `selectinload` batches even when there is no N+1 regression.
