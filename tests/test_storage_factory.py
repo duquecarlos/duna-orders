@@ -120,22 +120,19 @@ def test_build_storage_raises_for_sheets_backend_without_demo_sheet_id() -> None
 
 def test_build_storage_builds_postgres_storage_offline(monkeypatch) -> None:
     calls = {}
-    fake_engine = object()
 
-    def fake_make_engine(database_url: str):
+    def fake_session_factory():
+        raise AssertionError("Postgres construction must not connect")
+
+    def fake_get_or_create_session_factory(database_url: str):
         calls["database_url"] = database_url
-        return fake_engine
-
-    def fake_make_session_factory(engine):
-        calls["engine"] = engine
-
-        def fake_session_factory():
-            raise AssertionError("Postgres construction must not connect")
-
         return fake_session_factory
 
-    monkeypatch.setattr(factory, "make_engine", fake_make_engine)
-    monkeypatch.setattr(factory, "make_session_factory", fake_make_session_factory)
+    monkeypatch.setattr(
+        factory,
+        "get_or_create_session_factory",
+        fake_get_or_create_session_factory,
+    )
 
     storage = factory.build_storage(
         _settings(
@@ -147,9 +144,7 @@ def test_build_storage_builds_postgres_storage_offline(monkeypatch) -> None:
     assert isinstance(storage, PostgresStorage)
     assert calls == {
         "database_url": "sqlite:///offline-test.db",
-        "engine": fake_engine,
     }
-
 
 def test_build_storage_raises_for_postgres_without_database_url() -> None:
     with pytest.raises(RuntimeError, match="DATABASE_URL"):

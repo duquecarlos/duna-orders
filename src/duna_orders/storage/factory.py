@@ -4,7 +4,7 @@ from duna_orders.config import Settings
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.storage.postgres import PostgresStorage
-from duna_orders.storage.postgres_session import make_engine, make_session_factory
+from duna_orders.storage.postgres_session import get_or_create_session_factory
 from duna_orders.storage.sheets import GoogleSheetsStorage
 
 
@@ -54,5 +54,4 @@ def _build_postgres_storage(settings: Settings) -> PostgresStorage:
     if not settings.database_url:
         raise RuntimeError("DUNA_STORAGE_BACKEND=postgres requires DATABASE_URL to be set.")
 
-    engine = make_engine(settings.database_url)
-    return PostgresStorage(make_session_factory(engine))
+    return PostgresStorage(get_or_create_session_factory(settings.database_url))

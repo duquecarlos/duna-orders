@@ -1,4 +1,48 @@
 # Changelog
+## M8.1C-3B - Per-process Postgres engine cache
+
+Closed.
+
+### Delivered
+
+* Added a framework-neutral process-level SQLAlchemy engine cache for Postgres.
+* Added `get_or_create_engine(...)` keyed by `DATABASE_URL`.
+* Added `get_or_create_session_factory(...)` so storage construction can reuse one session factory per cached engine.
+* Added `dispose_all_engines()` and `reset_engine_cache()` for test isolation and clean shutdown hooks.
+* Guarded cache check-and-create with a `threading.Lock`.
+* Updated the storage factory so `DUNA_STORAGE_BACKEND=postgres` reuses the cached session factory instead of creating a new engine per `PostgresStorage` instance.
+* Preserved lazy construction: building the engine/session factory/storage does not open a database connection.
+
+### Explicitly not included
+
+* No dashboard/Postgres parity work.
+* No Postgres dashboard query-budget assertion.
+* No Streamlit page changes or `st.session_state` changes.
+* No `st.cache_resource`.
+* No Sheets read-budget or `sheets_request_context` changes.
+* No FastAPI, Twilio, queue, session lifecycle, LLM, outbound messaging, models, or migrations.
+## M8.1C-3B - Per-process Postgres engine cache
+
+Closed.
+
+### Delivered
+
+* Added a framework-neutral process-level SQLAlchemy engine cache for Postgres.
+* Added `get_or_create_engine(...)` keyed by `DATABASE_URL`.
+* Added `get_or_create_session_factory(...)` so storage construction can reuse one session factory per cached engine.
+* Added `dispose_all_engines()` and `reset_engine_cache()` for test isolation and clean shutdown hooks.
+* Guarded cache check-and-create with a `threading.Lock`.
+* Updated the storage factory so `DUNA_STORAGE_BACKEND=postgres` reuses the cached session factory instead of creating a new engine per `PostgresStorage` instance.
+* Preserved lazy construction: building the engine/session factory/storage does not open a database connection.
+
+### Explicitly not included
+
+* No dashboard/Postgres parity work.
+* No Postgres dashboard query-budget assertion.
+* No Streamlit page changes or `st.session_state` changes.
+* No `st.cache_resource`.
+* No Sheets read-budget or `sheets_request_context` changes.
+* No FastAPI, Twilio, queue, session lifecycle, LLM, outbound messaging, models, or migrations.
 ## M8.1C-2 - Storage factory and Postgres backend selection
 
 Closed.

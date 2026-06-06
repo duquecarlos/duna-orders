@@ -988,3 +988,25 @@ Deferred:
 
 * Revisit whether Sheets dashboard target / spreadsheet ID resolution belongs in the shared factory or should move back toward the UI layer when the webhook process adopts the factory.
 * Revisit Postgres engine/pool reuse under Streamlit reruns in a later slice.
+## M8.1C-3B - Framework-neutral Postgres engine cache
+
+Decision:
+Reuse one SQLAlchemy `Engine` per `DATABASE_URL` per process.
+
+Details:
+
+* The cache lives in the storage/session layer, not in Streamlit UI code.
+* `get_or_create_engine(...)` memoizes engines by `DATABASE_URL`.
+* `get_or_create_session_factory(...)` reuses the cached engine and returns one session factory per URL.
+* Cache check-and-create is guarded with a `threading.Lock` so concurrent callers do not race into duplicate engine creation.
+* `dispose_all_engines()` and `reset_engine_cache()` dispose cached engines and clear module state for tests and future clean shutdown hooks.
+* The first `echo` value used for a URL wins because the cache key is intentionally only `DATABASE_URL`.
+
+Why not `st.cache_resource`:
+The future FastAPI webhook process must reuse the same storage factory path and cannot depend on Streamlit. Keeping engine lifecycle in the storage layer makes the behavior shared by Streamlit, CLI scripts, tests, and the webhook process.
+
+Lazy construction:
+Creating or retrieving the engine/session factory remains lazy. SQLAlchemy `create_engine(...)` constructs an engine and pool object but does not open a database connection until first use.
+
+Trade-off:
+A module-level cache introduces process-global state, so tests need an explicit reset hook. This is acceptable because the cache models the desired production behavior: one pool per database URL per running process.
