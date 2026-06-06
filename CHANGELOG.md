@@ -1,4 +1,43 @@
 # Changelog
+## M8.1 - FastAPI Twilio inbound webhook skeleton
+
+Closed.
+
+### Delivered
+
+* Added a separate FastAPI webhook app under `src/duna_orders/web`.
+* Added `GET /health`.
+* Added `POST /webhooks/twilio/whatsapp` for Twilio WhatsApp inbound webhooks.
+* Added Twilio signature validation using Twilio's `RequestValidator`.
+* Validated the signature before parsing, storage access, or draft creation.
+* Parsed Twilio `application/x-www-form-urlencoded` payloads.
+* Extracted inbound `From` and `Body`.
+* Routed inbound message text through the existing parser and draft creation path:
+
+  * `ParsingService.parse(...)`;
+  * `OrderService.create_draft(...)`.
+* Created draft orders only; no auto-confirmation.
+* Returned an empty `200` response for accepted webhooks so Twilio does not retry.
+* Added graceful empty-body handling: signed empty messages return `200` and create no order.
+* Added settings for Twilio auth token, optional public webhook URL, and configured webhook tenant.
+* Added dependencies for FastAPI, Uvicorn, and Twilio.
+
+### Verification
+
+* `pytest tests/test_web_twilio_webhook.py -q` -> 5 passed.
+* `ruff check src\duna_orders\web tests\test_web_twilio_webhook.py` -> All checks passed.
+
+### Explicitly not included
+
+* No outbound WhatsApp replies.
+* No TwiML reply body beyond empty success response.
+* No conversation state machine.
+* No auto-confirmation.
+* No queue or async worker.
+* No new parser or LLM path.
+* No `StorageInterface` changes.
+* No FastAPI deployment configuration.
+
 ## M8.1C-3C - Postgres dashboard parity and query-budget assertion
 
 Closed.

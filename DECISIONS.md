@@ -1041,3 +1041,31 @@ The Sheets read-budget test remains backend-specific coverage for Google Sheets 
 
 Trade-off:
 The query-budget test uses SQLite-backed SQLAlchemy for deterministic default CI. It proves ORM query shape and catches N+1 regressions in the small locked scenario. Live Neon verification remains useful because larger datasets can trigger additional bounded `selectinload` batches even when there is no N+1 regression.
+
+## M8.1 - FastAPI inbound webhook skeleton
+
+Decision:
+Introduce FastAPI as the inbound webhook entrypoint for Twilio WhatsApp messages.
+
+Details:
+
+* FastAPI is separate from Streamlit.
+* FastAPI and Streamlit share service and storage layers, but not UI code.
+* The webhook app obtains storage through the existing storage factory path.
+* With `DUNA_STORAGE_BACKEND=postgres`, the webhook uses `PostgresStorage` and the framework-neutral per-process SQLAlchemy engine cache.
+* The webhook must not use `st.cache_resource` or any Streamlit session state.
+* Twilio inbound requests are `application/x-www-form-urlencoded`.
+* `X-Twilio-Signature` validation is mandatory and runs before parsing, storage access, or draft creation.
+* Signature validation uses Twilio's `RequestValidator`; signature logic is not hand-rolled.
+* `TWILIO_WEBHOOK_PUBLIC_URL` may be configured so validation uses the public URL seen by Twilio when the app is behind a proxy or deployment platform.
+* For this slice, tenant resolution is configured through a single webhook tenant setting.
+* Tenant routing by inbound Twilio number is deferred.
+
+Human-in-the-loop decision:
+Inbound WhatsApp messages create draft orders only. No inbound webhook path auto-confirms orders. Operators continue to review and confirm drafts through the existing operator UI.
+
+Postgres/Sheets decision:
+Postgres is the production backend for the webhook path. Google Sheets remains frozen and is not extended for webhook behavior.
+
+Trade-off:
+The webhook handler is synchronous for M8.1 because pilot volume is expected to be low and there is no queue yet. Queue-backed processing, conversation state, and outbound messaging are deferred to later M8 slices.

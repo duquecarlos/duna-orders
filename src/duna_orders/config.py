@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     dashboard_target: str = "runtime"
     # Database
     database_url: str | None = None
+    # Webhook
+    twilio_auth_token: str | None = None
+    twilio_webhook_public_url: str | None = None
+    webhook_tenant_id: str = "el-fogon-colombiano"
     # LLM
     llm_provider: str = "anthropic"
     llm_model: str = "claude-sonnet-4-5"
