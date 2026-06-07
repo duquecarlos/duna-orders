@@ -8,7 +8,9 @@ from duna_orders.domain.models import (
     OrderItem,
     StockMovement,
     utc_now,
+    OrderStatusTransition,
 )
+from duna_orders.storage.order_lifecycle import OrderLifecycleStore
 from duna_orders.domain.phone import normalize_customer_phone
 from duna_orders.ids import new_id
 from duna_orders.services.exceptions import (
@@ -41,9 +43,13 @@ def get_allowed_next_statuses(order: Order) -> tuple[str, ...]:
     return BASE_STATUS_TRANSITIONS.get(order.status, ())
 
 class OrderService:
-    def __init__(self, storage: StorageInterface) -> None:
+    def __init__(
+        self,
+        storage: StorageInterface,
+        lifecycle_store: OrderLifecycleStore | None = None,
+    ) -> None:
         self._storage = storage
-
+        self._lifecycle_store = lifecycle_store
     def create_draft(self, request: DraftOrderRequest) -> Order:
         positive_items = [item for item in request.items if item.quantity > 0]
 
@@ -125,6 +131,20 @@ class OrderService:
             customer_notes=request.customer_notes,
             payment_method=request.payment_method,
         )
+        if self._lifecycle_store is not None:
+            return self._lifecycle_store.create_order_with_transition(
+                order=order,
+                transition=OrderStatusTransition(
+                    transition_id=new_id("ost"),
+                    tenant_id=order.tenant_id,
+                    order_id=order.order_id,
+                    from_status=None,
+                    to_status="draft",
+                    occurred_at=order.created_at,
+                    source="system",
+                ),
+            )
+
         return self._storage.create_order(order)
 
     def confirm_order(
@@ -230,6 +250,22 @@ class OrderService:
             )
             self._storage.upsert_product(updated_product)
 
+        if self._lifecycle_store is not None:
+            return self._lifecycle_store.update_order_status_with_transition(
+                order_id=order_id,
+                status="confirmed",
+                confirmed_at=confirmed_at,
+                transition=OrderStatusTransition(
+                    transition_id=new_id("ost"),
+                    tenant_id=order.tenant_id,
+                    order_id=order.order_id,
+                    from_status=order.status,
+                    to_status="confirmed",
+                    occurred_at=confirmed_at,
+                    source="operator",
+                ),
+            )
+
         return self._storage.update_order_status(
             order_id,
             "confirmed",
@@ -256,9 +292,25 @@ class OrderService:
                 current_status=order.status,
                 new_status=new_status,
             )
+        occurred_at = status_updated_at or utc_now()
+        if self._lifecycle_store is not None:
+            return self._lifecycle_store.update_order_status_with_transition(
+                order_id=order_id,
+                status=new_status,
+                status_updated_at=occurred_at,
+                transition=OrderStatusTransition(
+                    transition_id=new_id("ost"),
+                    tenant_id=order.tenant_id,
+                    order_id=order.order_id,
+                    from_status=order.status,
+                    to_status=new_status,
+                    occurred_at=occurred_at,
+                    source="operator",
+                ),
+            )
 
         return self._storage.update_order_status(
             order_id,
             new_status,
-            status_updated_at=status_updated_at or utc_now(),
+            status_updated_at=occurred_at,
         )

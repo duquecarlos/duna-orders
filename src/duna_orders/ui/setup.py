@@ -12,15 +12,21 @@ from duna_orders.services.parsing import ParsingService
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.storage.sheets import GoogleSheetsStorage
+from duna_orders.storage.order_lifecycle import PostgresOrderLifecycleStore
+from duna_orders.storage.postgres import PostgresStorage
 
 
 def get_storage() -> StorageInterface:
     return build_storage(settings)
 
 def get_order_service(storage: StorageInterface) -> OrderService:
+    if isinstance(storage, PostgresStorage):
+        return OrderService(
+            storage,
+            lifecycle_store=PostgresOrderLifecycleStore(storage._session_factory),
+        )
+
     return OrderService(storage)
-
-
 def _build_anthropic_parser() -> ParserInterface:
     from duna_orders.parsing.anthropic_parser import AnthropicParser
 

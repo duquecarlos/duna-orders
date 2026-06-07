@@ -9,6 +9,7 @@ from duna_orders.ui import setup
 import pytest
 from duna_orders.storage import factory as storage_factory
 from duna_orders.storage.postgres import PostgresStorage
+from duna_orders.storage.order_lifecycle import PostgresOrderLifecycleStore
 
 class FakeParser(ParserInterface):
     @property
@@ -113,6 +114,19 @@ def test_get_order_service_returns_service_bound_to_storage() -> None:
 
     assert isinstance(service, OrderService)
     assert service._storage is storage
+
+def test_get_order_service_injects_lifecycle_store_for_postgres_storage(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(setup.settings, "duna_storage_backend", "postgres")
+    monkeypatch.setattr(setup.settings, "database_url", "sqlite:///ui-lifecycle-test.db")
+
+    storage = setup.get_storage()
+    service = setup.get_order_service(storage)
+
+    assert isinstance(storage, PostgresStorage)
+    assert service._storage is storage
+    assert isinstance(service._lifecycle_store, PostgresOrderLifecycleStore)
 
 def test_get_parsing_service_returns_none_without_api_key(monkeypatch) -> None:
     monkeypatch.setattr(setup.settings, "anthropic_api_key", None)

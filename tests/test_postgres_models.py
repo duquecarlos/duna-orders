@@ -15,7 +15,8 @@ from duna_orders.storage.schema import (
 )
 
 POSTGRES_ONLY_TABLES = {
-    PROCESSED_MESSAGES_TAB,
+    "processed_messages",
+    "order_status_transitions",
 }
 PRIMARY_ID_COLUMNS = {
     PRODUCTS_TAB: "product_id",
@@ -166,3 +167,25 @@ def test_tenant_lookup_indexes_exist_for_expected_access_patterns() -> None:
         }
 
         assert expected_table_indexes <= actual_indexes
+
+def test_order_status_transitions_table_is_postgres_only() -> None:
+    load_postgres_models()
+
+    table = Base.metadata.tables["order_status_transitions"]
+
+    assert [column.name for column in table.columns] == [
+        "transition_id",
+        "tenant_id",
+        "order_id",
+        "from_status",
+        "to_status",
+        "occurred_at",
+        "source",
+    ]
+    assert table.c.transition_id.primary_key is True
+    assert table.c.tenant_id.nullable is False
+    assert table.c.order_id.nullable is False
+    assert table.c.from_status.nullable is True
+    assert table.c.to_status.nullable is False
+    assert table.c.occurred_at.nullable is False
+    assert table.c.source.nullable is False

@@ -9,6 +9,7 @@ from duna_orders.domain.models import (
     DraftOrderRequest,
     Order,
     OrderItem,
+    OrderStatusTransition,
     Product,
     StockMovement,
 )
@@ -692,3 +693,166 @@ def test_transition_order_status_respects_tenant_scope():
             DEFAULT_TEST_TENANT_ID,
             "in_preparation",
         )
+
+class FakeLifecycleStore:
+    def __init__(self, storage: InMemoryStorage) -> None:
+        self.storage = storage
+        self.transitions: list[OrderStatusTransition] = []
+        self.fail_next_update = False
+
+    def create_order_with_transition(
+        self,
+        *,
+        order: Order,
+        transition: OrderStatusTransition,
+    ) -> Order:
+        created = self.storage.create_order(order)
+        self.transitions.append(transition)
+        return created
+
+    def update_order_status_with_transition(
+        self,
+        *,
+        order_id: str,
+        status: str,
+        transition: OrderStatusTransition,
+        confirmed_at: datetime | None = None,
+        status_updated_at: datetime | None = None,
+    ) -> Order:
+        if self.fail_next_update:
+            self.fail_next_update = False
+            raise RuntimeError("simulated lifecycle persistence failure")
+
+        updated = self.storage.update_order_status(
+            order_id,
+            status,
+            confirmed_at=confirmed_at,
+            status_updated_at=status_updated_at,
+        )
+        self.transitions.append(transition)
+        return updated
+
+    def list_order_status_transitions(
+        self,
+        *,
+        order_id: str,
+        tenant_id: str,
+    ) -> list[OrderStatusTransition]:
+        return [
+            transition
+            for transition in self.transitions
+            if transition.order_id == order_id and transition.tenant_id == tenant_id
+        ]
+
+
+def test_create_draft_with_lifecycle_store_writes_initial_transition() -> None:
+    storage = InMemoryStorage()
+    storage.upsert_product(make_product())
+    lifecycle_store = FakeLifecycleStore(storage)
+    service = OrderService(storage, lifecycle_store=lifecycle_store)
+
+    order = service.create_draft(make_draft_request())
+
+    transitions = lifecycle_store.list_order_status_transitions(
+        order_id=order.order_id,
+        tenant_id=order.tenant_id,
+    )
+
+    assert order.status == "draft"
+    assert len(transitions) == 1
+    assert transitions[0].from_status is None
+    assert transitions[0].to_status == "draft"
+    assert transitions[0].occurred_at == order.created_at
+    assert transitions[0].source == "system"
+    assert transitions[0].tenant_id == DEFAULT_TEST_TENANT_ID
+
+
+def test_confirm_order_with_lifecycle_store_appends_transition() -> None:
+    storage = seed_storage()
+    lifecycle_store = FakeLifecycleStore(storage)
+    service = OrderService(storage, lifecycle_store=lifecycle_store)
+    confirmed_at = datetime(2026, 6, 7, 12, 0, tzinfo=timezone.utc)
+
+    order = service.confirm_order(ORDER_ID, confirmed_at=confirmed_at)
+
+    transitions = lifecycle_store.list_order_status_transitions(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert order.status == "confirmed"
+    assert len(transitions) == 1
+    assert transitions[0].from_status == "draft"
+    assert transitions[0].to_status == "confirmed"
+    assert transitions[0].occurred_at == confirmed_at
+    assert transitions[0].source == "operator"
+    assert transitions[0].tenant_id == DEFAULT_TEST_TENANT_ID
+
+
+def test_transition_order_status_with_lifecycle_store_appends_transition() -> None:
+    storage = InMemoryStorage()
+    storage.create_order(make_order(status="confirmed", fulfillment_type="delivery"))
+    lifecycle_store = FakeLifecycleStore(storage)
+    service = OrderService(storage, lifecycle_store=lifecycle_store)
+    changed_at = datetime(2026, 6, 7, 12, 5, tzinfo=timezone.utc)
+
+    order = service.transition_order_status(
+        ORDER_ID,
+        DEFAULT_TEST_TENANT_ID,
+        "in_preparation",
+        status_updated_at=changed_at,
+    )
+
+    transitions = lifecycle_store.list_order_status_transitions(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert order.status == "in_preparation"
+    assert len(transitions) == 1
+    assert transitions[0].from_status == "confirmed"
+    assert transitions[0].to_status == "in_preparation"
+    assert transitions[0].occurred_at == changed_at
+    assert transitions[0].source == "operator"
+
+
+def test_rejected_transition_with_lifecycle_store_writes_no_transition() -> None:
+    storage = InMemoryStorage()
+    storage.create_order(make_order(status="confirmed", fulfillment_type="delivery"))
+    lifecycle_store = FakeLifecycleStore(storage)
+    service = OrderService(storage, lifecycle_store=lifecycle_store)
+
+    with pytest.raises(InvalidOrderTransitionError):
+        service.transition_order_status(
+            ORDER_ID,
+            DEFAULT_TEST_TENANT_ID,
+            "delivered",
+        )
+
+    transitions = lifecycle_store.list_order_status_transitions(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert transitions == []
+
+
+def test_lifecycle_store_failure_prevents_status_update() -> None:
+    storage = InMemoryStorage()
+    storage.create_order(make_order(status="confirmed", fulfillment_type="delivery"))
+    lifecycle_store = FakeLifecycleStore(storage)
+    lifecycle_store.fail_next_update = True
+    service = OrderService(storage, lifecycle_store=lifecycle_store)
+
+    with pytest.raises(RuntimeError, match="simulated lifecycle persistence failure"):
+        service.transition_order_status(
+            ORDER_ID,
+            DEFAULT_TEST_TENANT_ID,
+            "in_preparation",
+        )
+
+    saved_order = storage.get_order(ORDER_ID)
+
+    assert saved_order is not None
+    assert saved_order.status == "confirmed"
+    assert lifecycle_store.transitions == []

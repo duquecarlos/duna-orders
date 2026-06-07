@@ -12,6 +12,8 @@ from duna_orders.domain.models import (
     DraftOrderRequest,
     ParseResult,
     Product,
+    Order,
+    OrderStatusTransition,
 )
 from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.storage.postgres_base import Base
@@ -60,7 +62,50 @@ def _processed_message_store(tmp_path: Path) -> PostgresProcessedMessageStore:
     Base.metadata.create_all(engine)
 
     return PostgresProcessedMessageStore(make_session_factory(engine))
+class FakeLifecycleStore:
+    def __init__(self, storage: InMemoryStorage) -> None:
+        self.storage = storage
+        self.transitions: list[OrderStatusTransition] = []
 
+    def create_order_with_transition(
+        self,
+        *,
+        order: Order,
+        transition: OrderStatusTransition,
+    ) -> Order:
+        created = self.storage.create_order(order)
+        self.transitions.append(transition)
+        return created
+
+    def update_order_status_with_transition(
+        self,
+        *,
+        order_id: str,
+        status: str,
+        transition: OrderStatusTransition,
+        confirmed_at=None,
+        status_updated_at=None,
+    ) -> Order:
+        updated = self.storage.update_order_status(
+            order_id,
+            status,
+            confirmed_at=confirmed_at,
+            status_updated_at=status_updated_at,
+        )
+        self.transitions.append(transition)
+        return updated
+
+    def list_order_status_transitions(
+        self,
+        *,
+        order_id: str,
+        tenant_id: str,
+    ) -> list[OrderStatusTransition]:
+        return [
+            transition
+            for transition in self.transitions
+            if transition.order_id == order_id and transition.tenant_id == tenant_id
+        ]
 
 def _signed_headers(
     params: dict[str, str],
@@ -475,3 +520,47 @@ def test_twilio_webhook_parser_failure_preserves_raw_message_and_creates_no_orde
     assert record.raw_body == raw_message
     assert record.from_number == "whatsapp:+573001112233"
     assert record.resulting_order_id is None
+
+def test_twilio_webhook_uses_injected_lifecycle_store_for_draft_creation(
+    tmp_path: Path,
+) -> None:
+    storage = InMemoryStorage()
+    product = _seed_product(storage)
+    raw_message = "Buenas, una bandeja paisa"
+    processed_store = _processed_message_store(tmp_path)
+    lifecycle_store = FakeLifecycleStore(storage)
+
+    parser = MockParser(result=_parse_result_for_product(product, raw_message))
+    app = create_app(
+        app_settings=_settings(),
+        storage=storage,
+        parser=parser,
+        processed_message_store=processed_store,
+        order_lifecycle_store=lifecycle_store,
+    )
+    client = TestClient(app)
+
+    params = {
+        "MessageSid": "SM_LIFECYCLE_DRAFT",
+        "From": "whatsapp:+573001112233",
+        "Body": raw_message,
+    }
+
+    response = client.post(
+        WEBHOOK_PATH,
+        data=params,
+        headers=_signed_headers(params),
+    )
+
+    orders = storage.list_orders()
+    record = processed_store.get_message("SM_LIFECYCLE_DRAFT")
+
+    assert response.status_code == 200
+    assert len(orders) == 1
+    assert record is not None
+    assert record.resulting_order_id == orders[0].order_id
+    assert len(lifecycle_store.transitions) == 1
+    assert lifecycle_store.transitions[0].from_status is None
+    assert lifecycle_store.transitions[0].to_status == "draft"
+    assert lifecycle_store.transitions[0].source == "system"
+    assert lifecycle_store.transitions[0].tenant_id == DEFAULT_TEST_TENANT_ID

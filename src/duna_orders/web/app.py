@@ -11,7 +11,11 @@ from duna_orders.storage.processed_messages import PostgresProcessedMessageStore
 from duna_orders.storage.postgres_session import get_or_create_session_factory
 from duna_orders.web.inbound import create_draft_from_inbound_message
 from duna_orders.web.security import validate_twilio_signature
-
+from duna_orders.storage.order_lifecycle import (
+    OrderLifecycleStore,
+    PostgresOrderLifecycleStore,
+)
+from duna_orders.storage.postgres import PostgresStorage
 
 def create_app(
     *,
@@ -19,12 +23,14 @@ def create_app(
     storage: StorageInterface | None = None,
     parser: ParserInterface | None = None,
     processed_message_store: PostgresProcessedMessageStore | None = None,
+    order_lifecycle_store: OrderLifecycleStore | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Duna Orders Webhook")
     app.state.settings = app_settings
     app.state.storage = storage
     app.state.parser = parser
     app.state.processed_message_store = processed_message_store
+    app.state.order_lifecycle_store = order_lifecycle_store
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -77,6 +83,7 @@ def create_app(
                 tenant_id=tenant_id,
                 sender=sender,
                 body=inbound_body,
+                lifecycle_store=_get_order_lifecycle_store(app),
             )
 
             if order is not None:
@@ -128,5 +135,19 @@ def _get_processed_message_store(app: FastAPI) -> PostgresProcessedMessageStore:
 
     return store
 
+def _get_order_lifecycle_store(app: FastAPI) -> OrderLifecycleStore | None:
+    store = app.state.order_lifecycle_store
 
+    if store is not None:
+        return store
+
+    storage = _get_storage(app)
+
+    if not isinstance(storage, PostgresStorage):
+        return None
+
+    store = PostgresOrderLifecycleStore(storage._session_factory)
+    app.state.order_lifecycle_store = store
+
+    return store
 app = create_app()

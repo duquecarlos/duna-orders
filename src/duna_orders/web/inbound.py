@@ -7,7 +7,7 @@ from duna_orders.services.exceptions import ServiceError
 from duna_orders.services.orders import OrderService
 from duna_orders.services.parsing import ParsingService
 from duna_orders.storage.base import StorageInterface
-
+from duna_orders.storage.order_lifecycle import OrderLifecycleStore
 logger = logging.getLogger(__name__)
 
 
@@ -18,6 +18,7 @@ def create_draft_from_inbound_message(
     tenant_id: str,
     sender: str | None,
     body: str,
+    lifecycle_store: OrderLifecycleStore | None = None,
 ) -> Order | None:
     cleaned_body = body.strip()
 
@@ -58,7 +59,7 @@ def create_draft_from_inbound_message(
             deep=True,
         )
 
-        return OrderService(storage).create_draft(request)
+        return OrderService(storage, lifecycle_store=lifecycle_store).create_draft(request)
     except (ParserError, ServiceError, ValueError) as error:
         logger.warning("Skipping inbound WhatsApp message: %s", error)
         return None

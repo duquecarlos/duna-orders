@@ -1,4 +1,63 @@
 # Changelog
+## M8.1.3 - Order lifecycle transition timestamps
+
+Closed.
+
+### Delivered
+
+* Added append-only `order_status_transitions` table for order lifecycle event capture.
+* Added domain model `OrderStatusTransition`.
+* Added transition source field with `system` and `operator`.
+* Added Alembic migration `d2f7b8a4c901`.
+* Added `PostgresOrderLifecycleStore` as a dedicated lifecycle persistence concern.
+* Kept `StorageInterface` unchanged.
+* Kept storage pure: `OrderService` decides when a transition happens; lifecycle storage persists the already-decided transition.
+* Added atomic Postgres persistence methods for:
+  * order creation + initial transition;
+  * status update + transition append.
+* Added initial lifecycle capture for new drafts:
+  * `from_status = NULL`;
+  * `to_status = draft`;
+  * `source = system`.
+* Added transition capture for `confirm_order`:
+  * `draft -> confirmed`;
+  * `source = operator`.
+* Added transition capture for `transition_order_status`:
+  * subsequent operator-driven lifecycle changes append one transition each.
+* Wired Streamlit `get_order_service(...)` to inject `PostgresOrderLifecycleStore` when the backend is Postgres.
+* Wired the FastAPI Twilio inbound path to inject the lifecycle store for Postgres draft creation.
+* Confirmed rejected transitions write no transition.
+* Confirmed a failed atomic lifecycle-store write rolls back the status update.
+* Confirmed current dashboard query-budget test still passes; the transition log is not read by the current dashboard widgets.
+* Existing orders are not backfilled. Their full transition history was not captured before M8.1.3 and cannot be reconstructed honestly.
+
+### Verification
+
+* `pytest tests/test_order_lifecycle_store.py -q` -> 4 passed.
+* `pytest tests/test_orders_service.py -q` -> 31 passed.
+* `pytest tests/test_postgres_models.py tests/test_order_lifecycle_store.py tests/test_orders_service.py tests/test_ui_setup.py tests/test_web_twilio_webhook.py tests/test_postgres_dashboard_query_budget.py -q` -> 76 passed.
+* `pytest -q` -> 279 passed, 23 deselected.
+* `ruff check` on touched domain/service/storage/web/ui/test files -> All checks passed.
+* `git diff --check` -> clean.
+* Fresh SQLite migration check:
+
+  * `alembic upgrade head` -> reached `d2f7b8a4c901`;
+  * `alembic downgrade b7f4c8e2a901` -> passed;
+  * `alembic upgrade head` -> reached `d2f7b8a4c901` again.
+
+### Explicitly not included
+
+* No outbound WhatsApp replies.
+* No TwiML reply body.
+* No conversation state machine.
+* No auto-confirmation.
+* No queue or async worker.
+* No parser or LLM changes.
+* No cancellation reason.
+* No edit diff tracking.
+* No synthetic backfill for existing orders.
+* No dashboard widget reads from `order_status_transitions`.
+* No Neon/runtime database upgrade in this slice.
 ## M8.1.2 - Raw inbound message capture
 
 Closed.

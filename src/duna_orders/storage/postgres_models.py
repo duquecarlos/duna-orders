@@ -12,6 +12,7 @@ from duna_orders.storage.schema import (
     CUSTOMERS_TAB,
     ORDERS_TAB,
     ORDER_ITEMS_TAB,
+    ORDER_STATUS_TRANSITIONS_TAB,
     PARSE_LOG_TAB,
     PRODUCTS_TAB,
     STOCK_MOVEMENTS_TAB,
@@ -140,7 +141,41 @@ class OrderRow(Base):
         Index("ix_orders_tenant_id_customer_id", "tenant_id", "customer_id"),
     )
 
+class OrderStatusTransitionRow(Base):
+    __tablename__ = ORDER_STATUS_TRANSITIONS_TAB
 
+    transition_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(TENANT_ID_LENGTH), nullable=False)
+    order_id: Mapped[str] = mapped_column(
+        String(ID_LENGTH),
+        ForeignKey(f"{ORDERS_TAB}.order_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    from_status: Mapped[str | None] = mapped_column(String(STATUS_LENGTH))
+    to_status: Mapped[str] = mapped_column(String(STATUS_LENGTH), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+    source: Mapped[str] = mapped_column(
+        String(STATUS_LENGTH),
+        nullable=False,
+        default="system",
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_order_status_transitions_tenant_id_order_id",
+            "tenant_id",
+            "order_id",
+        ),
+        Index(
+            "ix_order_status_transitions_tenant_id_occurred_at",
+            "tenant_id",
+            "occurred_at",
+        ),
+    )
 class OrderItemRow(Base):
     __tablename__ = ORDER_ITEMS_TAB
 

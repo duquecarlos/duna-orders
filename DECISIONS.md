@@ -1126,3 +1126,43 @@ The webhook records `raw_body` in the same insert-first idempotency write that r
 
 Scope note:
 This remains a Postgres/webhook storage concern. It does not change `StorageInterface`, order semantics, parser behavior, outbound messaging, conversation state, queues, or auto-confirmation.
+
+## M8.1.3 - Order lifecycle transition event log
+
+Decision:
+Add `order_status_transitions` as the append-only lifecycle event log for order status changes.
+
+Details:
+
+* Each transition row records:
+  * `transition_id`;
+  * `tenant_id`;
+  * `order_id`;
+  * `from_status`;
+  * `to_status`;
+  * `occurred_at`;
+  * `source`.
+* `occurred_at` is server time at the moment the lifecycle transition is performed.
+* It is not a customer-side timestamp and is not inferred from WhatsApp or Twilio metadata.
+* `from_status` is nullable only for the initial draft creation event.
+* New draft creation writes the first transition as `NULL -> draft`.
+* `source = system` is used for initial draft creation.
+* `source = operator` is used for operator-driven confirmation and lifecycle transitions.
+* No `reason` field was added; cancellation/edit reasons are separate deferred decisions.
+
+Atomicity decision:
+Lifecycle transitions are persisted through a dedicated lifecycle persistence concern. `OrderService` decides when a transition happens and builds the transition event. The lifecycle store persists the order status mutation and transition row in the same Postgres transaction where the atomic lifecycle method is used.
+
+This avoids pretending that two independent storage calls are atomic. `PostgresStorage` methods use independent `session_scope` calls, so status update and transition append had to be bundled into dedicated lifecycle methods for the M8.1.3 guarantee.
+
+Scope of atomicity:
+M8.1.3 guarantees that a lifecycle status mutation performed through the lifecycle store is committed with its transition row, or neither is committed. It does not redesign the broader confirmation workflow into one large transaction with stock movement and product stock updates. That broader unit-of-work redesign is deferred.
+
+Backfill decision:
+Existing orders are not backfilled. They may have `created_at`, `confirmed_at`, and `status_updated_at`, but they do not contain the complete ordered sequence of lifecycle transitions. Creating synthetic histories would mix real captured events with inferred data. Only orders created or transitioned after M8.1.3 have captured lifecycle event history.
+
+Dashboard decision:
+The current dashboard widgets do not read `order_status_transitions`. The existing Postgres dashboard query-budget test remains the guard for the current dashboard scenario and still passes. Future SLA, prep-time, and time-in-state dashboard work may read this table in a separate milestone.
+
+Scope note:
+This closes the second pre-M8 irrecoverable data lock after M8.1.2 raw inbound message capture. It does not change outbound messaging, conversation state, auto-confirmation, queues, parser behavior, cancellation reasons, or edit tracking.

@@ -14,6 +14,10 @@ OrderStatus = Literal[
     "picked_up",
     "cancelled",
 ]
+OrderStatusTransitionSource = Literal[
+    "system",
+    "operator",
+]
 StockReason = Literal[
     "sale",
     "restock",
@@ -135,6 +139,17 @@ class Order(BaseModel):
     notes: str | None = None
     confirmation_message: str | None = None
     created_by: str | None = None
+
+class OrderStatusTransition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transition_id: str
+    tenant_id: str
+    order_id: str
+    from_status: OrderStatus | None = None
+    to_status: OrderStatus
+    occurred_at: datetime = Field(default_factory=utc_now)
+    source: OrderStatusTransitionSource = "system"
 
 class StockMovement(BaseModel):
     model_config = ConfigDict(extra="forbid")
