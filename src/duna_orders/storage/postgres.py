@@ -186,6 +186,11 @@ class PostgresStorage(StorageInterface):
         confirmed_at: datetime | None = None,
         status_updated_at: datetime | None = None,
     ) -> Order:
+        """Low-level status persistence method.
+
+        Application lifecycle transitions must go through OrderService with
+        PostgresOrderLifecycleStore so order_status_transitions rows are captured.
+        """
         with session_scope(self._session_factory) as session:
             row = session.scalar(
                 select(OrderRow)

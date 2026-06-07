@@ -1,4 +1,35 @@
 # Architectural Decisions
+## M8.1.4 - Local webhook smoke and lifecycle guardrails
+
+Decision:
+Keep deployment smoke split between an automatable read-only preflight and a manual local+tunnel runbook.
+
+Details:
+
+* `scripts/smoke_preflight.py` may validate configuration, database connectivity, and Alembic current-vs-head state.
+* The preflight must not mutate Neon or run migrations.
+* When the database is behind Alembic head, the script reports failure and prints the operator command `alembic upgrade head`.
+* Twilio sandbox and cloudflared tunnel checks remain manual because they require live external systems and operator-controlled URLs.
+
+Why:
+This keeps repeatable checks automated without allowing tooling to change production-like database state or send live provider traffic during a documentation/guardrail slice.
+
+Decision:
+Treat `PostgresStorage.update_order_status` as low-level persistence, not the application lifecycle path.
+
+Details:
+
+* `StorageInterface` remains unchanged.
+* `OrderService` continues to own lifecycle transition decisions.
+* When a lifecycle store is injected, sanctioned lifecycle status mutations must use it so `order_status_transitions` rows are captured with the status update.
+* Tests guard against regressions where service lifecycle paths bypass the lifecycle store and call direct storage status mutation.
+
+Known deferred gap:
+`OrderService.confirm_order(...)` still performs stock movement/product stock updates before the final lifecycle status mutation. With `PostgresOrderLifecycleStore`, the status update and transition row are atomic with each other, but the broader confirm operation is not yet one database transaction covering stock impact plus status. A future unit-of-work redesign should close this stock-vs-status transaction gap for Postgres confirmation.
+
+Hardening note:
+The `PostgresStorage.update_order_status` guard is currently a docstring/advisory guardrail. Runtime enforcement is deferred to avoid changing `StorageInterface` or public storage method signatures in a smoke-readiness slice. This is consistent with the stable `StorageInterface` principle. A future slice may add stronger enforcement, such as a runtime warning or renaming the method to an internal API. The known `confirm_order` stock/product-vs-status transaction gap remains deferred.
+
 ## M8 - WhatsApp conversational ordering and Postgres runtime foundation
 
 Status: locked for M8.0.

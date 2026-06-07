@@ -1,4 +1,26 @@
 # Changelog
+## M8.1.4 - Deployment smoke local + tunnel for inbound webhook
+
+Closed.
+
+### Delivered
+
+* Added a lifecycle-store guardrail test confirming injected lifecycle stores own sanctioned lifecycle status mutations instead of direct `storage.update_order_status` calls.
+* Documented `PostgresStorage.update_order_status` as low-level persistence only; application lifecycle transitions must use `OrderService` with `PostgresOrderLifecycleStore` when transition rows are required.
+* Added read-only `scripts/smoke_preflight.py` for local deployment smoke readiness checks.
+* The preflight validates Postgres backend configuration, required Twilio/webhook settings, HTTPS webhook URL shape, database connectivity, and Alembic current-vs-head state.
+* The preflight reports migration state only. It does not run upgrades and prints `alembic upgrade head` when the database is behind head.
+* Added deterministic SQLite-backed tests for the smoke preflight. No live Neon, Twilio, or tunnel access is required.
+* Added `docs/SMOKE.md` with the manual local FastAPI plus cloudflared tunnel smoke runbook.
+* Documented that the local+tunnel smoke was not live-run by ChatGPT; Carlos will run it manually later.
+
+### Explicitly not included
+
+* No live Twilio smoke run.
+* No live tunnel smoke run.
+* No Neon auto-upgrade.
+* No commits or pushes.
+
 ## M8.1.3 - Order lifecycle transition timestamps
 
 Closed.

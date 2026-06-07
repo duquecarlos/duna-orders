@@ -745,6 +745,53 @@ class FakeLifecycleStore:
         ]
 
 
+class GuardedInMemoryStorage(InMemoryStorage):
+    def __init__(self) -> None:
+        super().__init__()
+        self.direct_status_updates = 0
+
+    def update_order_status(
+        self,
+        order_id: str,
+        status: str,
+        confirmed_at: datetime | None = None,
+        status_updated_at: datetime | None = None,
+    ) -> Order:
+        self.direct_status_updates += 1
+        return super().update_order_status(
+            order_id,
+            status,
+            confirmed_at=confirmed_at,
+            status_updated_at=status_updated_at,
+        )
+
+
+class GuardrailLifecycleStore(FakeLifecycleStore):
+    def __init__(self, storage: GuardedInMemoryStorage) -> None:
+        super().__init__(storage)
+        self.status_updates: list[str] = []
+
+    def update_order_status_with_transition(
+        self,
+        *,
+        order_id: str,
+        status: str,
+        transition: OrderStatusTransition,
+        confirmed_at: datetime | None = None,
+        status_updated_at: datetime | None = None,
+    ) -> Order:
+        self.status_updates.append(status)
+        updated = InMemoryStorage.update_order_status(
+            self.storage,
+            order_id,
+            status,
+            confirmed_at=confirmed_at,
+            status_updated_at=status_updated_at,
+        )
+        self.transitions.append(transition)
+        return updated
+
+
 def test_create_draft_with_lifecycle_store_writes_initial_transition() -> None:
     storage = InMemoryStorage()
     storage.upsert_product(make_product())
@@ -856,3 +903,27 @@ def test_lifecycle_store_failure_prevents_status_update() -> None:
     assert saved_order is not None
     assert saved_order.status == "confirmed"
     assert lifecycle_store.transitions == []
+
+
+def test_lifecycle_store_injection_avoids_direct_storage_status_updates() -> None:
+    storage = GuardedInMemoryStorage()
+    storage.upsert_product(make_product())
+    storage.create_order(make_order(status="draft", fulfillment_type="delivery"))
+    lifecycle_store = GuardrailLifecycleStore(storage)
+    service = OrderService(storage, lifecycle_store=lifecycle_store)
+
+    confirmed_order = service.confirm_order(ORDER_ID)
+    transitioned_order = service.transition_order_status(
+        ORDER_ID,
+        DEFAULT_TEST_TENANT_ID,
+        "in_preparation",
+    )
+
+    assert confirmed_order.status == "confirmed"
+    assert transitioned_order.status == "in_preparation"
+    assert lifecycle_store.status_updates == ["confirmed", "in_preparation"]
+    assert [transition.to_status for transition in lifecycle_store.transitions] == [
+        "confirmed",
+        "in_preparation",
+    ]
+    assert storage.direct_status_updates == 0
