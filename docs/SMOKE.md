@@ -2,6 +2,8 @@
 
 This runbook is for the manual local plus tunnel smoke for the Twilio WhatsApp inbound webhook. Do not put real secret values in this file or terminal output shared in docs.
 
+Use [docs/SMOKE_CHECKLIST.md](SMOKE_CHECKLIST.md) as the execution checklist and pass/fail sheet for the manual run.
+
 ## 1. Preflight
 
 Run the read-only preflight and resolve every `FAIL` before continuing:

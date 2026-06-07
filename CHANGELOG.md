@@ -12,6 +12,7 @@ Closed.
 * The preflight reports migration state only. It does not run upgrades and prints `alembic upgrade head` when the database is behind head.
 * Added deterministic SQLite-backed tests for the smoke preflight. No live Neon, Twilio, or tunnel access is required.
 * Added `docs/SMOKE.md` with the manual local FastAPI plus cloudflared tunnel smoke runbook.
+* Added `docs/SMOKE_CHECKLIST.md` as the manual smoke execution checklist and pass/fail sheet.
 * Documented that the local+tunnel smoke was not live-run by ChatGPT; Carlos will run it manually later.
 
 ### Explicitly not included
