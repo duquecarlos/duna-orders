@@ -1,4 +1,46 @@
 # Changelog
+## M8.1.2 - Raw inbound message capture
+
+Closed.
+
+### Delivered
+
+* Replaced persisted `processed_messages.body_preview` with `processed_messages.raw_body`.
+* Preserved the full Twilio inbound `Body` text before parsing, without trimming or truncation.
+* Kept `from_number` capture unchanged on the insert-first idempotency path.
+* Kept `received_at` as server receipt time.
+* Did not add `wa_timestamp` because the standard Twilio inbound WhatsApp webhook payload does not provide a reliable original device send-time.
+* Added Alembic migration `b7f4c8e2a901`.
+* Used add-then-drop migration semantics instead of renaming `body_preview` to `raw_body`.
+* Left existing migrated rows with `raw_body = NULL` rather than backfilling from already-truncated `body_preview`.
+* Updated `PostgresProcessedMessageStore` and webhook ingestion to write `raw_body` in the same insert-first idempotency write.
+* Confirmed successful inbound order creation links `processed_messages.resulting_order_id`.
+* Confirmed empty-body messages store `raw_body = ""` or the exact inbound whitespace string and remain deduped.
+* Confirmed parser failures preserve `raw_body`, return `200`, and create no order.
+* Confirmed retries of captured messages remain deduped and do not overwrite raw event fields.
+
+### Verification
+
+* `pytest tests/test_web_twilio_webhook.py tests/test_processed_messages.py -q` -> 16 passed.
+* `pytest tests/test_web_twilio_webhook.py tests/test_processed_messages.py tests/test_postgres_models.py -q` -> 25 passed.
+* `Get-ChildItem src,tests -Recurse -File | Select-String -Pattern "body_preview"` -> no remaining source/test references.
+* Fresh SQLite migration check:
+
+  * `alembic upgrade head` -> reached `b7f4c8e2a901`;
+  * `alembic downgrade 9c7e1f4a2b30` -> passed;
+  * `alembic upgrade head` -> reached `b7f4c8e2a901` again.
+
+### Explicitly not included
+
+* No outbound WhatsApp replies.
+* No TwiML reply body.
+* No conversation state machine.
+* No auto-confirmation.
+* No queue or async worker.
+* No parser or LLM changes.
+* No `StorageInterface` changes.
+* No parse latency, token, or cost fields.
+* No per-state-transition timestamps.
 ## M8.1.1 - Twilio signature hardening and inbound idempotency
 
 Closed.

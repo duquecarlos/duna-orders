@@ -20,7 +20,7 @@ from duna_orders.storage.processed_messages import PostgresProcessedMessageStore
 from duna_orders.web.app import create_app
 from tests._fakes import MockParser
 from tests.conftest import DEFAULT_TEST_TENANT_ID
-
+from duna_orders.parsing.exceptions import ParserError
 
 AUTH_TOKEN = "test-auth-token"
 WEBHOOK_PATH = "/webhooks/twilio/whatsapp"
@@ -209,7 +209,10 @@ def test_twilio_webhook_creates_one_draft_order_from_signed_inbound_message(
 ) -> None:
     storage = InMemoryStorage()
     product = _seed_product(storage)
-    raw_message = "Buenas, me regala una bandeja paisa para recoger. Pago por Nequi."
+    raw_message = (
+    "Buenas, me regala una bandeja paisa para recoger. Pago por Nequi. "
+    + "Detalle adicional sin truncar. " * 25
+)
     processed_store = _processed_message_store(tmp_path)
 
     parser = MockParser(result=_parse_result_for_product(product, raw_message))
@@ -240,12 +243,15 @@ def test_twilio_webhook_creates_one_draft_order_from_signed_inbound_message(
     assert len(orders) == 1
     assert orders[0].status == "draft"
     assert orders[0].tenant_id == DEFAULT_TEST_TENANT_ID
-    assert orders[0].raw_message == raw_message
+    assert orders[0].raw_message == raw_message.strip()
     assert orders[0].customer_phone_snapshot == "+573001112233"
     assert orders[0].items[0].product_id == product.product_id
     assert storage.list_stock_movements() == []
     assert len(parser.calls) == 1
     assert record is not None
+    assert record.raw_body == raw_message
+    assert record.from_number == "whatsapp:+573001112233"
+    assert len(record.raw_body) > 500
     assert record.resulting_order_id == orders[0].order_id
 
 
@@ -254,11 +260,12 @@ def test_twilio_webhook_empty_body_returns_200_and_creates_no_order(
 ) -> None:
     storage = InMemoryStorage()
     parser = MockParser()
+    processed_store = _processed_message_store(tmp_path)
     app = create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser,
-        processed_message_store=_processed_message_store(tmp_path),
+        processed_message_store=processed_store,
     )
     client = TestClient(app)
 
@@ -273,11 +280,16 @@ def test_twilio_webhook_empty_body_returns_200_and_creates_no_order(
         headers=_signed_headers(params),
     )
 
+    record = processed_store.get_message("SM_EMPTY_BODY")
+
     assert response.status_code == 200
     assert response.text == ""
     assert parser.calls == []
     assert storage.list_orders() == []
-
+    assert record is not None
+    assert record.raw_body == "   "
+    assert record.from_number == "whatsapp:+573001112233"
+    assert record.resulting_order_id is None
 
 def test_twilio_webhook_duplicate_message_sid_creates_only_one_draft(
     tmp_path: Path,
@@ -386,6 +398,8 @@ def test_twilio_webhook_empty_body_retry_records_sid_once_and_creates_no_order(
     assert parser.calls == []
     assert storage.list_orders() == []
     assert record is not None
+    assert record.raw_body == "   "
+    assert record.from_number == "whatsapp:+573001112233"
     assert record.resulting_order_id is None
 
 
@@ -423,3 +437,41 @@ def test_twilio_webhook_existing_message_sid_returns_200_without_reprocessing(
     assert response.status_code == 200
     assert parser.calls == []
     assert storage.list_orders() == []
+
+def test_twilio_webhook_parser_failure_preserves_raw_message_and_creates_no_order(
+    tmp_path: Path,
+) -> None:
+    storage = InMemoryStorage()
+    raw_message = "Buenas, una bandeja paisa que el parser no puede procesar."
+    parser = MockParser(raise_error=ParserError("mock parser failure"))
+    processed_store = _processed_message_store(tmp_path)
+    app = create_app(
+        app_settings=_settings(),
+        storage=storage,
+        parser=parser,
+        processed_message_store=processed_store,
+    )
+    client = TestClient(app)
+
+    params = {
+        "MessageSid": "SM_PARSE_FAILURE",
+        "From": "whatsapp:+573001112233",
+        "Body": raw_message,
+    }
+
+    response = client.post(
+        WEBHOOK_PATH,
+        data=params,
+        headers=_signed_headers(params),
+    )
+
+    record = processed_store.get_message("SM_PARSE_FAILURE")
+
+    assert response.status_code == 200
+    assert response.text == ""
+    assert len(parser.calls) == 1
+    assert storage.list_orders() == []
+    assert record is not None
+    assert record.raw_body == raw_message
+    assert record.from_number == "whatsapp:+573001112233"
+    assert record.resulting_order_id is None

@@ -65,7 +65,7 @@ def test_processed_messages_table_is_postgres_only() -> None:
         "tenant_id",
         "received_at",
         "from_number",
-        "body_preview",
+        "raw_body",
         "resulting_order_id",
     ]
     assert PROCESSED_MESSAGES_TAB not in TABS

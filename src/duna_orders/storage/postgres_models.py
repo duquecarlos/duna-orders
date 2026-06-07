@@ -236,7 +236,7 @@ class ProcessedMessageRow(Base):
         default=utc_now,
     )
     from_number: Mapped[str | None] = mapped_column(String(PHONE_LENGTH))
-    body_preview: Mapped[str | None] = mapped_column(Text)
+    raw_body: Mapped[str | None] = mapped_column(Text)
     resulting_order_id: Mapped[str | None] = mapped_column(String(ID_LENGTH))
 
     __table_args__ = (

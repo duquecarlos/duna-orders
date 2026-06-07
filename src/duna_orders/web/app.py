@@ -64,7 +64,7 @@ def create_app(
             message_sid=message_sid,
             tenant_id=tenant_id,
             from_number=sender,
-            body_preview=inbound_body,
+            raw_body=inbound_body,
         )
 
         if not is_new_message:

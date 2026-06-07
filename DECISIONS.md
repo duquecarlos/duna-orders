@@ -1103,3 +1103,26 @@ The database primary key is the concurrency arbiter. The code uses insert-first 
 
 Scope note:
 This table is a Postgres/webhook storage concern and does not change `StorageInterface` or order semantics.
+
+## M8.1.2 - Raw inbound event capture
+
+Decision:
+`processed_messages` is the authoritative raw inbound event log for Twilio WhatsApp webhook deliveries.
+
+Details:
+
+* `processed_messages.message_sid` remains the idempotency key.
+* `processed_messages.raw_body` stores the full inbound Twilio `Body` value captured before parsing.
+* `raw_body` is stored verbatim: no trimming, no truncation, and no normalization.
+* `processed_messages.from_number` stores the raw Twilio `From` value independently of customer matching.
+* `processed_messages.received_at` stores server receipt time.
+* No `wa_timestamp` column is added because the standard Twilio inbound WhatsApp webhook payload does not provide a reliable original WhatsApp device send-time.
+* `body_preview` was removed as persisted state because previews are derived from `raw_body` at read/presentation time.
+* Existing rows migrated from before this slice have `raw_body = NULL`; their full inbound text was not captured before M8.1.2 and cannot be reconstructed honestly.
+* The migration uses add-then-drop semantics instead of renaming `body_preview` to `raw_body`, so truncated historical preview values are not mislabeled as full raw text.
+
+Failure-path decision:
+The webhook records `raw_body` in the same insert-first idempotency write that records `MessageSid`. This happens before parsing or draft creation, so the raw event survives parser failures, empty-body messages, and no-order outcomes.
+
+Scope note:
+This remains a Postgres/webhook storage concern. It does not change `StorageInterface`, order semantics, parser behavior, outbound messaging, conversation state, queues, or auto-confirmation.

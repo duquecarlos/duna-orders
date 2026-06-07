@@ -18,7 +18,7 @@ class ProcessedMessage:
     tenant_id: str
     received_at: datetime
     from_number: str | None = None
-    body_preview: str | None = None
+    raw_body: str | None = None
     resulting_order_id: str | None = None
 
 
@@ -32,7 +32,7 @@ class PostgresProcessedMessageStore:
         message_sid: str,
         tenant_id: str,
         from_number: str | None = None,
-        body_preview: str | None = None,
+        raw_body: str | None = None,
     ) -> bool:
         if not message_sid or not message_sid.strip():
             raise ValueError("message_sid is required")
@@ -46,7 +46,7 @@ class PostgresProcessedMessageStore:
                     tenant_id=tenant_id,
                     received_at=utc_now(),
                     from_number=from_number,
-                    body_preview=_body_preview(body_preview),
+                    raw_body=raw_body,
                     resulting_order_id=None,
                 )
             )
@@ -79,18 +79,6 @@ class PostgresProcessedMessageStore:
                 tenant_id=row.tenant_id,
                 received_at=row.received_at,
                 from_number=row.from_number,
-                body_preview=row.body_preview,
+                raw_body=row.raw_body,
                 resulting_order_id=row.resulting_order_id,
             )
-
-
-def _body_preview(body: str | None) -> str | None:
-    if body is None:
-        return None
-
-    cleaned = body.strip()
-
-    if not cleaned:
-        return None
-
-    return cleaned[:500]

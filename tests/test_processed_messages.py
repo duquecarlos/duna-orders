@@ -21,7 +21,7 @@ def test_try_record_message_returns_true_for_new_message(tmp_path: Path) -> None
         message_sid="SM_NEW",
         tenant_id=DEFAULT_TEST_TENANT_ID,
         from_number="whatsapp:+573001112233",
-        body_preview="Buenas, una bandeja paisa",
+        raw_body="Buenas, una bandeja paisa",
     )
 
     record = store.get_message("SM_NEW")
@@ -31,7 +31,7 @@ def test_try_record_message_returns_true_for_new_message(tmp_path: Path) -> None
     assert record.message_sid == "SM_NEW"
     assert record.tenant_id == DEFAULT_TEST_TENANT_ID
     assert record.from_number == "whatsapp:+573001112233"
-    assert record.body_preview == "Buenas, una bandeja paisa"
+    assert record.raw_body == "Buenas, una bandeja paisa"
     assert record.resulting_order_id is None
 
 
@@ -69,16 +69,17 @@ def test_mark_order_created_links_resulting_order_id(tmp_path: Path) -> None:
     assert record.resulting_order_id == "ord_test"
 
 
-def test_body_preview_is_trimmed_and_limited(tmp_path: Path) -> None:
+def test_raw_body_preserves_full_untrimmed_message(tmp_path: Path) -> None:
     store = _store(tmp_path)
+    raw_body = f"  {'x' * 600}  "
 
     store.try_record_message(
         message_sid="SM_LONG",
         tenant_id=DEFAULT_TEST_TENANT_ID,
-        body_preview=f"  {'x' * 600}  ",
+        raw_body=raw_body,
     )
 
     record = store.get_message("SM_LONG")
 
     assert record is not None
-    assert record.body_preview == "x" * 500
+    assert record.raw_body == raw_body
