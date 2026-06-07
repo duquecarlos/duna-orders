@@ -1069,3 +1069,37 @@ Postgres is the production backend for the webhook path. Google Sheets remains f
 
 Trade-off:
 The webhook handler is synchronous for M8.1 because pilot volume is expected to be low and there is no queue yet. Queue-backed processing, conversation state, and outbound messaging are deferred to later M8 slices.
+
+## M8.1.1 - Twilio signature hardening and inbound idempotency
+
+Decision:
+Twilio webhook signature validation must use the configured public webhook URL, not a reconstructed request URL.
+
+Details:
+
+* The configured public URL must match the webhook URL set in the Twilio console.
+* Validation uses Twilio's `RequestValidator`.
+* The full parsed Twilio POST form params are passed into validation.
+* Business extraction of `From`, `Body`, and `MessageSid` remains separate from the validation input.
+* If `TWILIO_WEBHOOK_PUBLIC_URL` is missing, the webhook fails closed instead of validating against `request.url`.
+
+Decision:
+Inbound idempotency is keyed on Twilio `MessageSid` using a dedicated Postgres-only `processed_messages` table.
+
+Details:
+
+* `processed_messages.message_sid` is the primary key.
+* The webhook inserts the `MessageSid` before parsing or draft creation.
+* If the insert hits the existing primary key, the request is treated as a duplicate and returns `200` immediately.
+* Duplicate messages do not re-parse and do not create duplicate draft orders.
+* Empty-body messages are still recorded, so retries are deduped even when no order is created.
+* Successful draft creation links `processed_messages.resulting_order_id` to the created draft order.
+
+Why a dedicated table:
+A dedicated processed-message table records inbound events independently of order creation. This is preferred over storing `MessageSid` on orders because some valid inbound events, such as empty-body messages, intentionally create no order but still need retry deduplication.
+
+Concurrency decision:
+The database primary key is the concurrency arbiter. The code uses insert-first behavior and treats uniqueness failure as duplicate delivery. This avoids a Python check-then-insert race.
+
+Scope note:
+This table is a Postgres/webhook storage concern and does not change `StorageInterface` or order semantics.

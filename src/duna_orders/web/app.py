@@ -7,6 +7,8 @@ from duna_orders.config import Settings, settings
 from duna_orders.parsing.base import ParserInterface
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.factory import build_storage
+from duna_orders.storage.processed_messages import PostgresProcessedMessageStore
+from duna_orders.storage.postgres_session import get_or_create_session_factory
 from duna_orders.web.inbound import create_draft_from_inbound_message
 from duna_orders.web.security import validate_twilio_signature
 
@@ -16,11 +18,13 @@ def create_app(
     app_settings: Settings = settings,
     storage: StorageInterface | None = None,
     parser: ParserInterface | None = None,
+    processed_message_store: PostgresProcessedMessageStore | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Duna Orders Webhook")
     app.state.settings = app_settings
     app.state.storage = storage
     app.state.parser = parser
+    app.state.processed_message_store = processed_message_store
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -32,10 +36,11 @@ def create_app(
         body_text = body_bytes.decode("utf-8")
         form_params = dict(parse_qsl(body_text, keep_blank_values=True))
 
-        validation_url = (
-            app_settings.twilio_webhook_public_url
-            or str(request.url)
-        )
+        validation_url = app_settings.twilio_webhook_public_url
+
+        if not validation_url:
+            return Response(status_code=500)
+
         is_valid = validate_twilio_signature(
             url=validation_url,
             form_params=form_params,
@@ -46,17 +51,39 @@ def create_app(
         if not is_valid:
             return Response(status_code=403)
 
+        message_sid = form_params.get("MessageSid", "").strip()
+
+        if not message_sid:
+            return Response(status_code=400)
+
         inbound_body = form_params.get("Body", "")
         sender = form_params.get("From")
+        tenant_id = app_settings.webhook_tenant_id
+
+        is_new_message = _get_processed_message_store(app).try_record_message(
+            message_sid=message_sid,
+            tenant_id=tenant_id,
+            from_number=sender,
+            body_preview=inbound_body,
+        )
+
+        if not is_new_message:
+            return Response(status_code=200)
 
         if inbound_body.strip():
-            create_draft_from_inbound_message(
+            order = create_draft_from_inbound_message(
                 storage=_get_storage(app),
                 parser=_get_parser(app),
-                tenant_id=app_settings.webhook_tenant_id,
+                tenant_id=tenant_id,
                 sender=sender,
                 body=inbound_body,
             )
+
+            if order is not None:
+                _get_processed_message_store(app).mark_order_created(
+                    message_sid=message_sid,
+                    order_id=order.order_id,
+                )
 
         return Response(status_code=200)
 
@@ -83,6 +110,23 @@ def _get_parser(app: FastAPI) -> ParserInterface:
         app.state.parser = parser
 
     return parser
+
+
+def _get_processed_message_store(app: FastAPI) -> PostgresProcessedMessageStore:
+    store = app.state.processed_message_store
+
+    if store is None:
+        database_url = app.state.settings.database_url
+
+        if not database_url:
+            raise RuntimeError("DATABASE_URL is required for webhook idempotency.")
+
+        store = PostgresProcessedMessageStore(
+            get_or_create_session_factory(database_url)
+        )
+        app.state.processed_message_store = store
+
+    return store
 
 
 app = create_app()

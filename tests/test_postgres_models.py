@@ -11,9 +11,12 @@ from duna_orders.storage.schema import (
     PRODUCTS_TAB,
     STOCK_MOVEMENTS_TAB,
     TABS,
+    PROCESSED_MESSAGES_TAB,
 )
 
-
+POSTGRES_ONLY_TABLES = {
+    PROCESSED_MESSAGES_TAB,
+}
 PRIMARY_ID_COLUMNS = {
     PRODUCTS_TAB: "product_id",
     CUSTOMERS_TAB: "customer_id",
@@ -21,6 +24,7 @@ PRIMARY_ID_COLUMNS = {
     ORDER_ITEMS_TAB: "order_item_id",
     STOCK_MOVEMENTS_TAB: "stock_movement_id",
     PARSE_LOG_TAB: "parse_id",
+    PROCESSED_MESSAGES_TAB: "message_sid",
 }
 
 
@@ -31,7 +35,7 @@ def load_postgres_models() -> None:
 def test_postgres_models_register_current_runtime_tables() -> None:
     load_postgres_models()
 
-    assert set(Base.metadata.tables) == set(TABS)
+    assert set(Base.metadata.tables) == set(TABS) | POSTGRES_ONLY_TABLES
 
 
 def test_postgres_model_columns_match_current_storage_schema() -> None:
@@ -51,7 +55,20 @@ def test_postgres_model_primary_keys_match_current_runtime_ids() -> None:
 
         assert [column.name for column in table.primary_key.columns] == [primary_id_column]
 
+def test_processed_messages_table_is_postgres_only() -> None:
+    load_postgres_models()
 
+    table = Base.metadata.tables[PROCESSED_MESSAGES_TAB]
+
+    assert list(table.columns.keys()) == [
+        "message_sid",
+        "tenant_id",
+        "received_at",
+        "from_number",
+        "body_preview",
+        "resulting_order_id",
+    ]
+    assert PROCESSED_MESSAGES_TAB not in TABS
 def test_order_items_reference_orders_with_cascade_delete() -> None:
     load_postgres_models()
 
@@ -135,6 +152,10 @@ def test_tenant_lookup_indexes_exist_for_expected_access_patterns() -> None:
         PARSE_LOG_TAB: {
             "ix_parse_log_tenant_id_created_at",
             "ix_parse_log_tenant_id_success",
+        },
+        PROCESSED_MESSAGES_TAB: {
+            "ix_processed_messages_tenant_id_received_at",
+            "ix_processed_messages_tenant_id_resulting_order_id",
         },
     }
 

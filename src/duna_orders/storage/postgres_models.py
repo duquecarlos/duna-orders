@@ -15,6 +15,7 @@ from duna_orders.storage.schema import (
     PARSE_LOG_TAB,
     PRODUCTS_TAB,
     STOCK_MOVEMENTS_TAB,
+    PROCESSED_MESSAGES_TAB,
 )
 
 
@@ -222,4 +223,23 @@ class ParseLogRow(Base):
     __table_args__ = (
         Index("ix_parse_log_tenant_id_created_at", "tenant_id", "created_at"),
         Index("ix_parse_log_tenant_id_success", "tenant_id", "success"),
+    )
+
+class ProcessedMessageRow(Base):
+    __tablename__ = PROCESSED_MESSAGES_TAB
+
+    message_sid: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(TENANT_ID_LENGTH), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+    from_number: Mapped[str | None] = mapped_column(String(PHONE_LENGTH))
+    body_preview: Mapped[str | None] = mapped_column(Text)
+    resulting_order_id: Mapped[str | None] = mapped_column(String(ID_LENGTH))
+
+    __table_args__ = (
+        Index("ix_processed_messages_tenant_id_received_at", "tenant_id", "received_at"),
+        Index("ix_processed_messages_tenant_id_resulting_order_id", "tenant_id", "resulting_order_id"),
     )

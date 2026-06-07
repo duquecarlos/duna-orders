@@ -1,4 +1,48 @@
 # Changelog
+## M8.1.1 - Twilio signature hardening and inbound idempotency
+
+Closed.
+
+### Delivered
+
+* Hardened Twilio signature validation to require the configured public webhook URL.
+* Removed fallback validation against reconstructed `request.url`.
+* Kept validation fail-closed when `TWILIO_WEBHOOK_PUBLIC_URL` is missing.
+* Confirmed full parsed Twilio POST form params are passed into Twilio `RequestValidator`.
+* Confirmed `From` and `Body` extraction is separate from signature validation input.
+* Confirmed webhook package uses `src/duna_orders/web/__init__.py`.
+* Added Postgres-only `processed_messages` table for inbound Twilio idempotency.
+* Added Alembic migration `9c7e1f4a2b30`.
+* Added `PostgresProcessedMessageStore`.
+* Added insert-first duplicate detection on `MessageSid`.
+* Duplicate `MessageSid` requests return `200` without parsing or creating another draft.
+* Empty-body signed requests are recorded by `MessageSid` and deduped on retry.
+* Successful draft creation links `processed_messages.resulting_order_id`.
+
+### Verification
+
+* `pytest tests/test_web_twilio_webhook.py -q` -> 11 passed.
+* `pytest tests/test_processed_messages.py -q` -> 4 passed.
+* `pytest tests/test_web_twilio_webhook.py tests/test_processed_messages.py -q` -> 15 passed.
+* `pytest tests/test_processed_messages.py tests/test_postgres_models.py tests/test_alembic_scaffold.py -q` -> 18 passed.
+* `ruff check` on touched web/storage/test files -> All checks passed.
+* `git diff --check` -> clean.
+* Fresh SQLite migration check:
+
+  * `alembic upgrade head` -> reached `9c7e1f4a2b30`;
+  * `alembic downgrade aec69eff0019` -> passed;
+  * `alembic upgrade head` -> passed again.
+
+### Explicitly not included
+
+* No outbound WhatsApp replies.
+* No TwiML reply body.
+* No conversation state machine.
+* No auto-confirmation.
+* No queue or async worker.
+* No new parser or LLM path.
+* No `StorageInterface` changes.
+
 ## M8.1 - FastAPI Twilio inbound webhook skeleton
 
 Closed.

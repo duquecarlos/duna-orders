@@ -4,7 +4,7 @@ ORDERS_TAB = "orders"
 ORDER_ITEMS_TAB = "order_items"
 STOCK_MOVEMENTS_TAB = "stock_movements"
 PARSE_LOG_TAB = "parse_log"
-
+PROCESSED_MESSAGES_TAB = "processed_messages"
 
 ORDER_STATUSES = (
     "draft",
