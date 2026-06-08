@@ -3,6 +3,12 @@
 
 ### Manual Verification
 
+* M8.2.1C manual operator review UI smoke passed with no code changes at baseline `6d7673c`.
+* Verified memory and Sheets backends show the Postgres-only unavailable state for inbound draft review.
+* Verified Postgres tenant `el-fogon-colombiano` displayed linked draft `ord_01ktjxxdpesn3tc5by46hhz5v1` with raw inbound message, parsed items/modifiers, and COP total `$85.000`.
+* Verified approving the draft moved `draft -> approved`, appended lifecycle transition source `operator`, removed the draft from the review list, and did not set `confirmed_at`, create stock movements, mutate product stock, or trigger outbound behavior.
+* Reject smoke was not run because no second linked draft remained; no smoke data was created without approval.
+
 * Manual inbound WhatsApp smoke passed on throwaway Neon branch `smoke-inbound-2026-06-07`.
 * Verified happy-path draft order creation, duplicate `MessageSid` idempotency, and missing/tampered Twilio signature rejection.
 * Final smoke counts were `orders_total=1501`, `processed_messages_total=2`, `order_status_transitions_total=1`, and `parse_log_total=2`.

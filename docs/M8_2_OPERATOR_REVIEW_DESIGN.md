@@ -251,3 +251,33 @@ Will not touch:
 - Queue/worker.
 - Reject reasons.
 - Dashboard redesign.
+
+## 8. M8.2.1C Manual UI Smoke Closeout
+
+Manual operator review UI smoke passed with no code changes at baseline:
+
+```text
+6d7673c feat(ui): add inbound draft review page
+fa9ba14 feat(orders): add inbound draft review listing service
+7c5600b feat(orders): add inbound draft review contract
+```
+
+Smoke used Postgres with tenant `el-fogon-colombiano` and active demo business
+`El Fogón Colombiano`. The local `.env` default remained
+`DUNA_STORAGE_BACKEND=memory`, with `DATABASE_URL` configured,
+`WEBHOOK_TENANT_ID=el-fogon-colombiano`, and `DASHBOARD_TARGET=demo`.
+
+Verified:
+
+- memory and Sheets backends showed the Postgres-only unavailable state;
+- headless Streamlit served the inbound review page with HTTP 200;
+- linked draft `ord_01ktjxxdpesn3tc5by46hhz5v1` from message
+  `SM4e676d966f0a822e15fc068dcfc71e8c` rendered raw inbound text beside parsed
+  items, modifiers, fulfillment/payment details, and total `$85.000`;
+- approve moved the order `draft -> approved`, appended lifecycle source
+  `operator`, and removed the order from the review list;
+- `confirmed_at` stayed unset, product stock was unchanged, no order stock
+  movements were created, and no outbound behavior occurred.
+
+Reject smoke was not run because no second linked draft remained. No smoke data
+was created without approval.
