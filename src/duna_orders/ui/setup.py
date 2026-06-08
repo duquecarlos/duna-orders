@@ -8,12 +8,14 @@ from duna_orders.demo_catalog import DemoCatalogFile, load_demo_catalog
 from duna_orders.demo_messages import DemoMessagesFile, load_demo_messages
 from duna_orders.parsing.base import ParserInterface
 from duna_orders.services.orders import OrderService
+from duna_orders.services.inbound_draft_review import InboundDraftReviewService
 from duna_orders.services.parsing import ParsingService
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.storage.sheets import GoogleSheetsStorage
 from duna_orders.storage.order_lifecycle import PostgresOrderLifecycleStore
 from duna_orders.storage.postgres import PostgresStorage
+from duna_orders.storage.processed_messages import PostgresProcessedMessageStore
 
 
 def get_storage() -> StorageInterface:
@@ -27,6 +29,20 @@ def get_order_service(storage: StorageInterface) -> OrderService:
         )
 
     return OrderService(storage)
+
+
+def get_inbound_draft_review_service(
+    storage: StorageInterface,
+) -> InboundDraftReviewService | None:
+    if not isinstance(storage, PostgresStorage):
+        return None
+
+    return InboundDraftReviewService(
+        storage=storage,
+        processed_message_store=PostgresProcessedMessageStore(storage._session_factory),
+    )
+
+
 def _build_anthropic_parser() -> ParserInterface:
     from duna_orders.parsing.anthropic_parser import AnthropicParser
 
