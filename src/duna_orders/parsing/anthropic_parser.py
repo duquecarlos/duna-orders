@@ -2,7 +2,6 @@ import json
 import time
 
 from typing import Any
-from altair import value
 from anthropic import Anthropic
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 

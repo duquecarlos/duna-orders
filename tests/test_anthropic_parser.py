@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-from duna_orders.parsing.anthropic_parser import AnthropicParser, _normalize_parser_payload
+from duna_orders.parsing.anthropic_parser import _normalize_parser_payload
 
 def test_normalize_parser_payload_lowercases_known_payment_method() -> None:
     parsed = {

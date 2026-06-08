@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
-
 from duna_orders.demo_catalog import DemoCatalogFile, load_demo_catalog
 from duna_orders.domain.models import DraftItemRequest, DraftOrderRequest, ParseResult
 from duna_orders.ui import parser_review

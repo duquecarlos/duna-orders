@@ -16,7 +16,6 @@ from duna_orders.storage.schema import (
     TABS,
 )
 from tests._fakes import make_fake_google_sheets_storage
-from tests.conftest import DEFAULT_TEST_TENANT_ID
 from tests.test_storage_contract import (
     make_customer,
     make_order,
