@@ -99,6 +99,24 @@ class PostgresProcessedMessageStore:
 
             return _message_from_row(row)
 
+    def list_messages_with_resulting_order(
+        self,
+        *,
+        tenant_id: str,
+    ) -> list[ProcessedMessage]:
+        with session_scope(self._session_factory) as session:
+            rows = session.scalars(
+                select(ProcessedMessageRow)
+                .where(ProcessedMessageRow.tenant_id == tenant_id)
+                .where(ProcessedMessageRow.resulting_order_id.is_not(None))
+                .order_by(
+                    ProcessedMessageRow.received_at.desc(),
+                    ProcessedMessageRow.message_sid,
+                )
+            ).all()
+
+            return [_message_from_row(row) for row in rows]
+
 
 def _message_from_row(row: ProcessedMessageRow) -> ProcessedMessage:
     return ProcessedMessage(
