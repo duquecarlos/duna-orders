@@ -1,4 +1,23 @@
 # Changelog
+## Unreleased
+
+### Manual Verification
+
+* Manual inbound WhatsApp smoke passed on throwaway Neon branch `smoke-inbound-2026-06-07`.
+* Verified happy-path draft order creation, duplicate `MessageSid` idempotency, and missing/tampered Twilio signature rejection.
+* Final smoke counts were `orders_total=1501`, `processed_messages_total=2`, `order_status_transitions_total=1`, and `parse_log_total=2`.
+* Created order `ord_01ktjxxdpesn3tc5by46hhz5v1` for tenant `el-fogon-colombiano` with status `draft`, pickup fulfillment, Nequi payment, and total `85000`.
+* Verified `processed_messages` captured full `raw_body` and `resulting_order_id` for the successful message.
+* Verified `parse_log` captured successful Claude output.
+* The throwaway Neon branch was not manually deleted during the session and was left to auto-delete in 7 days.
+
+### Explicitly not included
+
+* No production or keeper Neon branch smoke was run.
+* No outbound WhatsApp replies were added.
+* No conversation state was added.
+* No auto-confirmation was added.
+
 ## M8.1.4 - Deployment smoke local + tunnel for inbound webhook
 
 Closed.
