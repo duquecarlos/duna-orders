@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from duna_orders.domain.models import utc_now
@@ -74,11 +75,37 @@ class PostgresProcessedMessageStore:
             if row is None:
                 return None
 
-            return ProcessedMessage(
-                message_sid=row.message_sid,
-                tenant_id=row.tenant_id,
-                received_at=row.received_at,
-                from_number=row.from_number,
-                raw_body=row.raw_body,
-                resulting_order_id=row.resulting_order_id,
+            return _message_from_row(row)
+
+    def get_message_for_order(
+        self,
+        *,
+        order_id: str,
+        tenant_id: str,
+    ) -> ProcessedMessage | None:
+        with session_scope(self._session_factory) as session:
+            row = session.scalar(
+                select(ProcessedMessageRow)
+                .where(ProcessedMessageRow.tenant_id == tenant_id)
+                .where(ProcessedMessageRow.resulting_order_id == order_id)
+                .order_by(
+                    ProcessedMessageRow.received_at.desc(),
+                    ProcessedMessageRow.message_sid,
+                )
             )
+
+            if row is None:
+                return None
+
+            return _message_from_row(row)
+
+
+def _message_from_row(row: ProcessedMessageRow) -> ProcessedMessage:
+    return ProcessedMessage(
+        message_sid=row.message_sid,
+        tenant_id=row.tenant_id,
+        received_at=row.received_at,
+        from_number=row.from_number,
+        raw_body=row.raw_body,
+        resulting_order_id=row.resulting_order_id,
+    )

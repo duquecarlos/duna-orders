@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 OrderStatus = Literal[
     "draft",
+    "approved",
     "confirmed",
     "in_preparation",
     "ready",

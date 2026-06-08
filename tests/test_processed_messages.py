@@ -69,6 +69,71 @@ def test_mark_order_created_links_resulting_order_id(tmp_path: Path) -> None:
     assert record.resulting_order_id == "ord_test"
 
 
+def test_get_message_for_order_uses_resulting_order_id_link(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+
+    store.try_record_message(
+        message_sid="SM_OTHER",
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        raw_body="Older unrelated message",
+    )
+    store.try_record_message(
+        message_sid="SM_TARGET",
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        from_number="whatsapp:+573001112233",
+        raw_body="Buenas, dos bandejas paisas sin aguacate",
+    )
+    store.mark_order_created(message_sid="SM_TARGET", order_id="ord_target")
+
+    record = store.get_message_for_order(
+        order_id="ord_target",
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert record is not None
+    assert record.message_sid == "SM_TARGET"
+    assert record.raw_body == "Buenas, dos bandejas paisas sin aguacate"
+    assert record.from_number == "whatsapp:+573001112233"
+    assert record.resulting_order_id == "ord_target"
+
+
+def test_get_message_for_order_respects_tenant_scope(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+
+    store.try_record_message(
+        message_sid="SM_TARGET",
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        raw_body="Buenas, una limonada",
+    )
+    store.mark_order_created(message_sid="SM_TARGET", order_id="ord_target")
+
+    record = store.get_message_for_order(
+        order_id="ord_target",
+        tenant_id="tenant_other",
+    )
+
+    assert record is None
+
+
+def test_get_message_for_order_does_not_guess_without_resulting_order_id(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+
+    store.try_record_message(
+        message_sid="SM_UNLINKED",
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        raw_body="Potentially similar raw message",
+    )
+
+    record = store.get_message_for_order(
+        order_id="ord_unlinked",
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert record is None
+
+
 def test_raw_body_preserves_full_untrimmed_message(tmp_path: Path) -> None:
     store = _store(tmp_path)
     raw_body = f"  {'x' * 600}  "

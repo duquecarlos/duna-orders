@@ -8,6 +8,7 @@ from duna_orders.domain.models import Order
 
 ACTIVE_ORDER_STATUSES = {
     "draft",
+    "approved",
     "confirmed",
     "in_preparation",
     "ready",

@@ -1,6 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 import logging
+from typing import Literal
 from duna_orders.domain.models import (
     Customer,
     DraftOrderRequest,
@@ -25,6 +26,7 @@ from duna_orders.services.exceptions import (
 from duna_orders.storage.base import StorageInterface
 
 BASE_STATUS_TRANSITIONS = {
+    "draft": ("approved", "cancelled"),
     "confirmed": ("in_preparation", "cancelled"),
     "in_preparation": ("ready", "cancelled"),
 }
@@ -271,6 +273,61 @@ class OrderService:
             "confirmed",
             confirmed_at=confirmed_at,
         )
+
+    def review_inbound_draft(
+        self,
+        *,
+        order_id: str,
+        tenant_id: str,
+        decision: Literal["approve", "reject"],
+        reviewed_at: datetime | None = None,
+    ) -> Order:
+        status_by_decision = {
+            "approve": "approved",
+            "reject": "cancelled",
+        }
+
+        if decision not in status_by_decision:
+            raise ValueError(f"Invalid inbound draft review decision: {decision}")
+
+        order = self._storage.get_order(order_id)
+
+        if order is None or order.tenant_id != tenant_id:
+            raise OrderNotFoundError(order_id)
+
+        new_status = status_by_decision[decision]
+        allowed_statuses = get_allowed_next_statuses(order)
+
+        if new_status not in allowed_statuses:
+            raise InvalidOrderTransitionError(
+                order_id=order_id,
+                current_status=order.status,
+                new_status=new_status,
+            )
+
+        occurred_at = reviewed_at or utc_now()
+        if self._lifecycle_store is not None:
+            return self._lifecycle_store.update_order_status_with_transition(
+                order_id=order_id,
+                status=new_status,
+                status_updated_at=occurred_at,
+                transition=OrderStatusTransition(
+                    transition_id=new_id("ost"),
+                    tenant_id=order.tenant_id,
+                    order_id=order.order_id,
+                    from_status=order.status,
+                    to_status=new_status,
+                    occurred_at=occurred_at,
+                    source="operator",
+                ),
+            )
+
+        return self._storage.update_order_status(
+            order_id,
+            new_status,
+            status_updated_at=occurred_at,
+        )
+
     def transition_order_status(
         self,
         order_id: str,

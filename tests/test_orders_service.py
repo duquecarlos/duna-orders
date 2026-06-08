@@ -9,6 +9,7 @@ from duna_orders.domain.models import (
     DraftOrderRequest,
     Order,
     OrderItem,
+    OrderStatus,
     OrderStatusTransition,
     Product,
     StockMovement,
@@ -130,6 +131,13 @@ def seed_storage(
         storage.create_order(make_order())
 
     return storage
+
+
+def test_approved_is_valid_order_status() -> None:
+    status: OrderStatus = "approved"
+    order = make_order(status=status)
+
+    assert order.status == "approved"
 
 
 def test_create_draft_happy_path():
@@ -749,6 +757,8 @@ class GuardedInMemoryStorage(InMemoryStorage):
     def __init__(self) -> None:
         super().__init__()
         self.direct_status_updates = 0
+        self.stock_movements_appended = 0
+        self.products_upserted = 0
 
     def update_order_status(
         self,
@@ -764,6 +774,14 @@ class GuardedInMemoryStorage(InMemoryStorage):
             confirmed_at=confirmed_at,
             status_updated_at=status_updated_at,
         )
+
+    def append_stock_movement(self, movement: StockMovement) -> StockMovement:
+        self.stock_movements_appended += 1
+        return super().append_stock_movement(movement)
+
+    def upsert_product(self, product: Product) -> Product:
+        self.products_upserted += 1
+        return super().upsert_product(product)
 
 
 class GuardrailLifecycleStore(FakeLifecycleStore):
@@ -812,6 +830,154 @@ def test_create_draft_with_lifecycle_store_writes_initial_transition() -> None:
     assert transitions[0].occurred_at == order.created_at
     assert transitions[0].source == "system"
     assert transitions[0].tenant_id == DEFAULT_TEST_TENANT_ID
+
+
+def test_review_inbound_draft_approve_moves_draft_to_approved() -> None:
+    storage = seed_storage()
+    service = OrderService(storage)
+    reviewed_at = datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc)
+
+    order = service.review_inbound_draft(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        decision="approve",
+        reviewed_at=reviewed_at,
+    )
+
+    assert order.status == "approved"
+    assert order.status_updated_at == reviewed_at
+
+
+def test_review_inbound_draft_reject_moves_draft_to_cancelled() -> None:
+    storage = seed_storage()
+    service = OrderService(storage)
+    reviewed_at = datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc)
+
+    order = service.review_inbound_draft(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        decision="reject",
+        reviewed_at=reviewed_at,
+    )
+
+    assert order.status == "cancelled"
+    assert order.status_updated_at == reviewed_at
+
+
+def test_review_inbound_draft_approve_with_lifecycle_store_appends_transition() -> None:
+    storage = seed_storage()
+    lifecycle_store = FakeLifecycleStore(storage)
+    service = OrderService(storage, lifecycle_store=lifecycle_store)
+    reviewed_at = datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc)
+
+    order = service.review_inbound_draft(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        decision="approve",
+        reviewed_at=reviewed_at,
+    )
+
+    transitions = lifecycle_store.list_order_status_transitions(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert order.status == "approved"
+    assert len(transitions) == 1
+    assert transitions[0].from_status == "draft"
+    assert transitions[0].to_status == "approved"
+    assert transitions[0].occurred_at == reviewed_at
+    assert transitions[0].source == "operator"
+
+
+def test_review_inbound_draft_reject_with_lifecycle_store_appends_transition() -> None:
+    storage = seed_storage()
+    lifecycle_store = FakeLifecycleStore(storage)
+    service = OrderService(storage, lifecycle_store=lifecycle_store)
+    reviewed_at = datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc)
+
+    order = service.review_inbound_draft(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        decision="reject",
+        reviewed_at=reviewed_at,
+    )
+
+    transitions = lifecycle_store.list_order_status_transitions(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert order.status == "cancelled"
+    assert len(transitions) == 1
+    assert transitions[0].from_status == "draft"
+    assert transitions[0].to_status == "cancelled"
+    assert transitions[0].occurred_at == reviewed_at
+    assert transitions[0].source == "operator"
+
+
+def test_review_inbound_draft_refuses_stale_non_draft_order() -> None:
+    storage = InMemoryStorage()
+    storage.create_order(make_order(status="confirmed"))
+    service = OrderService(storage)
+
+    with pytest.raises(InvalidOrderTransitionError) as exc_info:
+        service.review_inbound_draft(
+            order_id=ORDER_ID,
+            tenant_id=DEFAULT_TEST_TENANT_ID,
+            decision="approve",
+        )
+
+    assert exc_info.value.current_status == "confirmed"
+    assert exc_info.value.new_status == "approved"
+
+
+def test_review_inbound_draft_refuses_tenant_mismatch() -> None:
+    storage = seed_storage(order=make_order(tenant_id="tenant_other"))
+    service = OrderService(storage)
+
+    with pytest.raises(OrderNotFoundError):
+        service.review_inbound_draft(
+            order_id=ORDER_ID,
+            tenant_id=DEFAULT_TEST_TENANT_ID,
+            decision="approve",
+        )
+
+
+def test_review_inbound_draft_rejects_invalid_decision() -> None:
+    storage = seed_storage()
+    service = OrderService(storage)
+
+    with pytest.raises(ValueError, match="Invalid inbound draft review decision"):
+        service.review_inbound_draft(
+            order_id=ORDER_ID,
+            tenant_id=DEFAULT_TEST_TENANT_ID,
+            decision="defer",
+        )
+
+
+def test_review_inbound_draft_approval_does_not_touch_stock_or_products() -> None:
+    storage = GuardedInMemoryStorage()
+    storage.upsert_product(make_product(current_stock=Decimal("10")))
+    storage.products_upserted = 0
+    storage.create_order(make_order())
+    lifecycle_store = GuardrailLifecycleStore(storage)
+    service = OrderService(storage, lifecycle_store=lifecycle_store)
+
+    order = service.review_inbound_draft(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        decision="approve",
+    )
+
+    product = storage.get_product(PRODUCT_ID)
+
+    assert order.status == "approved"
+    assert storage.stock_movements_appended == 0
+    assert storage.products_upserted == 0
+    assert product is not None
+    assert product.current_stock == Decimal("10")
+    assert lifecycle_store.status_updates == ["approved"]
 
 
 def test_confirm_order_with_lifecycle_store_appends_transition() -> None:
@@ -925,5 +1091,25 @@ def test_lifecycle_store_injection_avoids_direct_storage_status_updates() -> Non
     assert [transition.to_status for transition in lifecycle_store.transitions] == [
         "confirmed",
         "in_preparation",
+    ]
+    assert storage.direct_status_updates == 0
+
+
+def test_review_inbound_draft_lifecycle_store_injection_avoids_direct_storage_status_updates() -> None:
+    storage = GuardedInMemoryStorage()
+    storage.create_order(make_order(status="draft", fulfillment_type="delivery"))
+    lifecycle_store = GuardrailLifecycleStore(storage)
+    service = OrderService(storage, lifecycle_store=lifecycle_store)
+
+    approved_order = service.review_inbound_draft(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        decision="approve",
+    )
+
+    assert approved_order.status == "approved"
+    assert lifecycle_store.status_updates == ["approved"]
+    assert [transition.to_status for transition in lifecycle_store.transitions] == [
+        "approved",
     ]
     assert storage.direct_status_updates == 0
