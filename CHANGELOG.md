@@ -3,6 +3,11 @@
 
 ### Manual Verification
 
+* M8.3.1C manual operator-confirmation smoke passed at baseline `3c37926` using a process-level `DUNA_STORAGE_BACKEND=postgres` override against Postgres tenant `el-fogon-colombiano`.
+* Confirmed linked approved inbound order `ord_01ktjxxdpesn3tc5by46hhz5v1` through the Streamlit inbound review UI harness after checking the inventory-commit gate.
+* Verified `approved -> confirmed`, `confirmed_at` set, lifecycle source `operator`, two sale stock movements, stock decrements from `38 -> 37` for `bebida-limonada-natural` and `20 -> 18` for `plato-bandeja-paisa`, and removal from approved/draft review lists.
+* Verified no outbound/customer message, payment behavior, inbound media, parser/reparse, dashboard behavior, stock reversal, or cancellation behavior occurred.
+
 * M8.2.1C manual operator review UI smoke passed with no code changes at baseline `6d7673c`.
 * Verified memory and Sheets backends show the Postgres-only unavailable state for inbound draft review.
 * Verified Postgres tenant `el-fogon-colombiano` displayed linked draft `ord_01ktjxxdpesn3tc5by46hhz5v1` with raw inbound message, parsed items/modifiers, and COP total `$85.000`.

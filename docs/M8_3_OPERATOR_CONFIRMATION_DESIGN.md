@@ -383,6 +383,38 @@ Manual smoke must verify:
 - no outbound occurs;
 - rollback on forced failure if testable.
 
+M8.3.1C smoke closeout:
+
+- manual operator-confirmation smoke passed at baseline `3c37926`;
+- `.env` default was `DUNA_STORAGE_BACKEND=memory`, with `DATABASE_URL`
+  configured, `WEBHOOK_TENANT_ID=el-fogon-colombiano`, and
+  `DASHBOARD_TARGET=demo`;
+- smoke used a process-level `DUNA_STORAGE_BACKEND=postgres` override and active
+  backend `PostgresStorage`;
+- selected linked inbound approved order
+  `ord_01ktjxxdpesn3tc5by46hhz5v1`, message
+  `SM4e676d966f0a822e15fc068dcfc71e8c`, total `85000.00`;
+- Streamlit rendered HTTP 200, showed Draft orders and Approved orders sections,
+  raw inbound text, selected order details, inventory warning, checkbox gate, and
+  initially disabled confirm button;
+- confirmation was executed through the Streamlit test harness UI path by
+  checking the inventory-commit checkbox and clicking Confirm inventory;
+- the UI path called `OrderService.confirm_approved_order(...)`, not
+  `confirm_order(...)`;
+- after confirmation, status was `confirmed`, `confirmed_at` was set, latest
+  lifecycle transition was `approved -> confirmed` with source `operator`, and
+  the order left both approved and draft review lists;
+- sale movements were created for `bebida-limonada-natural` (`-1`) and
+  `plato-bandeja-paisa` (`-2`), with no duplicate sale movement IDs;
+- product stock changed from `38 -> 37` for `bebida-limonada-natural` and
+  `20 -> 18` for `plato-bandeja-paisa`;
+- no outbound/customer message, payment behavior, inbound media/comprobante,
+  parser/reparse, dashboard behavior, stock reversal, or cancellation behavior
+  occurred;
+- verification passed: focused pytest `71 passed`, full pytest `334 passed, 23
+  deselected`, Ruff passed, page py_compile passed, `git diff --check` passed,
+  and final `git status --short` was clean.
+
 ## 13. Fail-Hard Behavior and Operator UX
 
 Failure classes that should be cleanly surfaced:
