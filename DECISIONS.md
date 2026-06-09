@@ -1,4 +1,37 @@
 # Architectural Decisions
+## M8.5 Stage 2B-2 - Unscoped broad-read naming starts with products/customers
+
+Decision:
+Use `unscoped_` as the standard naming convention for broad cross-tenant
+storage reads, and apply it first to product and customer list reads.
+
+Details:
+
+* `StorageInterface.list_products(...)` is renamed to
+  `unscoped_list_products(...)`.
+* `StorageInterface.list_customers(...)` is renamed to
+  `unscoped_list_customers(...)`.
+* `InMemoryStorage`, `PostgresStorage`, and `GoogleSheetsStorage` implement the
+  renamed methods with unchanged signatures, return types, filtering, ordering,
+  and behavior.
+* `TenantScopedReadService.list_products(...)` and
+  `TenantScopedReadService.list_customers(...)` remain stable scoped public
+  APIs and now delegate to the renamed unscoped storage methods.
+* No deprecated aliases are kept; in-repo callers are enumerable, and aliases
+  would weaken the visual danger signal for broad reads.
+* The Stage 2A architecture guard forbidden-name set includes both the old
+  product/customer names and the new `unscoped_` names.
+
+Deferred:
+
+* `get_order(...)` remains deferred because diagnostic and write-path
+  boundaries are not mature enough for that rename in this slice.
+* `list_orders(...)` remains deferred because of Sheets/cache/dashboard churn.
+* `list_stock_movements(...)` remains deferred because it is tied to
+  confirmation and stock movement action logic.
+* No write-path tenant scoping, parser behavior change, diagnostic behavior
+  change, or `StorageInterface` semantic change is included.
+
 ## M8.5 Stage 2A - Runtime read guard and diagnostic broad-read naming
 
 Decision:

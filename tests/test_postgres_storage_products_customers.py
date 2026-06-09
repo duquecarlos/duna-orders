@@ -66,10 +66,12 @@ def test_product_upsert_get_and_list_active_only(postgres_storage: PostgresStora
     postgres_storage.upsert_product(inactive_product)
 
     saved_product = postgres_storage.get_product("prd_active")
-    active_ids = {product.product_id for product in postgres_storage.list_products()}
+    active_ids = {
+        product.product_id for product in postgres_storage.unscoped_list_products()
+    }
     all_ids = {
         product.product_id
-        for product in postgres_storage.list_products(active_only=False)
+        for product in postgres_storage.unscoped_list_products(active_only=False)
     }
 
     assert saved_product is not None
@@ -104,7 +106,7 @@ def test_product_upsert_replaces_existing_product(postgres_storage: PostgresStor
     saved_product = postgres_storage.get_product("prd_replace")
     matching = [
         product
-        for product in postgres_storage.list_products(active_only=False)
+        for product in postgres_storage.unscoped_list_products(active_only=False)
         if product.product_id == "prd_replace"
     ]
 
@@ -121,7 +123,7 @@ def test_customer_create_get_and_list(postgres_storage: PostgresStorage):
     postgres_storage.create_customer(customer)
 
     saved_customer = postgres_storage.get_customer(customer.customer_id)
-    customers = postgres_storage.list_customers()
+    customers = postgres_storage.unscoped_list_customers()
 
     assert saved_customer is not None
     assert saved_customer.customer_name == "Cliente Test"

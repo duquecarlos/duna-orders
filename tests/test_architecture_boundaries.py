@@ -31,6 +31,8 @@ FORBIDDEN_BROAD_READS = frozenset(
         "list_orders",
         "list_products",
         "list_stock_movements",
+        "unscoped_list_customers",
+        "unscoped_list_products",
     }
 )
 

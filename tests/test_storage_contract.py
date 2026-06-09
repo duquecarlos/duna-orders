@@ -135,7 +135,7 @@ def make_parse_log_entry(
 def _matching_products(storage: StorageInterface, product_id: str) -> list[Product]:
     return [
         product
-        for product in storage.list_products(active_only=False)
+        for product in storage.unscoped_list_products(active_only=False)
         if product.product_id == product_id
     ]
 
@@ -180,12 +180,12 @@ def test_product_upsert_replaces_existing_row_and_list_active_only_default(
     matching = _matching_products(storage, product_id)
     active_ids = {
         product.product_id
-        for product in storage.list_products()
+        for product in storage.unscoped_list_products()
         if product.product_id.startswith(token)
     }
     all_ids = {
         product.product_id
-        for product in storage.list_products(active_only=False)
+        for product in storage.unscoped_list_products(active_only=False)
         if product.product_id.startswith(token)
     }
 

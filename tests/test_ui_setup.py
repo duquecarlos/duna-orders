@@ -164,7 +164,7 @@ def test_seed_inmemory_from_catalog_seeds_all_products() -> None:
 
     setup.seed_inmemory_from_catalog(storage, catalog)
 
-    assert len(storage.list_products(active_only=False)) == 52
+    assert len(storage.unscoped_list_products(active_only=False)) == 52
 
 def test_prepare_storage_catalog_seeds_inmemory_storage() -> None:
     storage = InMemoryStorage()
@@ -173,7 +173,7 @@ def test_prepare_storage_catalog_seeds_inmemory_storage() -> None:
     ready = setup.prepare_storage_catalog(storage, catalog)
 
     assert ready is True
-    assert len(storage.list_products(active_only=False)) == 52
+    assert len(storage.unscoped_list_products(active_only=False)) == 52
 
 
 def test_prepare_storage_catalog_returns_true_for_seeded_sheets_storage(monkeypatch) -> None:
@@ -183,7 +183,7 @@ def test_prepare_storage_catalog_returns_true_for_seeded_sheets_storage(monkeypa
         def __init__(self) -> None:
             self.upsert_calls = 0
 
-        def list_products(self, *, active_only: bool = True):
+        def unscoped_list_products(self, *, active_only: bool = True):
             return [catalog.products[0]]
 
         def upsert_product(self, product):
@@ -211,7 +211,7 @@ def test_prepare_storage_catalog_returns_false_for_unseeded_sheets_storage(monke
         def __init__(self) -> None:
             self.upsert_calls = 0
 
-        def list_products(self, *, active_only: bool = True):
+        def unscoped_list_products(self, *, active_only: bool = True):
             return []
 
         def upsert_product(self, product):

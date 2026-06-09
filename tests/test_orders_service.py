@@ -214,7 +214,7 @@ def test_create_draft_creates_customer_when_phone_is_new():
         )
     )
 
-    customers = storage.list_customers()
+    customers = storage.unscoped_list_customers()
 
     assert len(customers) == 1
     assert customers[0].customer_name == "Andrea"
@@ -244,7 +244,7 @@ def test_create_draft_reuses_existing_customer_by_phone_and_tenant():
         )
     )
 
-    customers = storage.list_customers()
+    customers = storage.unscoped_list_customers()
 
     assert len(customers) == 1
     assert order.customer_id == "cus_andrea"
@@ -264,7 +264,7 @@ def test_create_draft_keeps_anonymous_flow_when_phone_is_blank():
         )
     )
 
-    assert storage.list_customers() == []
+    assert storage.unscoped_list_customers() == []
     assert order.customer_id is None
     assert order.customer_name_snapshot == "Cliente sin telefono"
     assert order.customer_phone_snapshot is None

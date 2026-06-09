@@ -77,7 +77,7 @@ def prepare_storage_catalog(
         return True
 
     if isinstance(storage, GoogleSheetsStorage):
-        return bool(storage.list_products(active_only=False))
+        return bool(storage.unscoped_list_products(active_only=False))
 
     return True
 

@@ -1,6 +1,27 @@
 # Changelog
 ## Unreleased
 
+### M8.5 Stage 2B-2 - Unscoped broad-read naming
+
+Implemented.
+
+#### Delivered
+
+* Renamed broad storage product and customer list reads to
+  `unscoped_list_products(...)` and `unscoped_list_customers(...)`.
+* Kept `TenantScopedReadService.list_products(...)` and
+  `TenantScopedReadService.list_customers(...)` stable as scoped APIs.
+* Updated the Stage 2A architecture guard to forbid both old product/customer
+  broad-read names and the new `unscoped_` names.
+* Kept no deprecated aliases.
+
+#### Deferred
+
+* No `get_order(...)`, `list_orders(...)`, or `list_stock_movements(...)`
+  rename.
+* No write-path tenant scoping.
+* No parser or diagnostic behavior change.
+
 ### M8.5 Stage 2A - Runtime read guard and diagnostic naming
 
 Implemented.

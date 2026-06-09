@@ -58,7 +58,7 @@ class PostgresStorage(StorageInterface):
             confirmed_at=confirmed_at,
         )
 
-    def list_products(self, *, active_only: bool = True) -> list[Product]:
+    def unscoped_list_products(self, *, active_only: bool = True) -> list[Product]:
         with session_scope(self._session_factory) as session:
             statement = select(ProductRow).order_by(ProductRow.product_id)
 
@@ -89,7 +89,7 @@ class PostgresStorage(StorageInterface):
 
             return _product_from_row(row)
 
-    def list_customers(self) -> list[Customer]:
+    def unscoped_list_customers(self) -> list[Customer]:
         with session_scope(self._session_factory) as session:
             rows = session.scalars(
                 select(CustomerRow).order_by(CustomerRow.customer_id)

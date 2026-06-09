@@ -407,6 +407,19 @@ Inbound review may use `get_order_for_diagnostics(...)` as the named
 cross-tenant diagnostic exception so missing linked orders and tenant
 mismatches remain distinguishable.
 
+Stage 2B-2 boundary note:
+
+Broad cross-tenant storage reads use the `unscoped_` prefix when renamed. The
+first application is limited to `unscoped_list_products(...)` and
+`unscoped_list_customers(...)` on `StorageInterface` and its backends. The
+tenant-scoped service keeps `list_products(...)` and `list_customers(...)` as
+stable scoped APIs, delegating internally to the unscoped storage methods. No
+old-name aliases are kept. Guarded runtime modules must not call unscoped
+storage reads directly. `get_order(...)`, `list_orders(...)`, and
+`list_stock_movements(...)` remain deferred because diagnostics/write paths,
+Sheets/cache/dashboard churn, and confirmation/stock action logic need separate
+slices.
+
 ## 11. Stage-3 Trigger Condition
 
 Evolve `StorageInterface` only when all of these are true:

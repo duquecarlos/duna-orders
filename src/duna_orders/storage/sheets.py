@@ -550,7 +550,7 @@ class GoogleSheetsStorage(StorageInterface):
 
         return products
 
-    def list_products(self, *, active_only: bool = True) -> list[Product]:
+    def unscoped_list_products(self, *, active_only: bool = True) -> list[Product]:
         record_set = self._current_record_set() or self._new_record_set()
         return self._products_from_records(record_set, active_only=active_only)
 
@@ -596,7 +596,7 @@ class GoogleSheetsStorage(StorageInterface):
             for record in self._records(CUSTOMERS_TAB, record_set)
         ]
 
-    def list_customers(self) -> list[Customer]:
+    def unscoped_list_customers(self) -> list[Customer]:
         record_set = self._current_record_set() or self._new_record_set()
         return self._customers_from_records(record_set)
 

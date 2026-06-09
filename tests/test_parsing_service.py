@@ -53,7 +53,7 @@ def test_parsing_service_success_writes_parse_log():
 
     result = service.parse(tenant_id=DEFAULT_TEST_TENANT_ID,
                            raw_message="me regala 2 pollos", 
-                           products=storage.list_products())
+                           products=storage.unscoped_list_products())
 
     assert result == canned
     assert len(storage._parse_logs) == 1
@@ -77,7 +77,7 @@ def test_parsing_service_failure_writes_parse_log_and_reraises():
     with pytest.raises(ParserAPIError):
         service.parse(tenant_id=DEFAULT_TEST_TENANT_ID,
                       raw_message="hola",
-                      products=storage.list_products())
+                      products=storage.unscoped_list_products())
 
     assert len(storage._parse_logs) == 1
 
@@ -97,15 +97,15 @@ def test_parsing_service_does_not_modify_storage_beyond_parse_log():
     parser = MockParser()
     service = ParsingService(parser, storage)
 
-    products_before = storage.list_products()
+    products_before = storage.unscoped_list_products()
     orders_before = storage.list_orders()
     movements_before = storage.list_stock_movements()
 
     service.parse(tenant_id=DEFAULT_TEST_TENANT_ID,
                   raw_message="test message",
-                  products=storage.list_products())
+                  products=storage.unscoped_list_products())
 
-    assert storage.list_products() == products_before
+    assert storage.unscoped_list_products() == products_before
     assert storage.list_orders() == orders_before
     assert storage.list_stock_movements() == movements_before
     assert len(storage._parse_logs) == 1
@@ -117,7 +117,7 @@ def test_mock_parser_records_calls():
     parser = MockParser()
     service = ParsingService(parser, storage)
 
-    products = storage.list_products()
+    products = storage.unscoped_list_products()
 
     service.parse(
                 tenant_id=DEFAULT_TEST_TENANT_ID,
@@ -139,7 +139,7 @@ def test_parsing_service_passes_products_unchanged_to_parser():
     parser = MockParser()
     service = ParsingService(parser, storage)
 
-    products = storage.list_products()
+    products = storage.unscoped_list_products()
 
     service.parse(tenant_id=DEFAULT_TEST_TENANT_ID,
                   raw_message="anything",

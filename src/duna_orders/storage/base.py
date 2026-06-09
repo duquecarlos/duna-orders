@@ -11,7 +11,7 @@ from duna_orders.domain.models import (
 
 class StorageInterface(ABC):
     @abstractmethod
-    def list_products(self, *, active_only: bool = True) -> list[Product]:
+    def unscoped_list_products(self, *, active_only: bool = True) -> list[Product]:
         pass
 
     @abstractmethod
@@ -23,7 +23,7 @@ class StorageInterface(ABC):
         pass
 
     @abstractmethod
-    def list_customers(self) -> list[Customer]:
+    def unscoped_list_customers(self) -> list[Customer]:
         pass
 
     @abstractmethod

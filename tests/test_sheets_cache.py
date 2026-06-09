@@ -159,9 +159,9 @@ def test_create_customer_invalidates_customers_cache():
     storage = make_fake_google_sheets_storage(time_source=clock)
     customer = make_customer("cache_", customer_id="cache_cus_new")
 
-    storage.list_customers()
+    storage.unscoped_list_customers()
     storage.create_customer(customer)
-    customers = storage.list_customers()
+    customers = storage.unscoped_list_customers()
 
     assert [saved.customer_id for saved in customers] == [customer.customer_id]
     assert storage._spreadsheet.read_count(CUSTOMERS_TAB) == 2
@@ -229,9 +229,9 @@ def test_upsert_product_invalidates_products_cache():
         current_stock=Decimal("12"),
     )
 
-    storage.list_products(active_only=False)
+    storage.unscoped_list_products(active_only=False)
     storage.upsert_product(product)
-    products = storage.list_products(active_only=False)
+    products = storage.unscoped_list_products(active_only=False)
 
     assert [saved.product_id for saved in products] == [product.product_id]
     assert storage._spreadsheet.read_count(PRODUCTS_TAB) == 2

@@ -345,9 +345,18 @@ Stage 2A progress:
 * Marked `OrderService` action/write broad order reads as deferred write-path
   broad reads.
 
+Stage 2B-2 progress:
+
+* Established `unscoped_` as the broad cross-tenant storage-read naming
+  convention.
+* Applied it to product and customer broad list reads only:
+  `unscoped_list_products(...)` and `unscoped_list_customers(...)`.
+* Kept scoped service APIs stable and kept no old-name aliases.
+
 Deferred follow-ups:
 
-* Stage 2B broad-read renaming/quarantine.
+* Stage 2B follow-on renames for `get_order(...)`, `list_orders(...)`, and
+  `list_stock_movements(...)` when their boundaries are ready.
 * Stage 3 `StorageInterface` evolution after the scoped contract is stable and callers are migrated.
 * Tenant ID request-context/runtime resolution design.
 

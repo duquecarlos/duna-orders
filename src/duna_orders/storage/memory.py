@@ -18,7 +18,7 @@ class InMemoryStorage(StorageInterface):
         self._orders: dict[str, Order] = {}
         self._stock_movements: list[StockMovement] = []
         self._parse_logs: list[ParseLogEntry] = []
-    def list_products(self, *, active_only: bool = True) -> list[Product]:
+    def unscoped_list_products(self, *, active_only: bool = True) -> list[Product]:
         products = list(self._products.values())
 
         if active_only:
@@ -35,7 +35,7 @@ class InMemoryStorage(StorageInterface):
         self._products[product.product_id] = persisted
         return persisted.model_copy(deep=True)
 
-    def list_customers(self) -> list[Customer]:
+    def unscoped_list_customers(self) -> list[Customer]:
         return [customer.model_copy(deep=True) for customer in self._customers.values()]
 
     def get_customer(self, customer_id: str) -> Customer | None:
@@ -184,4 +184,4 @@ class InMemoryStorage(StorageInterface):
         persisted = entry.model_copy(deep=True)
         self._parse_logs.append(persisted)
 
-        return persisted.model_copy(deep=True) 
+        return persisted.model_copy(deep=True)

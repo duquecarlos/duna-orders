@@ -55,7 +55,7 @@ def main() -> None:
 
     parser = AnthropicParser()
     service = ParsingService(parser, storage)
-    products = storage.list_products()
+    products = storage.unscoped_list_products()
 
     for i, message in enumerate(MESSAGES, 1):
         print(f"\n--- Message {i} ---")

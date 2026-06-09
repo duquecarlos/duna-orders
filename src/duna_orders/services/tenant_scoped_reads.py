@@ -47,7 +47,7 @@ class TenantScopedReadService:
         scoped_tenant_id = _require_tenant_id(tenant_id)
         return [
             product
-            for product in self._storage.list_products(active_only=active_only)
+            for product in self._storage.unscoped_list_products(active_only=active_only)
             if product.tenant_id == scoped_tenant_id
         ]
 
@@ -59,7 +59,7 @@ class TenantScopedReadService:
         scoped_tenant_id = _require_tenant_id(tenant_id)
         return [
             customer
-            for customer in self._storage.list_customers()
+            for customer in self._storage.unscoped_list_customers()
             if customer.tenant_id == scoped_tenant_id
         ]
 
