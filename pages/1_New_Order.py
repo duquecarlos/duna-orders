@@ -329,10 +329,14 @@ def _render_parsed_candidate(
 
 def _render_draft(
             order_id: str,
+            tenant_id: str,
             storage: StorageInterface,
             order_service: OrderService,
         ) -> None:
-    draft_order = storage.get_order(order_id)
+    draft_order = TenantScopedReadService(storage).get_order(
+        tenant_id=tenant_id,
+        order_id=order_id,
+    )
 
     if draft_order is None:
         st.error("Draft order not found.")
@@ -620,7 +624,12 @@ with sheets_request_context(storage):
 
     if st.session_state.draft_order_id:
         st.divider()
-        _render_draft(st.session_state.draft_order_id, storage, order_service)
+        _render_draft(
+            st.session_state.draft_order_id,
+            catalog.business.tenant_id,
+            storage,
+            order_service,
+        )
 
     st.divider()
     st.subheader("Inventario actual")
