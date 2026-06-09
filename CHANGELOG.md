@@ -1,6 +1,47 @@
 # Changelog
 ## Unreleased
 
+### M8.5C - Tenant-scoped read proof-of-use closeout
+
+Closed.
+
+#### Delivered
+
+* Implemented the Stage 1 proof-of-use from `docs/M8_5B_TENANT_SCOPED_READS_DESIGN.md`.
+* Added `TenantScopedReadService` as a thin read-only layer above the unchanged `StorageInterface`.
+* Required explicit keyword-only `tenant_id` with no default for `list_orders(...)`, `get_order(...)`, `list_products(...)`, and `list_customers(...)`.
+* Empty or whitespace `tenant_id` now raises `ValueError` at the scoped read boundary.
+* The scoped layer delegates to existing broad reads and filters internally by tenant.
+* Added no SQLAlchemy, Google Sheets, Streamlit, FastAPI, or backend-specific imports to the scoped read layer.
+* Migrated only `run_locked_dashboard_read_scenario(...)` as the proof-of-use caller.
+* Kept the dashboard scenario public signature and metric semantics unchanged.
+
+#### Tests
+
+* Added tenant-isolation coverage for orders, order detail tenant mismatch, products, and customers.
+* Added required-tenant coverage for blank, whitespace, and omitted `tenant_id`.
+* Proved memory and SQLite-backed Postgres parity for the scoped layer.
+* Covered `list_orders(...)` status/since filter preservation.
+* Covered `list_products(...)` `active_only` filter preservation.
+* Covered dashboard scenario exclusion of other-tenant rows.
+* Preserved single-tenant dashboard scenario behavior.
+
+#### Verification
+
+* `python -m compileall src tests pages` passed.
+* `pytest -q` -> 367 passed, 23 deselected.
+* `ruff check src tests pages` passed.
+
+#### Explicitly not included
+
+* No `StorageInterface` change.
+* No broad-read quarantine.
+* No Stage 2 guard tests.
+* No schema or migration changes.
+* No write-path tenant scoping.
+* No tenant ID request-context or runtime resolution design.
+* No dashboard redesign.
+
 ### M8.5A - Postgres storage parity and hardening closeout
 
 Closed.

@@ -1,4 +1,29 @@
 # Architectural Decisions
+## M8.5C - Tenant-scoped reads start above StorageInterface
+
+Decision:
+Start Stage 1 of tenant-scoped reads with a thin service-layer proof-of-use above the unchanged `StorageInterface`.
+
+Details:
+
+* `TenantScopedReadService` owns the first tenant-scoped read contract.
+* `tenant_id` is required, keyword-only, non-optional, and non-defaulted for `list_orders(...)`, `get_order(...)`, `list_products(...)`, and `list_customers(...)`.
+* Empty or whitespace `tenant_id` raises `ValueError`.
+* The service delegates to current broad `StorageInterface` reads and filters internally.
+* The scoped layer remains backend-agnostic and imports only the storage boundary and domain models.
+* `run_locked_dashboard_read_scenario(...)` is the only proof-of-use caller migrated in M8.5C.
+* Dashboard public signature, layout, and metric semantics remain unchanged.
+
+Deferred:
+
+* Stage 2 broad-read quarantine remains pending.
+* Stage 2 guard tests for direct page/dashboard/runtime broad-read use remain pending.
+* Stage 3 `StorageInterface` evolution remains the later destination after the scoped contract is stable and callers are migrated.
+* Tenant ID request-context/runtime resolution design remains out of scope.
+
+Why:
+The M8.5B design chose "E toward C": add a tenant-scoped read layer now, then evolve `StorageInterface` later when the contract is proven. M8.5C starts that path with one dashboard proof caller and structural tenant-isolation tests without a big-bang migration-boundary change.
+
 ## M8.5A - Postgres hardening stays narrow and fail-hard
 
 Decision:

@@ -315,6 +315,26 @@ Exit criteria:
 
 ## Recently closed
 
+### M8.5C - Tenant-scoped read proof-of-use
+
+Closed.
+
+Completed scope:
+
+* Added `TenantScopedReadService` as a thin read-only layer above the unchanged `StorageInterface`.
+* Required explicit keyword-only `tenant_id` for `list_orders(...)`, `get_order(...)`, `list_products(...)`, and `list_customers(...)`.
+* Delegated to existing broad reads and filtered internally without adding backend-specific imports.
+* Migrated only `run_locked_dashboard_read_scenario(...)` as the proof-of-use caller.
+* Kept dashboard public signature, layout, and metric semantics unchanged.
+* Added tenant-isolation, required-tenant, filter-preservation, memory/Postgres parity, and dashboard scenario tests.
+
+Deferred follow-ups:
+
+* Stage 2 broad-read quarantine.
+* Stage 2 guard tests for page/dashboard/runtime broad-read usage.
+* Stage 3 `StorageInterface` evolution after the scoped contract is stable and callers are migrated.
+* Tenant ID request-context/runtime resolution design.
+
 ### M8.5A - Postgres storage hardening
 
 Closed.
