@@ -199,6 +199,45 @@ def test_confirm_approved_order_duplicate_stock_movement_fails_hard(
     assert transitions == []
 
 
+def test_confirm_approved_order_duplicate_movement_flush_conflict_maps_and_rolls_back(
+    tmp_path: Path,
+) -> None:
+    session_factory = _session_factory(tmp_path)
+    storage = PostgresStorage(session_factory)
+    lifecycle_store = PostgresOrderLifecycleStore(session_factory)
+    storage.upsert_product(_product())
+    storage.create_order(_order())
+    service = OrderService(
+        storage,
+        atomic_confirmation_store=PostgresAtomicOrderConfirmationStore(
+            session_factory,
+            duplicate_sale_movement_during_flush_for_test=True,
+        ),
+    )
+
+    with pytest.raises(DuplicateStockMovementError):
+        service.confirm_approved_order(
+            order_id=ORDER_ID,
+            tenant_id=DEFAULT_TEST_TENANT_ID,
+        )
+
+    order = storage.get_order(ORDER_ID)
+    product = storage.get_product(PRODUCT_ID)
+    movements = storage.list_stock_movements(product_id=PRODUCT_ID)
+    transitions = lifecycle_store.list_order_status_transitions(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert order is not None
+    assert order.status == "approved"
+    assert order.confirmed_at is None
+    assert product is not None
+    assert product.current_stock == Decimal("10.000")
+    assert movements == []
+    assert transitions == []
+
+
 def test_confirm_order_postgres_duplicate_stock_movement_fails_hard(
     tmp_path: Path,
 ) -> None:

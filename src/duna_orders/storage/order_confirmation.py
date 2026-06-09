@@ -5,6 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from duna_orders.domain.models import Order, utc_now
@@ -30,9 +31,13 @@ class PostgresAtomicOrderConfirmationStore:
         session_factory: Callable[[], Session],
         *,
         fail_after_stock_movements_for_test: bool = False,
+        duplicate_sale_movement_during_flush_for_test: bool = False,
     ) -> None:
         self._session_factory = session_factory
         self._fail_after_stock_movements_for_test = fail_after_stock_movements_for_test
+        self._duplicate_sale_movement_during_flush_for_test = (
+            duplicate_sale_movement_during_flush_for_test
+        )
 
     def confirm_order_atomically(
         self,
@@ -80,20 +85,16 @@ class PostgresAtomicOrderConfirmationStore:
                 quantities_by_product_id=quantities_by_product_id,
             )
 
-            for product_id, quantity in quantities_by_product_id.items():
-                session.add(
-                    StockMovementRow(
-                        tenant_id=tenant_id,
-                        stock_movement_id=_sale_movement_id(order_id, product_id),
-                        created_at=confirmed_at,
-                        product_id=product_id,
-                        quantity_delta=-quantity,
-                        reason="sale",
-                        reference_id=order_id,
-                    )
-                )
-
-            session.flush()
+            _add_sale_stock_movements(
+                session,
+                tenant_id=tenant_id,
+                order_id=order_id,
+                confirmed_at=confirmed_at,
+                quantities_by_product_id=quantities_by_product_id,
+                duplicate_first_movement_for_test=(
+                    self._duplicate_sale_movement_during_flush_for_test
+                ),
+            )
 
             if self._fail_after_stock_movements_for_test:
                 raise RuntimeError("simulated atomic confirmation failure")
@@ -193,6 +194,54 @@ def _validate_stock(
                 requested=requested_quantity,
                 available=product_row.current_stock,
             )
+
+
+def _add_sale_stock_movements(
+    session: Session,
+    *,
+    tenant_id: str,
+    order_id: str,
+    confirmed_at: datetime,
+    quantities_by_product_id: dict[str, Decimal],
+    duplicate_first_movement_for_test: bool = False,
+) -> None:
+    first_stock_movement_id: str | None = None
+
+    for product_id, quantity in quantities_by_product_id.items():
+        stock_movement_id = _sale_movement_id(order_id, product_id)
+        first_stock_movement_id = first_stock_movement_id or stock_movement_id
+        session.add(
+            StockMovementRow(
+                tenant_id=tenant_id,
+                stock_movement_id=stock_movement_id,
+                created_at=confirmed_at,
+                product_id=product_id,
+                quantity_delta=-quantity,
+                reason="sale",
+                reference_id=order_id,
+            )
+        )
+
+        if duplicate_first_movement_for_test:
+            session.add(
+                StockMovementRow(
+                    tenant_id=tenant_id,
+                    stock_movement_id=stock_movement_id,
+                    created_at=confirmed_at,
+                    product_id=product_id,
+                    quantity_delta=-quantity,
+                    reason="sale",
+                    reference_id=order_id,
+                )
+            )
+            duplicate_first_movement_for_test = False
+
+    try:
+        session.flush()
+    except IntegrityError as error:
+        raise DuplicateStockMovementError(
+            first_stock_movement_id or _sale_movement_id(order_id, "unknown")
+        ) from error
 
 
 def _sale_movement_id(order_id: str, product_id: str) -> str:
