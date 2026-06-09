@@ -26,6 +26,7 @@ from duna_orders.services.customer_context import (
     format_new_order_customer_context,
     get_customer_context_by_phone,
 )
+from duna_orders.services.tenant_scoped_reads import TenantScopedReadService
 from duna_orders.ui.confirmation_message import generate_confirmation_message
 from duna_orders.services.exceptions import (
     EmptyDraftError,
@@ -116,6 +117,7 @@ def _cached_parse_message(
     parsing_service: ParsingService | None = st.session_state.parsing_service
     catalog: DemoCatalogFile = st.session_state.demo_catalog
     storage: StorageInterface = st.session_state.storage
+    scoped_reads = TenantScopedReadService(storage)
 
     if parsing_service is None:
         raise RuntimeError("Parser no disponible.")
@@ -123,7 +125,10 @@ def _cached_parse_message(
     return parsing_service.parse(
         tenant_id=catalog.business.tenant_id,
         raw_message=message_text,
-        products=storage.list_products(active_only=True),
+        products=scoped_reads.list_products(
+            tenant_id=catalog.business.tenant_id,
+            active_only=True,
+        ),
     )
 
 
@@ -429,6 +434,8 @@ storage: StorageInterface = st.session_state.storage
 order_service: OrderService = st.session_state.order_service
 parsing_service: ParsingService | None = st.session_state.parsing_service
 with sheets_request_context(storage):
+    scoped_reads = TenantScopedReadService(storage)
+
     if st.session_state.last_success_message:
         st.success(st.session_state.last_success_message)
 
@@ -436,7 +443,10 @@ with sheets_request_context(storage):
         st.subheader("Mensaje para WhatsApp")
         st.code(st.session_state.last_confirmation_message, language="text")
 
-    products = storage.list_products(active_only=True)
+    products = scoped_reads.list_products(
+        tenant_id=catalog.business.tenant_id,
+        active_only=True,
+    )
 
     st.subheader("Mensaje del cliente")
 
@@ -623,7 +633,10 @@ with sheets_request_context(storage):
             "Precio": _money(product.unit_price),
             "Stock mínimo": product.min_stock,
         }
-        for product in storage.list_products(active_only=False)
+        for product in scoped_reads.list_products(
+            tenant_id=catalog.business.tenant_id,
+            active_only=False,
+        )
     ]
 
     st.dataframe(inventory_rows, use_container_width=True, hide_index=True)
