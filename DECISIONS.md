@@ -1,4 +1,28 @@
 # Architectural Decisions
+## M8.5A - Postgres hardening stays narrow and fail-hard
+
+Decision:
+Keep Postgres atomic confirmation duplicate movement race handling fail-hard, and keep broad tenant-scoped storage reads deferred.
+
+Details:
+
+* Atomic confirmation remains a narrow Postgres capability, not a generic transaction abstraction.
+* Existing duplicate sale movement rows still fail before inserting more sale movements.
+* A SQLAlchemy `IntegrityError` during the sale movement insert/flush phase is mapped to `DuplicateStockMovementError`.
+* The mapping is intentionally limited to the sale movement flush phase; unrelated integrity errors from product, order, or lifecycle writes are not hidden by this mapping.
+* Duplicate movement conflicts roll back and do not decrement stock, update order status, set `confirmed_at`, append lifecycle transitions, or return success.
+* No duplicate confirmation idempotency, repair, or stock reconciliation behavior is added.
+* `mark_order_created(...)` remains keyed by globally unique provider `message_sid`; tenant scoping is enforced by read paths such as `get_message_for_order(...)`.
+
+Deferred:
+
+* Broad storage reads remain mostly ID/global-list oriented because that is the current `StorageInterface` shape.
+* Future multi-tenant runtime hardening may require tenant-scoped read services or `StorageInterface` evolution.
+* Tenant-scoped broad-read hardening should receive Claude review before implementation because it may affect storage contracts, runtime pages, dashboard reads, and tests.
+
+Why:
+M8.5A was a hardening slice for already-approved Postgres runtime paths. The safe change was to normalize a race-time duplicate movement conflict into the existing operator-facing duplicate movement path while preserving rollback semantics. Broader tenant-scoped read changes are architectural, not a local bug fix.
+
 ## M8.4 - Linked inbound review diagnostics are service-owned and aggregate-only
 
 Decision:

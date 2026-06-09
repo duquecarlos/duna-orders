@@ -315,6 +315,23 @@ Exit criteria:
 
 ## Recently closed
 
+### M8.5A - Postgres storage hardening
+
+Closed.
+
+Completed scope:
+
+* Inspected Postgres storage parity and hardening gaps for the inbound review and atomic confirmation runtime path.
+* Confirmed current `StorageInterface` parity for Postgres and kept Postgres-only processed-message, lifecycle, atomic-confirmation, and bulk/demo capabilities outside the interface.
+* Hardened duplicate sale movement flush conflicts so atomic confirmation maps them to `DuplicateStockMovementError` and rolls back.
+* Documented processed-message linking behavior with tests for message-SID-keyed `mark_order_created(...)` and tenant-scoped reads.
+
+Deferred follow-ups:
+
+* Broad tenant-scoped storage reads remain a future architecture issue.
+* Future multi-tenant hardening may need tenant-scoped read services or `StorageInterface` evolution.
+* Claude review is recommended before implementing tenant-scoped broad-read changes.
+
 ### M8.4 - Inbound review operator hardening
 
 Closed.

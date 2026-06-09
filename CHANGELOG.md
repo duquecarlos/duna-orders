@@ -1,6 +1,42 @@
 # Changelog
 ## Unreleased
 
+### M8.5A - Postgres storage parity and hardening closeout
+
+Closed.
+
+#### Delivered
+
+* Inspected Postgres storage parity now that inbound review, processed messages, atomic confirmation, lifecycle, and stock movement integrity depend on Postgres as the serious runtime path.
+* Confirmed Postgres implements the current `StorageInterface`.
+* Confirmed Postgres-only capabilities remain outside `StorageInterface`: processed messages, order lifecycle store, atomic approved confirmation, and demo/bulk helpers.
+* Confirmed runtime construction uses `DUNA_STORAGE_BACKEND=postgres` and cached per-URL session factories.
+* Kept atomic confirmation as a narrow Postgres capability instead of introducing a broad transaction abstraction.
+* Hardened atomic confirmation so a SQLAlchemy `IntegrityError` during sale stock movement insert/flush maps to `DuplicateStockMovementError`.
+* Kept the duplicate movement mapping narrow to the sale movement flush phase.
+* Confirmed duplicate movement conflicts still fail hard and roll back without stock decrement, status update, or lifecycle transition.
+* Added processed-message tests documenting that `mark_order_created(...)` is keyed by globally unique `message_sid`, missing message SIDs raise `ValueError`, and tenant scoping is enforced by read paths such as `get_message_for_order(...)`.
+
+#### Deferred
+
+* Broad storage reads remain mostly ID/global-list oriented by the current `StorageInterface`.
+* Future multi-tenant runtime hardening may need tenant-scoped read services or `StorageInterface` evolution.
+* Tenant-scoped broad-read hardening should go to Claude review before implementation.
+
+#### Architecture boundaries preserved
+
+* No `StorageInterface` broadening.
+* No schema or migration changes.
+* No lifecycle-rule changes.
+* No cancellation stock reversal.
+* No duplicate movement repair or idempotency.
+* No outbound/customer messaging.
+* No payment status enforcement.
+* No inbound media/comprobante handling.
+* No parser behavior changes or `PROMPT_VERSION` bump.
+* No dashboard redesign.
+* No broad transaction abstractions.
+
 ### M8.4 - Inbound review operator hardening closeout
 
 Closed.
