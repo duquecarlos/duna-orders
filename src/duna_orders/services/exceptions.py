@@ -11,6 +11,13 @@ class OrderNotFoundError(ServiceError):
         self.order_id = order_id
 
 
+class UnsupportedOrderConfirmationError(ServiceError):
+    def __init__(self) -> None:
+        super().__init__(
+            "Atomic approved-order confirmation is not supported by this backend"
+        )
+
+
 class InvalidOrderStateError(ServiceError):
     def __init__(self, order_id: str, status: str) -> None:
         super().__init__(

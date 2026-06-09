@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 import logging
-from typing import Literal
+from typing import Literal, Protocol
 from duna_orders.domain.models import (
     Customer,
     DraftOrderRequest,
@@ -22,8 +22,14 @@ from duna_orders.services.exceptions import (
     InvalidOrderTransitionError,
     OrderNotFoundError,
     ProductNotFoundError,
+    UnsupportedOrderConfirmationError,
 )
 from duna_orders.storage.base import StorageInterface
+from duna_orders.storage.exceptions import (
+    StorageInsufficientStockError,
+    StorageOrderStatusMismatchError,
+    StorageProductNotFoundError,
+)
 
 BASE_STATUS_TRANSITIONS = {
     "draft": ("approved", "cancelled"),
@@ -31,6 +37,12 @@ BASE_STATUS_TRANSITIONS = {
     "in_preparation": ("ready", "cancelled"),
 }
 logger = logging.getLogger(__name__)
+
+
+CONFIRMATION_STATUS_TRANSITIONS = {
+    "approved": ("confirmed",),
+}
+
 
 def get_allowed_next_statuses(order: Order) -> tuple[str, ...]:
     if order.status == "ready":
@@ -44,14 +56,34 @@ def get_allowed_next_statuses(order: Order) -> tuple[str, ...]:
 
     return BASE_STATUS_TRANSITIONS.get(order.status, ())
 
+
+def get_allowed_confirmation_statuses(order: Order) -> tuple[str, ...]:
+    return CONFIRMATION_STATUS_TRANSITIONS.get(order.status, ())
+
+class AtomicOrderConfirmationStore(Protocol):
+    def confirm_order_atomically(
+        self,
+        *,
+        order_id: str,
+        tenant_id: str,
+        expected_from_status: str,
+        transition_source: str,
+        transition_id: str,
+        confirmed_at: datetime,
+    ) -> Order:
+        ...
+
+
 class OrderService:
     def __init__(
         self,
         storage: StorageInterface,
         lifecycle_store: OrderLifecycleStore | None = None,
+        atomic_confirmation_store: AtomicOrderConfirmationStore | None = None,
     ) -> None:
         self._storage = storage
         self._lifecycle_store = lifecycle_store
+        self._atomic_confirmation_store = atomic_confirmation_store
     def create_draft(self, request: DraftOrderRequest) -> Order:
         positive_items = [item for item in request.items if item.quantity > 0]
 
@@ -327,6 +359,57 @@ class OrderService:
             new_status,
             status_updated_at=occurred_at,
         )
+
+    def confirm_approved_order(
+        self,
+        *,
+        order_id: str,
+        tenant_id: str,
+        confirmed_at: datetime | None = None,
+    ) -> Order:
+        if self._atomic_confirmation_store is None:
+            raise UnsupportedOrderConfirmationError()
+
+        order = self._storage.get_order(order_id)
+
+        if order is None or order.tenant_id != tenant_id:
+            raise OrderNotFoundError(order_id)
+
+        allowed_statuses = get_allowed_confirmation_statuses(order)
+
+        if "confirmed" not in allowed_statuses:
+            raise InvalidOrderTransitionError(
+                order_id=order_id,
+                current_status=order.status,
+                new_status="confirmed",
+            )
+
+        occurred_at = confirmed_at or utc_now()
+        try:
+            return self._atomic_confirmation_store.confirm_order_atomically(
+                order_id=order_id,
+                tenant_id=tenant_id,
+                expected_from_status="approved",
+                transition_source="operator",
+                transition_id=new_id("ost"),
+                confirmed_at=occurred_at,
+            )
+        except StorageOrderStatusMismatchError as exc:
+            raise InvalidOrderTransitionError(
+                order_id=exc.order_id,
+                current_status=exc.current_status,
+                new_status=exc.new_status,
+            ) from exc
+        except StorageProductNotFoundError as exc:
+            raise ProductNotFoundError(exc.product_id) from exc
+        except StorageInsufficientStockError as exc:
+            raise InsufficientStockError(
+                exc.product_id,
+                requested=exc.requested,
+                available=exc.available,
+            ) from exc
+        except KeyError as exc:
+            raise OrderNotFoundError(order_id) from exc
 
     def transition_order_status(
         self,

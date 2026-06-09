@@ -22,8 +22,13 @@ from duna_orders.services.exceptions import (
     InvalidOrderTransitionError,
     OrderNotFoundError,
     ProductNotFoundError,
+    UnsupportedOrderConfirmationError,
 )
-from duna_orders.services.orders import OrderService
+from duna_orders.services.orders import (
+    OrderService,
+    get_allowed_confirmation_statuses,
+    get_allowed_next_statuses,
+)
 from duna_orders.storage.memory import InMemoryStorage
 
 
@@ -1113,3 +1118,155 @@ def test_review_inbound_draft_lifecycle_store_injection_avoids_direct_storage_st
         "approved",
     ]
     assert storage.direct_status_updates == 0
+
+
+class FakeAtomicConfirmationStore:
+    def __init__(self, storage: InMemoryStorage) -> None:
+        self.storage = storage
+        self.calls: list[dict[str, object]] = []
+
+    def confirm_order_atomically(
+        self,
+        *,
+        order_id: str,
+        tenant_id: str,
+        expected_from_status: str,
+        transition_source: str,
+        transition_id: str,
+        confirmed_at: datetime,
+    ) -> Order:
+        self.calls.append(
+            {
+                "order_id": order_id,
+                "tenant_id": tenant_id,
+                "expected_from_status": expected_from_status,
+                "transition_source": transition_source,
+                "transition_id": transition_id,
+                "confirmed_at": confirmed_at,
+            }
+        )
+        return self.storage.update_order_status(
+            order_id,
+            "confirmed",
+            confirmed_at=confirmed_at,
+        )
+
+
+class ConfirmOrderForbiddenService(OrderService):
+    def confirm_order(
+        self,
+        order_id: str,
+        confirmed_at: datetime | None = None,
+    ) -> Order:
+        raise AssertionError("confirm_order must not be called")
+
+
+def test_confirm_approved_order_uses_atomic_store_and_confirms_order() -> None:
+    storage = seed_storage(order=make_order(status="approved"))
+    atomic_store = FakeAtomicConfirmationStore(storage)
+    service = OrderService(storage, atomic_confirmation_store=atomic_store)
+    confirmed_at = datetime(2026, 6, 9, 12, 0, tzinfo=timezone.utc)
+
+    order = service.confirm_approved_order(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        confirmed_at=confirmed_at,
+    )
+
+    assert order.status == "confirmed"
+    assert order.confirmed_at == confirmed_at
+    assert len(atomic_store.calls) == 1
+    assert atomic_store.calls[0]["expected_from_status"] == "approved"
+    assert atomic_store.calls[0]["transition_source"] == "operator"
+
+
+def test_confirm_approved_order_does_not_call_legacy_confirm_order() -> None:
+    storage = seed_storage(order=make_order(status="approved"))
+    atomic_store = FakeAtomicConfirmationStore(storage)
+    service = ConfirmOrderForbiddenService(
+        storage,
+        atomic_confirmation_store=atomic_store,
+    )
+
+    order = service.confirm_approved_order(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert order.status == "confirmed"
+    assert len(atomic_store.calls) == 1
+
+
+def test_confirm_approved_order_requires_atomic_capability() -> None:
+    storage = seed_storage(order=make_order(status="approved"))
+    service = OrderService(storage)
+
+    with pytest.raises(UnsupportedOrderConfirmationError):
+        service.confirm_approved_order(
+            order_id=ORDER_ID,
+            tenant_id=DEFAULT_TEST_TENANT_ID,
+        )
+
+
+@pytest.mark.parametrize("status", ["draft", "confirmed", "cancelled"])
+def test_confirm_approved_order_refuses_non_approved_status(status: str) -> None:
+    storage = seed_storage(order=make_order(status=status))
+    atomic_store = FakeAtomicConfirmationStore(storage)
+    service = OrderService(storage, atomic_confirmation_store=atomic_store)
+
+    with pytest.raises(InvalidOrderTransitionError) as exc_info:
+        service.confirm_approved_order(
+            order_id=ORDER_ID,
+            tenant_id=DEFAULT_TEST_TENANT_ID,
+        )
+
+    assert exc_info.value.current_status == status
+    assert exc_info.value.new_status == "confirmed"
+    assert atomic_store.calls == []
+
+
+def test_confirm_approved_order_refuses_tenant_mismatch() -> None:
+    storage = seed_storage(order=make_order(status="approved", tenant_id="tenant_other"))
+    atomic_store = FakeAtomicConfirmationStore(storage)
+    service = OrderService(storage, atomic_confirmation_store=atomic_store)
+
+    with pytest.raises(OrderNotFoundError):
+        service.confirm_approved_order(
+            order_id=ORDER_ID,
+            tenant_id=DEFAULT_TEST_TENANT_ID,
+        )
+
+    assert atomic_store.calls == []
+
+
+def test_approved_to_confirmed_is_not_generic_status_transition() -> None:
+    order = make_order(status="approved")
+
+    assert get_allowed_next_statuses(order) == ()
+    assert "in_preparation" not in get_allowed_next_statuses(order)
+
+
+def test_approved_to_confirmed_is_confirmation_transition() -> None:
+    order = make_order(status="approved")
+
+    assert get_allowed_confirmation_statuses(order) == ("confirmed",)
+
+
+def test_transition_order_status_rejects_approved_to_confirmed() -> None:
+    storage = InMemoryStorage()
+    storage.create_order(make_order(status="approved"))
+    service = OrderService(storage)
+
+    with pytest.raises(InvalidOrderTransitionError) as exc_info:
+        service.transition_order_status(
+            ORDER_ID,
+            DEFAULT_TEST_TENANT_ID,
+            "confirmed",
+        )
+
+    assert exc_info.value.current_status == "approved"
+    assert exc_info.value.new_status == "confirmed"
+    order = storage.get_order(ORDER_ID)
+    assert order is not None
+    assert order.status == "approved"
+    assert order.confirmed_at is None
