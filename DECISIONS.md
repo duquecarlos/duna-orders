@@ -1,8 +1,8 @@
 # Architectural Decisions
-## M8.5C - Tenant-scoped reads start above StorageInterface
+## M8.5C-F - Tenant-scoped reads start above StorageInterface
 
 Decision:
-Start Stage 1 of tenant-scoped reads with a thin service-layer proof-of-use above the unchanged `StorageInterface`.
+Start Stage 1 of tenant-scoped reads with a thin service-layer read boundary above the unchanged `StorageInterface`, then migrate the first live page/dashboard/runtime callers into that layer.
 
 Details:
 
@@ -11,8 +11,10 @@ Details:
 * Empty or whitespace `tenant_id` raises `ValueError`.
 * The service delegates to current broad `StorageInterface` reads and filters internally.
 * The scoped layer remains backend-agnostic and imports only the storage boundary and domain models.
-* `run_locked_dashboard_read_scenario(...)` is the only proof-of-use caller migrated in M8.5C.
-* Dashboard public signature, layout, and metric semantics remain unchanged.
+* `run_locked_dashboard_read_scenario(...)` was the first proof-of-use caller migrated in M8.5C.
+* M8.5D-F expanded Stage 1 usage to Orders Today, New Order product reads, and runtime inbound parser product context.
+* Dashboard, Orders Today, New Order, and runtime inbound behavior remain unchanged except for the scoped read source.
+* Parser behavior, `PROMPT_VERSION`, Twilio signature validation, `MessageSid` idempotency, draft creation, and processed-message linking remain unchanged.
 
 Deferred:
 
@@ -22,7 +24,7 @@ Deferred:
 * Tenant ID request-context/runtime resolution design remains out of scope.
 
 Why:
-The M8.5B design chose "E toward C": add a tenant-scoped read layer now, then evolve `StorageInterface` later when the contract is proven. M8.5C starts that path with one dashboard proof caller and structural tenant-isolation tests without a big-bang migration-boundary change.
+The M8.5B design chose "E toward C": add a tenant-scoped read layer now, then evolve `StorageInterface` later when the contract is proven. M8.5C-F starts that path with the dashboard proof caller plus the first page and runtime parser-context migrations, without a big-bang migration-boundary change.
 
 ## M8.5A - Postgres hardening stays narrow and fail-hard
 

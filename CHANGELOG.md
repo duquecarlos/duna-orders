@@ -1,6 +1,49 @@
 # Changelog
 ## Unreleased
 
+### M8.5D-F - Stage 1 scoped-read caller migrations
+
+Closed.
+
+#### Delivered
+
+* M8.5D migrated Orders Today away from direct broad `storage.list_orders()` calls.
+* Orders Today now uses `TenantScopedReadService.list_orders(tenant_id=...)`.
+* Orders Today today-only filtering, completed/cancelled toggle behavior, lifecycle actions, action-service tenant checks, and UI layout were preserved.
+* M8.5E migrated New Order product reads away from direct broad `storage.list_products(...)` calls.
+* New Order parser product context, manual product selector, and inventory table now use `TenantScopedReadService.list_products(tenant_id=...)`.
+* New Order preserved `active_only=True` for parser context and manual selector products.
+* New Order preserved `active_only=False` for the inventory table.
+* New Order parser behavior and `PROMPT_VERSION` were unchanged.
+* M8.5F migrated runtime inbound parsing away from broad `storage.list_products(...)` plus manual tenant filtering.
+* Runtime inbound parsing now uses `TenantScopedReadService.list_products(tenant_id=..., active_only=True)`.
+* Runtime inbound preserved Twilio signature validation, `MessageSid` idempotency, duplicate/empty-body behavior, `ParsingService.parse(...)`, draft request normalization, `OrderService.create_draft(...)`, `mark_order_created(...)`, and `PROMPT_VERSION`.
+* Added a focused webhook test proving another tenant's active product is excluded from inbound parser context.
+
+#### Stage 1 status
+
+`TenantScopedReadService` is now used by:
+
+* dashboard read scenario;
+* Orders Today;
+* New Order product reads;
+* runtime inbound parser product context.
+
+#### Verification
+
+* `python -m compileall src tests pages` passed.
+* `pytest -q` -> 368 passed, 23 deselected.
+* `ruff check src tests pages` passed.
+
+#### Explicitly not included
+
+* No `StorageInterface` change.
+* No broad-read quarantine.
+* No Stage 2 guard tests.
+* No schema or migration changes.
+* No write-path tenant scoping.
+* No tenant ID request-context or runtime resolution design.
+
 ### M8.5C - Tenant-scoped read proof-of-use closeout
 
 Closed.

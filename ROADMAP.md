@@ -315,6 +315,34 @@ Exit criteria:
 
 ## Recently closed
 
+### M8.5D-F - Stage 1 scoped-read caller migrations
+
+Closed.
+
+Completed scope:
+
+* Migrated Orders Today from direct broad `storage.list_orders()` to `TenantScopedReadService.list_orders(tenant_id=...)`.
+* Preserved Orders Today filtering, completed/cancelled toggle behavior, lifecycle actions, tenant checks, and UI layout.
+* Migrated New Order parser context, manual product selector, and inventory table from direct broad `storage.list_products(...)` to tenant-scoped product reads.
+* Preserved New Order `active_only` behavior, parser behavior, `PROMPT_VERSION`, draft creation semantics, and inventory display.
+* Migrated runtime inbound parser product context from manual broad-read tenant filtering to `TenantScopedReadService.list_products(tenant_id=..., active_only=True)`.
+* Preserved Twilio signature validation, `MessageSid` idempotency, duplicate/empty-body behavior, parsing, draft request normalization, draft creation, and processed-message linking.
+* Added focused webhook coverage proving another tenant's active product is excluded from inbound parser context.
+
+Current Stage 1 usage:
+
+* Dashboard read scenario.
+* Orders Today.
+* New Order product reads.
+* Runtime inbound parser product context.
+
+Deferred follow-ups:
+
+* Stage 2 broad-read quarantine.
+* Stage 2 guard tests for page/dashboard/runtime broad-read usage.
+* Stage 3 `StorageInterface` evolution after the scoped contract is stable and callers are migrated.
+* Tenant ID request-context/runtime resolution design.
+
 ### M8.5C - Tenant-scoped read proof-of-use
 
 Closed.
