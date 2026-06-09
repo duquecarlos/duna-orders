@@ -1,4 +1,26 @@
 # Architectural Decisions
+## M8.4 - Linked inbound review diagnostics are service-owned and aggregate-only
+
+Decision:
+Keep linked inbound review diagnostics inside the inbound review service layer and expose only aggregate, operator-safe counts to Streamlit.
+
+Details:
+
+* `get_inbound_review_snapshot(...)` is the service boundary for draft review items, approved confirmation items, and diagnostics.
+* Streamlit renders the service-provided snapshot but does not query storage directly or classify diagnostic business cases.
+* Diagnostics apply only to linked processed messages returned by the existing linked-message query.
+* Missing linked orders, tenant mismatches, confirmed orders, cancelled orders, and other non-reviewable statuses may be counted.
+* Operators see aggregate counts and generic escalation copy, not raw order IDs, message SIDs, SQL, tracebacks, or raw exception text.
+
+Deferred:
+
+* Unlinked/no-result processed messages are intentionally not diagnosed in this slice.
+* Parse-failure inbox behavior remains deferred.
+* Parse-log matching, timestamp proximity, reparsing, parser behavior, and `PROMPT_VERSION` changes remain out of scope.
+
+Why:
+The inbound review page needs enough signal to explain why linked inbound work disappeared from the actionable queues, but diagnostic logic should stay with the service that already owns reviewability decisions. Keeping the UI aggregate-only reduces operator exposure to internals and avoids turning Streamlit into a parallel business-rule layer.
+
 ## M8.1.4 - Local webhook smoke and lifecycle guardrails
 
 Decision:

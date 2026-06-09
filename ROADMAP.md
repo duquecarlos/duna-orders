@@ -314,6 +314,27 @@ Exit criteria:
 - Claude review can be requested with the final architecture, decisions, roadmap, and verification output.
 
 ## Recently closed
+
+### M8.4 - Inbound review operator hardening
+
+Closed.
+
+Completed scope:
+
+* Hardened inbound review list-load and action errors so operators see mapped, actionable messages instead of raw exception text.
+* Added a service-level inbound review snapshot for draft items, approved items, and linked-message diagnostics.
+* Surfaced safe aggregate diagnostics for linked processed messages skipped because their orders are missing, tenant-mismatched, confirmed, cancelled, or otherwise non-reviewable.
+* Kept draft review and approved confirmation queues separate in the operator UI.
+
+Deferred follow-ups:
+
+* Unlinked/no-result processed-message diagnostics.
+* Parse-failure inbox behavior.
+* Parse-log, timestamp proximity, and reparse behavior.
+* Inbound media/comprobante handling.
+* Outbound/customer messaging.
+* Payment-status enforcement.
+
 ### M7.6 - Dashboard demo realism and closure
 
 Closed.

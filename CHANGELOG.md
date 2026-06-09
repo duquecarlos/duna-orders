@@ -1,6 +1,44 @@
 # Changelog
 ## Unreleased
 
+### M8.4 - Inbound review operator hardening closeout
+
+Closed.
+
+#### Delivered
+
+* M8.4A hardened the inbound review page so list loading, draft review actions, and approved confirmation actions no longer display raw exception text to operators.
+* Known inbound review failures now map to operator-facing messages for stale status, missing linked order, insufficient stock, missing product, duplicate or existing stock movement, unsupported backend, and generic action/list-load fallback cases.
+* M8.4B added a service-level inbound review snapshot that returns draft items, approved items, and linked-message diagnostics in one service-owned summary.
+* The inbound review page now receives review queues and diagnostics from the service instead of making diagnostic business decisions in Streamlit.
+* Linked processed messages skipped because their linked order is missing, tenant-mismatched, confirmed, cancelled, or otherwise non-reviewable now surface through safe aggregate diagnostics.
+* Diagnostic copy avoids raw order IDs, message SIDs, SQL, tracebacks, and raw exception text.
+* Draft orders and Approved orders remain separate operator sections.
+
+#### Architecture boundaries preserved
+
+* M8.4A made no service, storage, or lifecycle business-rule changes.
+* M8.4B added narrow review-service diagnostics only.
+* No `StorageInterface` broadening.
+* No schema or migration changes.
+* No lifecycle-rule changes.
+* No parser behavior changes or `PROMPT_VERSION` bump.
+* No outbound/customer messaging.
+* No payment status enforcement.
+* No inbound media/comprobante handling.
+* No cancellation stock reversal.
+* No duplicate movement repair or idempotency.
+* No auto-confirmation.
+* No queue or worker behavior.
+* No dashboard redesign.
+* No broad transaction abstractions.
+
+#### Explicitly not included
+
+* Unlinked/no-result processed messages remain intentionally invisible in this slice.
+* Parse failures remain out of scope.
+* No parse-log, timestamp-proximity, reparse, or parser behavior was added.
+
 ### Manual Verification
 
 * M8.3.1C manual operator-confirmation smoke passed at baseline `3c37926` using a process-level `DUNA_STORAGE_BACKEND=postgres` override against Postgres tenant `el-fogon-colombiano`.
