@@ -40,6 +40,27 @@ class InboundDraftReviewService:
         *,
         tenant_id: str,
     ) -> list[InboundDraftReviewItem]:
+        return self._list_inbound_orders_by_status(
+            tenant_id=tenant_id,
+            status="draft",
+        )
+
+    def list_confirmable_approved_orders(
+        self,
+        *,
+        tenant_id: str,
+    ) -> list[InboundDraftReviewItem]:
+        return self._list_inbound_orders_by_status(
+            tenant_id=tenant_id,
+            status="approved",
+        )
+
+    def _list_inbound_orders_by_status(
+        self,
+        *,
+        tenant_id: str,
+        status: str,
+    ) -> list[InboundDraftReviewItem]:
         review_items: list[InboundDraftReviewItem] = []
         messages = self._processed_message_store.list_messages_with_resulting_order(
             tenant_id=tenant_id,
@@ -54,7 +75,7 @@ class InboundDraftReviewService:
             if order is None:
                 continue
 
-            if order.tenant_id != tenant_id or order.status != "draft":
+            if order.tenant_id != tenant_id or order.status != status:
                 continue
 
             review_items.append(

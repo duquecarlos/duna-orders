@@ -213,6 +213,115 @@ def test_list_reviewable_inbound_drafts_preserves_message_store_ordering() -> No
     assert [item.message_sid for item in review_items] == ["SM_NEW", "SM_OLD"]
 
 
+def test_list_confirmable_approved_orders_returns_only_linked_approved_orders() -> None:
+    storage = InMemoryStorage()
+    storage.create_order(_make_order(order_id="ord_approved", status="approved"))
+    storage.create_order(_make_order(order_id="ord_draft"))
+    storage.create_order(_make_order(order_id="ord_unlinked", status="approved"))
+    message_store = FakeProcessedMessageReviewStore(
+        [
+            _message(message_sid="SM_APPROVED", resulting_order_id="ord_approved"),
+            _message(message_sid="SM_DRAFT", resulting_order_id="ord_draft"),
+        ]
+    )
+    service = InboundDraftReviewService(
+        storage=storage,
+        processed_message_store=message_store,
+    )
+
+    review_items = service.list_confirmable_approved_orders(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert [item.order.order_id for item in review_items] == ["ord_approved"]
+    assert review_items[0].message_sid == "SM_APPROVED"
+
+
+def test_list_confirmable_approved_orders_excludes_confirmed_cancelled_and_drafts() -> None:
+    storage = InMemoryStorage()
+    for status in ["draft", "confirmed", "cancelled"]:
+        storage.create_order(_make_order(order_id=f"ord_{status}", status=status))
+    message_store = FakeProcessedMessageReviewStore(
+        [
+            _message(message_sid="SM_DRAFT", resulting_order_id="ord_draft"),
+            _message(message_sid="SM_CONFIRMED", resulting_order_id="ord_confirmed"),
+            _message(message_sid="SM_CANCELLED", resulting_order_id="ord_cancelled"),
+        ]
+    )
+    service = InboundDraftReviewService(
+        storage=storage,
+        processed_message_store=message_store,
+    )
+
+    review_items = service.list_confirmable_approved_orders(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert review_items == []
+
+
+def test_list_confirmable_approved_orders_respects_tenant_and_skips_missing_order() -> None:
+    storage = InMemoryStorage()
+    storage.create_order(_make_order(order_id="ord_valid", status="approved"))
+    storage.create_order(
+        _make_order(
+            order_id="ord_other",
+            status="approved",
+            tenant_id="tenant_other",
+        )
+    )
+    message_store = FakeProcessedMessageReviewStore(
+        [
+            _message(message_sid="SM_MISSING", resulting_order_id="ord_missing"),
+            _message(message_sid="SM_VALID", resulting_order_id="ord_valid"),
+            _message(
+                message_sid="SM_OTHER",
+                tenant_id="tenant_other",
+                resulting_order_id="ord_other",
+            ),
+        ]
+    )
+    service = InboundDraftReviewService(
+        storage=storage,
+        processed_message_store=message_store,
+    )
+
+    review_items = service.list_confirmable_approved_orders(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert [item.message_sid for item in review_items] == ["SM_VALID"]
+    assert review_items[0].order.order_id == "ord_valid"
+
+
+def test_list_confirmable_approved_orders_includes_raw_body_message_sid_and_from_number() -> None:
+    storage = InMemoryStorage()
+    storage.create_order(_make_order(order_id="ord_approved", status="approved"))
+    message_store = FakeProcessedMessageReviewStore(
+        [
+            _message(
+                message_sid="SM_APPROVED",
+                resulting_order_id="ord_approved",
+                from_number="whatsapp:+573001112233",
+                raw_body="Una bandeja paisa sin aguacate",
+            ),
+        ]
+    )
+    service = InboundDraftReviewService(
+        storage=storage,
+        processed_message_store=message_store,
+    )
+
+    review_items = service.list_confirmable_approved_orders(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert len(review_items) == 1
+    assert review_items[0].message_sid == "SM_APPROVED"
+    assert review_items[0].raw_inbound_body == "Una bandeja paisa sin aguacate"
+    assert review_items[0].from_number == "whatsapp:+573001112233"
+
+
 def _make_order(
     *,
     order_id: str,

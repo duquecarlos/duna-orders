@@ -6,13 +6,20 @@ import streamlit as st
 
 from duna_orders.demo_catalog import DemoCatalogFile
 from duna_orders.domain.models import Order
-from duna_orders.services.exceptions import InvalidOrderTransitionError, OrderNotFoundError
+from duna_orders.services.exceptions import (
+    InsufficientStockError,
+    InvalidOrderTransitionError,
+    OrderNotFoundError,
+    ProductNotFoundError,
+    UnsupportedOrderConfirmationError,
+)
 from duna_orders.services.inbound_draft_review import (
     InboundDraftReviewItem,
     InboundDraftReviewService,
 )
 from duna_orders.services.orders import OrderService
 from duna_orders.storage.base import StorageInterface
+from duna_orders.storage.exceptions import DuplicateStockMovementError
 from duna_orders.storage.read_context import sheets_request_context
 from duna_orders.ui.setup import (
     get_demo_catalog,
@@ -91,7 +98,70 @@ def _review_draft(
         st.error(f"Could not review order {_short_id(order.order_id)}: {error}")
 
 
-def _render_review_item(
+def _confirm_approved(
+    *,
+    order_service: OrderService,
+    order: Order,
+    tenant_id: str,
+) -> None:
+    try:
+        confirmed_order = order_service.confirm_approved_order(
+            order_id=order.order_id,
+            tenant_id=tenant_id,
+        )
+        st.session_state.inbound_review_success_message = (
+            f"Order {_short_id(confirmed_order.order_id)} confirmed."
+        )
+        st.rerun()
+    except (
+        DuplicateStockMovementError,
+        InsufficientStockError,
+        InvalidOrderTransitionError,
+        OrderNotFoundError,
+        ProductNotFoundError,
+        UnsupportedOrderConfirmationError,
+    ) as error:
+        st.error(f"Could not confirm order {_short_id(order.order_id)}: {error}")
+
+
+def _render_inbound_order_details(item: InboundDraftReviewItem) -> None:
+    order = item.order
+
+    if not order.items:
+        st.warning("Suspicious order: no parsed items.")
+
+    if _has_zero_total(order):
+        st.warning("Suspicious order: total is zero.")
+
+    raw_col, parsed_col = st.columns(2)
+
+    with raw_col:
+        st.write("**Raw inbound message**")
+        if item.from_number:
+            st.caption(f"From: {item.from_number}")
+        st.code(item.raw_inbound_body, language="text")
+
+    with parsed_col:
+        st.write("**Parsed order**")
+        st.write(f"Customer: {_display_value(order.customer_name_snapshot)}")
+        st.write(f"Phone: {_display_value(order.customer_phone_snapshot)}")
+        st.write(f"Fulfillment: `{_display_value(order.fulfillment_type)}`")
+        st.write(f"Payment: `{_display_value(order.payment_method)}`")
+        st.write(f"Delivery zone: {_display_value(order.delivery_zone)}")
+        st.write(f"Delivery address: {_display_value(order.delivery_address)}")
+
+        if order.customer_notes:
+            st.info(order.customer_notes)
+
+        item_rows = _item_rows(order)
+
+        if item_rows:
+            st.dataframe(item_rows, use_container_width=True, hide_index=True)
+        else:
+            st.write("No parsed items.")
+
+
+def _render_draft_review_item(
     item: InboundDraftReviewItem,
     *,
     order_service: OrderService,
@@ -109,38 +179,7 @@ def _render_review_item(
         with header_right:
             st.metric("Total", format_cop(order.total))
 
-        if not order.items:
-            st.warning("Suspicious draft: no parsed items.")
-
-        if _has_zero_total(order):
-            st.warning("Suspicious draft: total is zero.")
-
-        raw_col, parsed_col = st.columns(2)
-
-        with raw_col:
-            st.write("**Raw inbound message**")
-            if item.from_number:
-                st.caption(f"From: {item.from_number}")
-            st.code(item.raw_inbound_body, language="text")
-
-        with parsed_col:
-            st.write("**Parsed draft**")
-            st.write(f"Customer: {_display_value(order.customer_name_snapshot)}")
-            st.write(f"Phone: {_display_value(order.customer_phone_snapshot)}")
-            st.write(f"Fulfillment: `{_display_value(order.fulfillment_type)}`")
-            st.write(f"Payment: `{_display_value(order.payment_method)}`")
-            st.write(f"Delivery zone: {_display_value(order.delivery_zone)}")
-            st.write(f"Delivery address: {_display_value(order.delivery_address)}")
-
-            if order.customer_notes:
-                st.info(order.customer_notes)
-
-            item_rows = _item_rows(order)
-
-            if item_rows:
-                st.dataframe(item_rows, use_container_width=True, hide_index=True)
-            else:
-                st.write("No parsed items.")
+        _render_inbound_order_details(item)
 
         action_approve, action_reject = st.columns(2)
 
@@ -170,10 +209,51 @@ def _render_review_item(
                 )
 
 
+def _render_approved_confirmation_item(
+    item: InboundDraftReviewItem,
+    *,
+    order_service: OrderService,
+    tenant_id: str,
+) -> None:
+    order = item.order
+    confirm_key = f"confirm_inventory_{order.order_id}_{item.message_sid}"
+
+    with st.container(border=True):
+        header_left, header_right = st.columns([3, 1])
+
+        with header_left:
+            st.subheader(f"Order {_short_id(order.order_id)}")
+            st.caption(f"Message `{item.message_sid}`")
+
+        with header_right:
+            st.metric("Total", format_cop(order.total))
+
+        st.warning(
+            "Confirmation commits inventory and cannot be undone from this page."
+        )
+        _render_inbound_order_details(item)
+
+        ready_to_confirm = st.checkbox(
+            "I understand this will commit inventory.",
+            key=f"ack_{confirm_key}",
+        )
+        if st.button(
+            "Confirm inventory",
+            key=confirm_key,
+            type="primary",
+            disabled=not ready_to_confirm,
+        ):
+            _confirm_approved(
+                order_service=order_service,
+                order=order,
+                tenant_id=tenant_id,
+            )
+
+
 st.set_page_config(page_title="Inbound review", page_icon="IR", layout="wide")
 
 st.title("Inbound review")
-st.caption("Operator review for inbound-created draft orders.")
+st.caption("Operator review and confirmation for inbound-created orders.")
 
 _bootstrap_session()
 
@@ -207,17 +287,31 @@ with sheets_request_context(storage):
         review_items = review_service.list_reviewable_inbound_drafts(
             tenant_id=tenant_id,
         )
-    except Exception as error:
-        st.error(f"Could not load inbound drafts: {error}")
-        st.stop()
-
-    if not review_items:
-        st.info("No inbound-created draft orders are waiting for review.")
-        st.stop()
-
-    for review_item in review_items:
-        _render_review_item(
-            review_item,
-            order_service=order_service,
+        approved_items = review_service.list_confirmable_approved_orders(
             tenant_id=tenant_id,
         )
+    except Exception as error:
+        st.error(f"Could not load inbound review items: {error}")
+        st.stop()
+
+    st.header("Draft orders")
+    if not review_items:
+        st.info("No inbound-created draft orders are waiting for review.")
+    else:
+        for review_item in review_items:
+            _render_draft_review_item(
+                review_item,
+                order_service=order_service,
+                tenant_id=tenant_id,
+            )
+
+    st.header("Approved orders")
+    if not approved_items:
+        st.info("No approved inbound-created orders are waiting for confirmation.")
+    else:
+        for approved_item in approved_items:
+            _render_approved_confirmation_item(
+                approved_item,
+                order_service=order_service,
+                tenant_id=tenant_id,
+            )
