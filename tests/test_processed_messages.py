@@ -1,6 +1,8 @@
 from pathlib import Path
 from datetime import datetime, timezone
 
+import pytest
+
 from duna_orders.storage.postgres_base import Base
 from duna_orders.storage.postgres_models import ProcessedMessageRow
 from duna_orders.storage.postgres_session import make_engine, make_session_factory
@@ -69,6 +71,49 @@ def test_mark_order_created_links_resulting_order_id(tmp_path: Path) -> None:
 
     assert record is not None
     assert record.resulting_order_id == "ord_test"
+
+
+def test_mark_order_created_raises_for_unknown_message_sid(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+
+    with pytest.raises(ValueError, match="Processed message not found"):
+        store.mark_order_created(
+            message_sid="SM_MISSING",
+            order_id="ord_missing",
+        )
+
+
+def test_mark_order_created_is_message_sid_keyed_and_reads_remain_tenant_scoped(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+
+    store.try_record_message(
+        message_sid="SM_GLOBAL_LINK",
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        raw_body="Tenant A message",
+    )
+
+    # mark_order_created intentionally uses the globally unique provider message
+    # SID as its key. Tenant scoping is enforced by read paths.
+    store.mark_order_created(
+        message_sid="SM_GLOBAL_LINK",
+        order_id="ord_cross_tenant_reference",
+    )
+
+    tenant_record = store.get_message_for_order(
+        order_id="ord_cross_tenant_reference",
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+    other_tenant_record = store.get_message_for_order(
+        order_id="ord_cross_tenant_reference",
+        tenant_id="tenant_other",
+    )
+
+    assert tenant_record is not None
+    assert tenant_record.message_sid == "SM_GLOBAL_LINK"
+    assert tenant_record.tenant_id == DEFAULT_TEST_TENANT_ID
+    assert other_tenant_record is None
 
 
 def test_get_message_for_order_uses_resulting_order_id_link(tmp_path: Path) -> None:
