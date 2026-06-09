@@ -16,6 +16,34 @@ class InboundDraftReviewItem:
     from_number: str | None
 
 
+@dataclass(frozen=True)
+class InboundReviewDiagnostics:
+    missing_order_count: int = 0
+    tenant_mismatch_count: int = 0
+    confirmed_count: int = 0
+    cancelled_count: int = 0
+    other_status_count: int = 0
+    draft_count: int = 0
+    approved_count: int = 0
+
+    @property
+    def skipped_count(self) -> int:
+        return (
+            self.missing_order_count
+            + self.tenant_mismatch_count
+            + self.confirmed_count
+            + self.cancelled_count
+            + self.other_status_count
+        )
+
+
+@dataclass(frozen=True)
+class InboundReviewSnapshot:
+    draft_items: list[InboundDraftReviewItem]
+    approved_items: list[InboundDraftReviewItem]
+    diagnostics: InboundReviewDiagnostics
+
+
 class ProcessedMessageReviewStore(Protocol):
     def list_messages_with_resulting_order(
         self,
@@ -40,28 +68,28 @@ class InboundDraftReviewService:
         *,
         tenant_id: str,
     ) -> list[InboundDraftReviewItem]:
-        return self._list_inbound_orders_by_status(
-            tenant_id=tenant_id,
-            status="draft",
-        )
+        return self.get_inbound_review_snapshot(tenant_id=tenant_id).draft_items
 
     def list_confirmable_approved_orders(
         self,
         *,
         tenant_id: str,
     ) -> list[InboundDraftReviewItem]:
-        return self._list_inbound_orders_by_status(
-            tenant_id=tenant_id,
-            status="approved",
-        )
+        return self.get_inbound_review_snapshot(tenant_id=tenant_id).approved_items
 
-    def _list_inbound_orders_by_status(
+    def get_inbound_review_snapshot(
         self,
         *,
         tenant_id: str,
-        status: str,
-    ) -> list[InboundDraftReviewItem]:
-        review_items: list[InboundDraftReviewItem] = []
+    ) -> InboundReviewSnapshot:
+        draft_items: list[InboundDraftReviewItem] = []
+        approved_items: list[InboundDraftReviewItem] = []
+        missing_order_count = 0
+        tenant_mismatch_count = 0
+        confirmed_count = 0
+        cancelled_count = 0
+        other_status_count = 0
+
         messages = self._processed_message_store.list_messages_with_resulting_order(
             tenant_id=tenant_id,
         )
@@ -73,12 +101,14 @@ class InboundDraftReviewService:
             order = self._storage.get_order(message.resulting_order_id)
 
             if order is None:
+                missing_order_count += 1
                 continue
 
-            if order.tenant_id != tenant_id or order.status != status:
+            if order.tenant_id != tenant_id:
+                tenant_mismatch_count += 1
                 continue
 
-            review_items.append(
+            item = (
                 InboundDraftReviewItem(
                     order=order,
                     message_sid=message.message_sid,
@@ -87,4 +117,27 @@ class InboundDraftReviewService:
                 )
             )
 
-        return review_items
+            if order.status == "draft":
+                draft_items.append(item)
+            elif order.status == "approved":
+                approved_items.append(item)
+            elif order.status == "confirmed":
+                confirmed_count += 1
+            elif order.status == "cancelled":
+                cancelled_count += 1
+            else:
+                other_status_count += 1
+
+        return InboundReviewSnapshot(
+            draft_items=draft_items,
+            approved_items=approved_items,
+            diagnostics=InboundReviewDiagnostics(
+                missing_order_count=missing_order_count,
+                tenant_mismatch_count=tenant_mismatch_count,
+                confirmed_count=confirmed_count,
+                cancelled_count=cancelled_count,
+                other_status_count=other_status_count,
+                draft_count=len(draft_items),
+                approved_count=len(approved_items),
+            ),
+        )

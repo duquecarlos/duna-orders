@@ -15,8 +15,10 @@ from duna_orders.ui.inbound_review import (
     DUPLICATE_STOCK_MOVEMENT_MESSAGE,
     INSUFFICIENT_STOCK_MESSAGE,
     LINKED_ORDER_NOT_FOUND_MESSAGE,
+    LINKED_MESSAGE_DIAGNOSTIC_MESSAGE,
     LIST_LOAD_FAILURE_MESSAGE,
     MISSING_PRODUCT_MESSAGE,
+    linked_message_diagnostic_message,
     operator_action_error_message,
     operator_list_load_error_message,
     POSTGRES_ONLY_MESSAGE,
@@ -82,4 +84,36 @@ def test_operator_error_message_maps_unknown_action_error_to_generic_message() -
 def test_operator_list_load_error_message_is_generic() -> None:
     assert operator_list_load_error_message(RuntimeError("database detail")) == (
         LIST_LOAD_FAILURE_MESSAGE
+    )
+
+
+def test_linked_message_diagnostic_message_reports_safe_counts() -> None:
+    message = linked_message_diagnostic_message(
+        missing_order_count=1,
+        tenant_mismatch_count=2,
+        confirmed_count=1,
+        cancelled_count=1,
+        other_status_count=1,
+    )
+
+    assert message is not None
+    assert "Skipped linked messages: 1 missing order" in message
+    assert "2 tenant mismatches" in message
+    assert "2 already processed" in message
+    assert "1 no longer reviewable" in message
+    assert LINKED_MESSAGE_DIAGNOSTIC_MESSAGE in message
+    assert "ord_" not in message
+    assert "SM_" not in message
+
+
+def test_linked_message_diagnostic_message_is_empty_without_skipped_counts() -> None:
+    assert (
+        linked_message_diagnostic_message(
+            missing_order_count=0,
+            tenant_mismatch_count=0,
+            confirmed_count=0,
+            cancelled_count=0,
+            other_status_count=0,
+        )
+        is None
     )

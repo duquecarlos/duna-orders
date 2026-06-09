@@ -22,6 +22,7 @@ from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.exceptions import DuplicateStockMovementError
 from duna_orders.storage.read_context import sheets_request_context
 from duna_orders.ui.inbound_review import (
+    linked_message_diagnostic_message,
     operator_action_error_message,
     operator_list_load_error_message,
     POSTGRES_ONLY_MESSAGE,
@@ -289,15 +290,25 @@ with sheets_request_context(storage):
         st.session_state.inbound_review_success_message = None
 
     try:
-        review_items = review_service.list_reviewable_inbound_drafts(
-            tenant_id=tenant_id,
-        )
-        approved_items = review_service.list_confirmable_approved_orders(
+        review_snapshot = review_service.get_inbound_review_snapshot(
             tenant_id=tenant_id,
         )
     except Exception as error:
         st.error(operator_list_load_error_message(error))
         st.stop()
+
+    review_items = review_snapshot.draft_items
+    approved_items = review_snapshot.approved_items
+    diagnostics = review_snapshot.diagnostics
+    diagnostic_message = linked_message_diagnostic_message(
+        missing_order_count=diagnostics.missing_order_count,
+        tenant_mismatch_count=diagnostics.tenant_mismatch_count,
+        confirmed_count=diagnostics.confirmed_count,
+        cancelled_count=diagnostics.cancelled_count,
+        other_status_count=diagnostics.other_status_count,
+    )
+    if diagnostic_message:
+        st.warning(diagnostic_message)
 
     st.header("Draft orders")
     if not review_items:

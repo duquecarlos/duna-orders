@@ -322,6 +322,156 @@ def test_list_confirmable_approved_orders_includes_raw_body_message_sid_and_from
     assert review_items[0].from_number == "whatsapp:+573001112233"
 
 
+def test_snapshot_counts_missing_linked_order_and_keeps_it_non_actionable() -> None:
+    storage = InMemoryStorage()
+    message_store = FakeProcessedMessageReviewStore(
+        [_message(message_sid="SM_MISSING", resulting_order_id="ord_missing")]
+    )
+    service = InboundDraftReviewService(
+        storage=storage,
+        processed_message_store=message_store,
+    )
+
+    snapshot = service.get_inbound_review_snapshot(tenant_id=DEFAULT_TEST_TENANT_ID)
+
+    assert snapshot.draft_items == []
+    assert snapshot.approved_items == []
+    assert snapshot.diagnostics.missing_order_count == 1
+
+
+def test_snapshot_counts_tenant_mismatched_linked_order_and_keeps_it_non_actionable() -> None:
+    storage = InMemoryStorage()
+    storage.create_order(
+        _make_order(
+            order_id="ord_other_tenant",
+            tenant_id="tenant_other",
+        )
+    )
+    message_store = FakeProcessedMessageReviewStore(
+        [
+            _message(
+                message_sid="SM_TENANT_MISMATCH",
+                resulting_order_id="ord_other_tenant",
+            )
+        ]
+    )
+    service = InboundDraftReviewService(
+        storage=storage,
+        processed_message_store=message_store,
+    )
+
+    snapshot = service.get_inbound_review_snapshot(tenant_id=DEFAULT_TEST_TENANT_ID)
+
+    assert snapshot.draft_items == []
+    assert snapshot.approved_items == []
+    assert snapshot.diagnostics.tenant_mismatch_count == 1
+
+
+def test_snapshot_counts_confirmed_linked_order_and_keeps_it_non_actionable() -> None:
+    storage = InMemoryStorage()
+    storage.create_order(_make_order(order_id="ord_confirmed", status="confirmed"))
+    message_store = FakeProcessedMessageReviewStore(
+        [_message(message_sid="SM_CONFIRMED", resulting_order_id="ord_confirmed")]
+    )
+    service = InboundDraftReviewService(
+        storage=storage,
+        processed_message_store=message_store,
+    )
+
+    snapshot = service.get_inbound_review_snapshot(tenant_id=DEFAULT_TEST_TENANT_ID)
+
+    assert snapshot.draft_items == []
+    assert snapshot.approved_items == []
+    assert snapshot.diagnostics.confirmed_count == 1
+
+
+def test_snapshot_counts_cancelled_linked_order_and_keeps_it_non_actionable() -> None:
+    storage = InMemoryStorage()
+    storage.create_order(_make_order(order_id="ord_cancelled", status="cancelled"))
+    message_store = FakeProcessedMessageReviewStore(
+        [_message(message_sid="SM_CANCELLED", resulting_order_id="ord_cancelled")]
+    )
+    service = InboundDraftReviewService(
+        storage=storage,
+        processed_message_store=message_store,
+    )
+
+    snapshot = service.get_inbound_review_snapshot(tenant_id=DEFAULT_TEST_TENANT_ID)
+
+    assert snapshot.draft_items == []
+    assert snapshot.approved_items == []
+    assert snapshot.diagnostics.cancelled_count == 1
+
+
+def test_snapshot_lists_draft_and_approved_linked_orders_in_separate_lists() -> None:
+    storage = InMemoryStorage()
+    storage.create_order(_make_order(order_id="ord_draft"))
+    storage.create_order(_make_order(order_id="ord_approved", status="approved"))
+    message_store = FakeProcessedMessageReviewStore(
+        [
+            _message(message_sid="SM_DRAFT", resulting_order_id="ord_draft"),
+            _message(message_sid="SM_APPROVED", resulting_order_id="ord_approved"),
+        ]
+    )
+    service = InboundDraftReviewService(
+        storage=storage,
+        processed_message_store=message_store,
+    )
+
+    snapshot = service.get_inbound_review_snapshot(tenant_id=DEFAULT_TEST_TENANT_ID)
+
+    assert [item.message_sid for item in snapshot.draft_items] == ["SM_DRAFT"]
+    assert [item.message_sid for item in snapshot.approved_items] == ["SM_APPROVED"]
+    assert snapshot.diagnostics.draft_count == 1
+    assert snapshot.diagnostics.approved_count == 1
+    assert snapshot.diagnostics.skipped_count == 0
+
+
+def test_snapshot_ignores_unlinked_processed_messages_for_diagnostics() -> None:
+    storage = InMemoryStorage()
+    message_store = FakeProcessedMessageReviewStore(
+        [_message(message_sid="SM_UNLINKED", resulting_order_id=None)]
+    )
+    service = InboundDraftReviewService(
+        storage=storage,
+        processed_message_store=message_store,
+    )
+
+    snapshot = service.get_inbound_review_snapshot(tenant_id=DEFAULT_TEST_TENANT_ID)
+
+    assert snapshot.draft_items == []
+    assert snapshot.approved_items == []
+    assert snapshot.diagnostics.skipped_count == 0
+
+
+def test_snapshot_does_not_use_parse_log_or_timestamp_matching() -> None:
+    storage = InMemoryStorage()
+    storage.create_order(_make_order(order_id="ord_parse_only"))
+    storage.append_parse_log(
+        ParseLogEntry(
+            tenant_id=DEFAULT_TEST_TENANT_ID,
+            parse_id="prs_target",
+            raw_message="Same raw message as draft",
+            parsed_json="{}",
+            model="test",
+            prompt_version="test",
+            latency_ms=1,
+            success=True,
+        )
+    )
+    message_store = FakeProcessedMessageReviewStore([])
+    service = InboundDraftReviewService(
+        storage=storage,
+        processed_message_store=message_store,
+    )
+
+    snapshot = service.get_inbound_review_snapshot(tenant_id=DEFAULT_TEST_TENANT_ID)
+
+    assert snapshot.draft_items == []
+    assert snapshot.approved_items == []
+    assert snapshot.diagnostics.skipped_count == 0
+
+
 def _make_order(
     *,
     order_id: str,
