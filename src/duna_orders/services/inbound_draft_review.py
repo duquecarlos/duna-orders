@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from duna_orders.domain.models import Order
+from duna_orders.services.diagnostic_reads import DiagnosticReadService
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.processed_messages import ProcessedMessage
 
@@ -60,8 +61,8 @@ class InboundDraftReviewService:
         storage: StorageInterface,
         processed_message_store: ProcessedMessageReviewStore,
     ) -> None:
-        self._storage = storage
         self._processed_message_store = processed_message_store
+        self._diagnostic_reads = DiagnosticReadService(storage)
 
     def list_reviewable_inbound_drafts(
         self,
@@ -98,7 +99,9 @@ class InboundDraftReviewService:
             if message.resulting_order_id is None:
                 continue
 
-            order = self._storage.get_order(message.resulting_order_id)
+            order = self._diagnostic_reads.get_order_for_diagnostics(
+                message.resulting_order_id
+            )
 
             if order is None:
                 missing_order_count += 1

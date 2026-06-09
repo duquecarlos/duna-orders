@@ -395,6 +395,18 @@ Suggested guard scope for Stage 2:
 
 The guard should not block storage implementations or storage contract tests.
 
+Stage 2A boundary note:
+
+The runtime read guard is convention-enforced by a static test over an explicit
+allowlist of migrated runtime read modules. It is not construction-enforced by
+types. A green guard proves the listed runtime read paths avoid direct broad
+storage reads; it does not prove write paths are tenant-safe and must not be
+treated as write-path tenant-safety coverage. Any new page, dashboard, or
+runtime read module must be added to the enforced set when it is introduced.
+Inbound review may use `get_order_for_diagnostics(...)` as the named
+cross-tenant diagnostic exception so missing linked orders and tenant
+mismatches remain distinguishable.
+
 ## 11. Stage-3 Trigger Condition
 
 Evolve `StorageInterface` only when all of these are true:

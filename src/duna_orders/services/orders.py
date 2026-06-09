@@ -192,6 +192,7 @@ class OrderService:
         order_id: str,
         confirmed_at: datetime | None = None,
     ) -> Order:
+        # M8.5_STAGE2_DEFERRED_WRITE_PATH_BROAD_READ: broad read; tenant validated in-flow; write-path scoping deferred.
         order = self._storage.get_order(order_id)
 
         if order is None:
@@ -351,6 +352,7 @@ class OrderService:
         if decision not in status_by_decision:
             raise ValueError(f"Invalid inbound draft review decision: {decision}")
 
+        # M8.5_STAGE2_DEFERRED_WRITE_PATH_BROAD_READ: broad read; tenant validated in-flow; write-path scoping deferred.
         order = self._storage.get_order(order_id)
 
         if order is None or order.tenant_id != tenant_id:
@@ -399,6 +401,7 @@ class OrderService:
         if self._atomic_confirmation_store is None:
             raise UnsupportedOrderConfirmationError()
 
+        # M8.5_STAGE2_DEFERRED_WRITE_PATH_BROAD_READ: broad read; tenant validated in-flow; write-path scoping deferred.
         order = self._storage.get_order(order_id)
 
         if order is None or order.tenant_id != tenant_id:
@@ -448,6 +451,7 @@ class OrderService:
         reason: str | None = None,
         status_updated_at: datetime | None = None,
     ) -> Order:
+        # M8.5_STAGE2_DEFERRED_WRITE_PATH_BROAD_READ: broad read; tenant validated in-flow; write-path scoping deferred.
         order = self._storage.get_order(order_id)
 
         if order is None or order.tenant_id != tenant_id:

@@ -336,10 +336,18 @@ Current Stage 1 usage:
 * New Order product reads.
 * Runtime inbound parser product context.
 
+Stage 2A progress:
+
+* Added a static runtime read guard over the Stage 1 page/dashboard/runtime
+  read modules.
+* Named inbound review's intentional cross-tenant diagnostic order lookup as
+  `get_order_for_diagnostics(...)`.
+* Marked `OrderService` action/write broad order reads as deferred write-path
+  broad reads.
+
 Deferred follow-ups:
 
-* Stage 2 broad-read quarantine.
-* Stage 2 guard tests for page/dashboard/runtime broad-read usage.
+* Stage 2B broad-read renaming/quarantine.
 * Stage 3 `StorageInterface` evolution after the scoped contract is stable and callers are migrated.
 * Tenant ID request-context/runtime resolution design.
 

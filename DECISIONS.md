@@ -1,4 +1,41 @@
 # Architectural Decisions
+## M8.5 Stage 2A - Runtime read guard and diagnostic broad-read naming
+
+Decision:
+Add a convention-enforced-by-test boundary around Stage 1 runtime read modules,
+and route inbound review's intentional cross-tenant diagnostic order lookup
+through a named diagnostic read surface.
+
+Details:
+
+* The architecture guard is scoped to runtime read modules only: dashboard read
+  scenario, Orders Today, New Order, and runtime inbound parser context.
+* The guard proves those runtime read paths do not call direct broad storage
+  reads for `list_orders(...)`, `list_products(...)`, `list_customers(...)`,
+  `get_order(...)`, or `list_stock_movements(...)`.
+* `DiagnosticReadService.get_order_for_diagnostics(...)` is the sanctioned
+  cross-tenant diagnostic exception for inbound review diagnostics.
+* Write-path broad reads in `OrderService` are marked with a consistent
+  deferred marker and remain validated in-flow.
+* The guard is convention-enforced by test, not construction-enforced by types.
+* A green guard proves runtime read paths are clean. It does not prove write
+  paths are tenant-safe and must not be read as write-path tenant-safety
+  coverage.
+* Any new page, dashboard, or runtime read module must be added to the guard's
+  enforced set.
+
+Deferred:
+
+* Broad-read renaming is deferred to Slice 2B.
+* Stage 3 `StorageInterface` evolution remains deferred.
+* Stage 3 is triggered only when the scoped contract is stable, meaningful
+  page/dashboard/runtime callers are migrated, page/dashboard/runtime paths no
+  longer use broad reads directly, backend parity is proven, Sheets
+  compatibility is accounted for, docs/tests make the invariant clear, broad
+  reads are limited to sanctioned internals/admin/migration/tests, and the
+  migration-boundary update is cheap enough to do as a controlled one-way
+  change.
+
 ## M8.5C-F - Tenant-scoped reads start above StorageInterface
 
 Decision:

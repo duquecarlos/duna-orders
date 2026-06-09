@@ -1,6 +1,27 @@
 # Changelog
 ## Unreleased
 
+### M8.5 Stage 2A - Runtime read guard and diagnostic naming
+
+Implemented.
+
+#### Delivered
+
+* Added a static architecture boundary test for the Stage 1 runtime read
+  modules.
+* Routed inbound review's intentional broad diagnostic order lookup through
+  `DiagnosticReadService.get_order_for_diagnostics(...)`.
+* Marked deferred `OrderService` write/action broad order reads with a
+  consistent greppable marker.
+* Documented that the guard covers runtime read paths only, not write-path
+  tenant safety.
+
+#### Deferred
+
+* No broad-read renaming yet.
+* No `StorageInterface` change.
+* No write-path tenant scoping.
+
 ### M8.5D-F - Stage 1 scoped-read caller migrations
 
 Closed.
