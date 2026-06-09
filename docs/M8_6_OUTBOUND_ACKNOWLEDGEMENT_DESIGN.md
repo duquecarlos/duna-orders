@@ -2,7 +2,7 @@
 
 Status: approved design only.
 
-Base: `aecb387 test(architecture): guard scoped read boundaries`
+Base: `53a7f03 refactor(storage): mark product and customer reads unscoped`
 
 M8.6 closes the visible customer loop after the operator confirms an inbound
 order. The first outbound capability is deliberately narrow: one
