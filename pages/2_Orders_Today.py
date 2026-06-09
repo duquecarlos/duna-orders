@@ -12,6 +12,7 @@ from duna_orders.domain.models import Order
 from duna_orders.services.exceptions import InvalidOrderTransitionError, OrderNotFoundError
 from duna_orders.services.order_visibility import filter_today_orders
 from duna_orders.services.orders import OrderService, get_allowed_next_statuses
+from duna_orders.services.tenant_scoped_reads import TenantScopedReadService
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.read_context import sheets_request_context
 from duna_orders.ui.setup import (
@@ -175,8 +176,9 @@ with sheets_request_context(storage):
         if st.button("Refresh"):
             st.rerun()
 
+    scoped_reads = TenantScopedReadService(storage)
     orders = filter_today_orders(
-        storage.list_orders(),
+        scoped_reads.list_orders(tenant_id=tenant_id),
         tenant_id=tenant_id,
         target_date=today,
         timezone_name=settings.default_timezone,
