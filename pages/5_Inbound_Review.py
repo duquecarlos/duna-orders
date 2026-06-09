@@ -21,6 +21,11 @@ from duna_orders.services.orders import OrderService
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.exceptions import DuplicateStockMovementError
 from duna_orders.storage.read_context import sheets_request_context
+from duna_orders.ui.inbound_review import (
+    operator_action_error_message,
+    operator_list_load_error_message,
+    POSTGRES_ONLY_MESSAGE,
+)
 from duna_orders.ui.setup import (
     get_demo_catalog,
     get_inbound_draft_review_service,
@@ -95,7 +100,7 @@ def _review_draft(
         )
         st.rerun()
     except (InvalidOrderTransitionError, OrderNotFoundError, ValueError) as error:
-        st.error(f"Could not review order {_short_id(order.order_id)}: {error}")
+        st.error(operator_action_error_message(error))
 
 
 def _confirm_approved(
@@ -121,7 +126,7 @@ def _confirm_approved(
         ProductNotFoundError,
         UnsupportedOrderConfirmationError,
     ) as error:
-        st.error(f"Could not confirm order {_short_id(order.order_id)}: {error}")
+        st.error(operator_action_error_message(error))
 
 
 def _render_inbound_order_details(item: InboundDraftReviewItem) -> None:
@@ -276,7 +281,7 @@ with sheets_request_context(storage):
             st.rerun()
 
     if review_service is None:
-        st.info("Inbound draft review is available only with the Postgres backend.")
+        st.info(POSTGRES_ONLY_MESSAGE)
         st.stop()
 
     if st.session_state.inbound_review_success_message:
@@ -291,7 +296,7 @@ with sheets_request_context(storage):
             tenant_id=tenant_id,
         )
     except Exception as error:
-        st.error(f"Could not load inbound review items: {error}")
+        st.error(operator_list_load_error_message(error))
         st.stop()
 
     st.header("Draft orders")
