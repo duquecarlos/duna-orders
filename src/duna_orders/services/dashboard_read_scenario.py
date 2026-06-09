@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from duna_orders.services.dashboard import DashboardScenarioResult
+from duna_orders.services.tenant_scoped_reads import TenantScopedReadService
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.schema import (
     CUSTOMERS_TAB,
@@ -76,27 +77,16 @@ def run_locked_dashboard_read_scenario(
     del now
     del timezone_name
 
-    orders = [
-        order
-        for order in storage.list_orders()
-        if order.tenant_id == tenant_id
-    ]
+    scoped_reads = TenantScopedReadService(storage)
+    orders = scoped_reads.list_orders(tenant_id=tenant_id)
     order_items = [
         item
         for order in orders
         for item in order.items
         if item.tenant_id == tenant_id
     ]
-    customers = [
-        customer
-        for customer in storage.list_customers()
-        if customer.tenant_id == tenant_id
-    ]
-    products = [
-        product
-        for product in storage.list_products(active_only=False)
-        if product.tenant_id == tenant_id
-    ]
+    customers = scoped_reads.list_customers(tenant_id=tenant_id)
+    products = scoped_reads.list_products(tenant_id=tenant_id, active_only=False)
 
     return DashboardScenarioResult(
         orders=orders,
