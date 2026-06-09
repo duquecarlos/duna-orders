@@ -56,6 +56,24 @@ def _seed_product(storage: InMemoryStorage) -> Product:
     return product
 
 
+def _seed_other_tenant_product(storage: InMemoryStorage) -> Product:
+    product = Product(
+        tenant_id="other-tenant",
+        product_id="prd_other_tenant",
+        product_name="Other tenant product",
+        aliases=["other"],
+        category="platos_fuertes",
+        unit="unidad",
+        unit_price=Decimal("99000"),
+        active=True,
+        current_stock=Decimal("10"),
+        min_stock=Decimal("1"),
+    )
+    storage.upsert_product(product)
+
+    return product
+
+
 def _processed_message_store(tmp_path: Path) -> PostgresProcessedMessageStore:
     database_path = tmp_path / "processed_messages_webhook.db"
     engine = make_engine(f"sqlite:///{database_path}")
@@ -298,6 +316,46 @@ def test_twilio_webhook_creates_one_draft_order_from_signed_inbound_message(
     assert record.from_number == "whatsapp:+573001112233"
     assert len(record.raw_body) > 500
     assert record.resulting_order_id == orders[0].order_id
+
+
+def test_twilio_webhook_parser_product_context_is_tenant_scoped(
+    tmp_path: Path,
+) -> None:
+    storage = InMemoryStorage()
+    product = _seed_product(storage)
+    other_product = _seed_other_tenant_product(storage)
+    raw_message = "Buenas, una bandeja paisa"
+    processed_store = _processed_message_store(tmp_path)
+
+    parser = MockParser(result=_parse_result_for_product(product, raw_message))
+    app = create_app(
+        app_settings=_settings(),
+        storage=storage,
+        parser=parser,
+        processed_message_store=processed_store,
+    )
+    client = TestClient(app)
+
+    params = {
+        "MessageSid": "SM_TENANT_SCOPED_PRODUCTS",
+        "From": "whatsapp:+573001112233",
+        "Body": raw_message,
+    }
+    response = client.post(
+        WEBHOOK_PATH,
+        data=params,
+        headers=_signed_headers(params),
+    )
+
+    assert response.status_code == 200
+    assert len(parser.calls) == 1
+    product_context = parser.calls[0][1]
+    assert [context_product.product_id for context_product in product_context] == [
+        product.product_id
+    ]
+    assert other_product.product_id not in [
+        context_product.product_id for context_product in product_context
+    ]
 
 
 def test_twilio_webhook_empty_body_returns_200_and_creates_no_order(

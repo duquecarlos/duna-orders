@@ -6,6 +6,7 @@ from duna_orders.parsing.exceptions import ParserError
 from duna_orders.services.exceptions import ServiceError
 from duna_orders.services.orders import OrderService
 from duna_orders.services.parsing import ParsingService
+from duna_orders.services.tenant_scoped_reads import TenantScopedReadService
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.order_lifecycle import OrderLifecycleStore
 logger = logging.getLogger(__name__)
@@ -26,11 +27,11 @@ def create_draft_from_inbound_message(
         logger.info("Skipping empty inbound WhatsApp message.")
         return None
 
-    products = [
-        product
-        for product in storage.list_products(active_only=True)
-        if product.tenant_id == tenant_id
-    ]
+    scoped_reads = TenantScopedReadService(storage)
+    products = scoped_reads.list_products(
+        tenant_id=tenant_id,
+        active_only=True,
+    )
 
     try:
         parse_result = ParsingService(parser, storage).parse(
