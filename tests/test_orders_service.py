@@ -507,6 +507,16 @@ def test_confirm_order_raises_when_not_draft():
     assert exc_info.value.status == "confirmed"
 
 
+def test_confirm_order_refuses_approved_orders() -> None:
+    storage = seed_storage(order=make_order(status="approved"))
+    service = OrderService(storage)
+
+    with pytest.raises(InvalidOrderStateError) as exc_info:
+        service.confirm_order(ORDER_ID)
+
+    assert exc_info.value.status == "approved"
+
+
 def test_confirm_order_raises_on_insufficient_stock():
     storage = seed_storage(product=make_product(current_stock=Decimal("1")))
     service = OrderService(storage)

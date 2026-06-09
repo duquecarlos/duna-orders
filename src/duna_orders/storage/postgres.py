@@ -33,6 +33,31 @@ class PostgresStorage(StorageInterface):
     def __init__(self, session_factory: Callable[[], Session]) -> None:
         self._session_factory = session_factory
 
+    def confirm_order_atomically(
+        self,
+        *,
+        order_id: str,
+        tenant_id: str,
+        expected_from_status: str,
+        transition_source: str,
+        transition_id: str,
+        confirmed_at: datetime,
+    ) -> Order:
+        from duna_orders.storage.order_confirmation import (
+            PostgresAtomicOrderConfirmationStore,
+        )
+
+        return PostgresAtomicOrderConfirmationStore(
+            self._session_factory,
+        ).confirm_order_atomically(
+            order_id=order_id,
+            tenant_id=tenant_id,
+            expected_from_status=expected_from_status,
+            transition_source=transition_source,
+            transition_id=transition_id,
+            confirmed_at=confirmed_at,
+        )
+
     def list_products(self, *, active_only: bool = True) -> list[Product]:
         with session_scope(self._session_factory) as session:
             statement = select(ProductRow).order_by(ProductRow.product_id)

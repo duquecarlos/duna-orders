@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 import logging
-from typing import Literal, Protocol
+from typing import Literal, Protocol, runtime_checkable
 from duna_orders.domain.models import (
     Customer,
     DraftOrderRequest,
@@ -60,6 +60,7 @@ def get_allowed_next_statuses(order: Order) -> tuple[str, ...]:
 def get_allowed_confirmation_statuses(order: Order) -> tuple[str, ...]:
     return CONFIRMATION_STATUS_TRANSITIONS.get(order.status, ())
 
+@runtime_checkable
 class AtomicOrderConfirmationStore(Protocol):
     def confirm_order_atomically(
         self,
@@ -84,6 +85,11 @@ class OrderService:
         self._storage = storage
         self._lifecycle_store = lifecycle_store
         self._atomic_confirmation_store = atomic_confirmation_store
+        if self._atomic_confirmation_store is None and isinstance(
+            storage,
+            AtomicOrderConfirmationStore,
+        ):
+            self._atomic_confirmation_store = storage
     def create_draft(self, request: DraftOrderRequest) -> Order:
         positive_items = [item for item in request.items if item.quantity > 0]
 
@@ -195,6 +201,29 @@ class OrderService:
             raise InvalidOrderStateError(order_id, order.status)
 
         confirmed_at = confirmed_at or utc_now()
+
+        if self._atomic_confirmation_store is not None:
+            try:
+                return self._atomic_confirmation_store.confirm_order_atomically(
+                    order_id=order_id,
+                    tenant_id=order.tenant_id,
+                    expected_from_status="draft",
+                    transition_source="operator",
+                    transition_id=new_id("ost"),
+                    confirmed_at=confirmed_at,
+                )
+            except StorageOrderStatusMismatchError as exc:
+                raise InvalidOrderStateError(order_id, exc.current_status) from exc
+            except StorageProductNotFoundError as exc:
+                raise ProductNotFoundError(exc.product_id) from exc
+            except StorageInsufficientStockError as exc:
+                raise InsufficientStockError(
+                    exc.product_id,
+                    requested=exc.requested,
+                    available=exc.available,
+                ) from exc
+            except KeyError as exc:
+                raise OrderNotFoundError(order_id) from exc
 
         products_by_product_id = {}
         quantities_by_product_id = {}

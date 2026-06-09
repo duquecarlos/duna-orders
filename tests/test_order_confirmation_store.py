@@ -62,11 +62,11 @@ def _order(*, status: str = "approved") -> Order:
     )
 
 
-def _seed_approved_order(tmp_path: Path):
+def _seed_order(tmp_path: Path, *, status: str):
     session_factory = _session_factory(tmp_path)
     storage = PostgresStorage(session_factory)
     storage.upsert_product(_product())
-    storage.create_order(_order())
+    storage.create_order(_order(status=status))
     confirmation_store = PostgresAtomicOrderConfirmationStore(session_factory)
     lifecycle_store = PostgresOrderLifecycleStore(session_factory)
     service = OrderService(
@@ -74,6 +74,14 @@ def _seed_approved_order(tmp_path: Path):
         atomic_confirmation_store=confirmation_store,
     )
     return storage, lifecycle_store, service
+
+
+def _seed_approved_order(tmp_path: Path):
+    return _seed_order(tmp_path, status="approved")
+
+
+def _seed_draft_order(tmp_path: Path):
+    return _seed_order(tmp_path, status="draft")
 
 
 def test_confirm_approved_order_postgres_happy_path(
@@ -110,6 +118,43 @@ def test_confirm_approved_order_postgres_happy_path(
     assert movements[0].reference_id == ORDER_ID
     assert len(transitions) == 1
     assert transitions[0].from_status == "approved"
+    assert transitions[0].to_status == "confirmed"
+    assert transitions[0].source == "operator"
+    assert transitions[0].occurred_at.replace(tzinfo=timezone.utc) == confirmed_at
+
+
+def test_confirm_order_postgres_uses_atomic_core_for_legacy_draft_confirmation(
+    tmp_path: Path,
+) -> None:
+    storage, lifecycle_store, _ = _seed_draft_order(tmp_path)
+    service = OrderService(storage)
+    confirmed_at = datetime(2026, 6, 9, 14, 0, tzinfo=timezone.utc)
+
+    order = service.confirm_order(ORDER_ID, confirmed_at=confirmed_at)
+
+    saved_order = storage.get_order(ORDER_ID)
+    product = storage.get_product(PRODUCT_ID)
+    movements = storage.list_stock_movements(product_id=PRODUCT_ID)
+    transitions = lifecycle_store.list_order_status_transitions(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert service._atomic_confirmation_store is storage
+    assert order.status == "confirmed"
+    assert order.confirmed_at == confirmed_at
+    assert saved_order is not None
+    assert saved_order.status == "confirmed"
+    assert saved_order.confirmed_at == confirmed_at
+    assert product is not None
+    assert product.current_stock == Decimal("8.000")
+    assert len(movements) == 1
+    assert movements[0].stock_movement_id == f"mov_sale_{ORDER_ID}_{PRODUCT_ID}"
+    assert movements[0].quantity_delta == Decimal("-2.000")
+    assert movements[0].reason == "sale"
+    assert movements[0].reference_id == ORDER_ID
+    assert len(transitions) == 1
+    assert transitions[0].from_status == "draft"
     assert transitions[0].to_status == "confirmed"
     assert transitions[0].source == "operator"
     assert transitions[0].occurred_at.replace(tzinfo=timezone.utc) == confirmed_at
@@ -154,6 +199,43 @@ def test_confirm_approved_order_duplicate_stock_movement_fails_hard(
     assert transitions == []
 
 
+def test_confirm_order_postgres_duplicate_stock_movement_fails_hard(
+    tmp_path: Path,
+) -> None:
+    storage, lifecycle_store, _ = _seed_draft_order(tmp_path)
+    service = OrderService(storage)
+    storage.append_stock_movement(
+        StockMovement(
+            tenant_id=DEFAULT_TEST_TENANT_ID,
+            stock_movement_id=f"mov_sale_{ORDER_ID}_{PRODUCT_ID}",
+            created_at=datetime(2026, 6, 9, 12, 0, tzinfo=timezone.utc),
+            product_id=PRODUCT_ID,
+            quantity_delta=Decimal("-2"),
+            reason="sale",
+            reference_id=ORDER_ID,
+        )
+    )
+
+    with pytest.raises(DuplicateStockMovementError):
+        service.confirm_order(ORDER_ID)
+
+    order = storage.get_order(ORDER_ID)
+    product = storage.get_product(PRODUCT_ID)
+    movements = storage.list_stock_movements(product_id=PRODUCT_ID)
+    transitions = lifecycle_store.list_order_status_transitions(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert order is not None
+    assert order.status == "draft"
+    assert order.confirmed_at is None
+    assert product is not None
+    assert product.current_stock == Decimal("10.000")
+    assert len(movements) == 1
+    assert transitions == []
+
+
 def test_confirm_approved_order_rolls_back_after_stock_movement_insert_failure(
     tmp_path: Path,
 ) -> None:
@@ -186,6 +268,42 @@ def test_confirm_approved_order_rolls_back_after_stock_movement_insert_failure(
 
     assert order is not None
     assert order.status == "approved"
+    assert order.confirmed_at is None
+    assert product is not None
+    assert product.current_stock == Decimal("10.000")
+    assert movements == []
+    assert transitions == []
+
+
+def test_confirm_order_postgres_rolls_back_after_stock_movement_insert_failure(
+    tmp_path: Path,
+) -> None:
+    session_factory = _session_factory(tmp_path)
+    storage = PostgresStorage(session_factory)
+    lifecycle_store = PostgresOrderLifecycleStore(session_factory)
+    storage.upsert_product(_product())
+    storage.create_order(_order(status="draft"))
+    service = OrderService(
+        storage,
+        atomic_confirmation_store=PostgresAtomicOrderConfirmationStore(
+            session_factory,
+            fail_after_stock_movements_for_test=True,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="simulated atomic confirmation failure"):
+        service.confirm_order(ORDER_ID)
+
+    order = storage.get_order(ORDER_ID)
+    product = storage.get_product(PRODUCT_ID)
+    movements = storage.list_stock_movements(product_id=PRODUCT_ID)
+    transitions = lifecycle_store.list_order_status_transitions(
+        order_id=ORDER_ID,
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    assert order is not None
+    assert order.status == "draft"
     assert order.confirmed_at is None
     assert product is not None
     assert product.current_stock == Decimal("10.000")
