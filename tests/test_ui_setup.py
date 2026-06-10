@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from duna_orders.domain.models import ParseResult, Product
 from duna_orders.parsing.base import ParserInterface
+from duna_orders.services.outbound_acknowledgement import (
+    OutboundAcknowledgementService,
+)
 from duna_orders.services.orders import OrderService
 from duna_orders.services.parsing import ParsingService
+from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.ui import setup
 import pytest
@@ -18,6 +22,31 @@ class FakeParser(ParserInterface):
 
     def parse(self, raw_message: str, products: list[Product]) -> ParseResult:
         raise NotImplementedError
+
+
+class FakeTwilioOutboundMessageAdapter:
+    calls: list[dict[str, str]] = []
+
+    def __init__(self, *, account_sid: str, auth_token: str) -> None:
+        self.calls.append(
+            {
+                "account_sid": account_sid,
+                "auth_token": auth_token,
+            }
+        )
+
+
+def _complete_outbound_settings(monkeypatch) -> None:
+    monkeypatch.setattr(setup.settings, "duna_outbound_enabled", True)
+    monkeypatch.setattr(setup.settings, "duna_outbound_tenant_id", "tenant-a")
+    monkeypatch.setattr(setup.settings, "twilio_account_sid", "AC_secret")
+    monkeypatch.setattr(setup.settings, "twilio_auth_token", "token-secret")
+    monkeypatch.setattr(setup.settings, "twilio_whatsapp_from", "whatsapp:+15551234567")
+
+
+def _postgres_storage() -> PostgresStorage:
+    return PostgresStorage(lambda: None)
+
 
 def test_get_storage_returns_inmemory_storage_by_default(monkeypatch) -> None:
     monkeypatch.setattr(setup.settings, "duna_storage_backend", "memory")
@@ -127,6 +156,116 @@ def test_get_order_service_injects_lifecycle_store_for_postgres_storage(
     assert isinstance(storage, PostgresStorage)
     assert service._storage is storage
     assert isinstance(service._lifecycle_store, PostgresOrderLifecycleStore)
+
+
+def test_get_outbound_acknowledgement_service_returns_unavailable_when_disabled(
+    monkeypatch,
+) -> None:
+    _complete_outbound_settings(monkeypatch)
+    monkeypatch.setattr(setup.settings, "duna_outbound_enabled", False)
+    FakeTwilioOutboundMessageAdapter.calls = []
+    monkeypatch.setattr(
+        setup,
+        "TwilioOutboundMessageAdapter",
+        FakeTwilioOutboundMessageAdapter,
+    )
+
+    result = setup.get_outbound_acknowledgement_service(_postgres_storage())
+
+    assert result.is_available is False
+    assert result.service is None
+    assert result.unavailable_reason == "Outbound acknowledgement is disabled."
+    assert FakeTwilioOutboundMessageAdapter.calls == []
+
+
+def test_get_outbound_acknowledgement_service_blocks_non_postgres_storage(
+    monkeypatch,
+) -> None:
+    _complete_outbound_settings(monkeypatch)
+
+    result = setup.get_outbound_acknowledgement_service(InMemoryStorage())
+
+    assert result.is_available is False
+    assert result.unavailable_reason == "Outbound acknowledgement requires Postgres storage."
+
+
+@pytest.mark.parametrize(
+    ("setting_name", "expected_reason"),
+    [
+        (
+            "duna_outbound_tenant_id",
+            "Outbound acknowledgement tenant binding is not configured.",
+        ),
+        ("twilio_account_sid", "Twilio account SID is not configured."),
+        ("twilio_auth_token", "Twilio auth token is not configured."),
+        ("twilio_whatsapp_from", "Twilio WhatsApp sender is not configured."),
+    ],
+)
+def test_get_outbound_acknowledgement_service_blocks_missing_config(
+    monkeypatch,
+    setting_name: str,
+    expected_reason: str,
+) -> None:
+    _complete_outbound_settings(monkeypatch)
+    monkeypatch.setattr(setup.settings, setting_name, " ")
+    FakeTwilioOutboundMessageAdapter.calls = []
+    monkeypatch.setattr(
+        setup,
+        "TwilioOutboundMessageAdapter",
+        FakeTwilioOutboundMessageAdapter,
+    )
+
+    result = setup.get_outbound_acknowledgement_service(_postgres_storage())
+
+    assert result.is_available is False
+    assert result.service is None
+    assert result.unavailable_reason == expected_reason
+    assert FakeTwilioOutboundMessageAdapter.calls == []
+
+
+def test_get_outbound_acknowledgement_service_unavailable_reason_hides_secrets(
+    monkeypatch,
+) -> None:
+    _complete_outbound_settings(monkeypatch)
+    monkeypatch.setattr(setup.settings, "twilio_whatsapp_from", None)
+
+    result = setup.get_outbound_acknowledgement_service(_postgres_storage())
+
+    assert result.unavailable_reason is not None
+    assert "AC_secret" not in result.unavailable_reason
+    assert "token-secret" not in result.unavailable_reason
+    assert "whatsapp:+15551234567" not in result.unavailable_reason
+
+
+def test_get_outbound_acknowledgement_service_constructs_when_ready(
+    monkeypatch,
+) -> None:
+    _complete_outbound_settings(monkeypatch)
+    FakeTwilioOutboundMessageAdapter.calls = []
+    monkeypatch.setattr(
+        setup,
+        "TwilioOutboundMessageAdapter",
+        FakeTwilioOutboundMessageAdapter,
+    )
+
+    result = setup.get_outbound_acknowledgement_service(_postgres_storage())
+
+    assert result.is_available is True
+    assert isinstance(result.service, OutboundAcknowledgementService)
+    assert result.tenant_id == "tenant-a"
+    assert result.from_number == "whatsapp:+15551234567"
+    assert result.unavailable_reason is None
+    assert FakeTwilioOutboundMessageAdapter.calls == [
+        {
+            "account_sid": "AC_secret",
+            "auth_token": "token-secret",
+        }
+    ]
+
+
+def test_storage_interface_is_not_extended_for_outbound_ui_setup() -> None:
+    assert all("outbound" not in name for name in StorageInterface.__abstractmethods__)
+
 
 def test_get_parsing_service_returns_none_without_api_key(monkeypatch) -> None:
     monkeypatch.setattr(setup.settings, "anthropic_api_key", None)
