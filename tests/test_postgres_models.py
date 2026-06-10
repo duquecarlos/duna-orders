@@ -1,6 +1,6 @@
 from importlib import import_module
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, Numeric, Text
+from sqlalchemy import JSON, Boolean, DateTime, Integer, Numeric, String, Text
 
 from duna_orders.storage.postgres_base import Base
 from duna_orders.storage.schema import (
@@ -11,12 +11,14 @@ from duna_orders.storage.schema import (
     PRODUCTS_TAB,
     STOCK_MOVEMENTS_TAB,
     TABS,
+    OUTBOUND_MESSAGES_TAB,
     PROCESSED_MESSAGES_TAB,
 )
 
 POSTGRES_ONLY_TABLES = {
     "processed_messages",
     "order_status_transitions",
+    "outbound_messages",
 }
 PRIMARY_ID_COLUMNS = {
     PRODUCTS_TAB: "product_id",
@@ -26,6 +28,7 @@ PRIMARY_ID_COLUMNS = {
     STOCK_MOVEMENTS_TAB: "stock_movement_id",
     PARSE_LOG_TAB: "parse_id",
     PROCESSED_MESSAGES_TAB: "message_sid",
+    OUTBOUND_MESSAGES_TAB: "outbound_message_id",
 }
 
 
@@ -189,3 +192,62 @@ def test_order_status_transitions_table_is_postgres_only() -> None:
     assert table.c.to_status.nullable is False
     assert table.c.occurred_at.nullable is False
     assert table.c.source.nullable is False
+
+
+def test_outbound_messages_table_is_postgres_only() -> None:
+    load_postgres_models()
+
+    table = Base.metadata.tables[OUTBOUND_MESSAGES_TAB]
+
+    assert [column.name for column in table.columns] == [
+        "outbound_message_id",
+        "tenant_id",
+        "order_id",
+        "acknowledgement_type",
+        "to_number",
+        "from_number",
+        "body",
+        "status",
+        "provider",
+        "provider_message_sid",
+        "attempt_count",
+        "last_error_code",
+        "last_error_message",
+        "requested_by",
+        "created_at",
+        "updated_at",
+        "sent_at",
+    ]
+    assert OUTBOUND_MESSAGES_TAB not in TABS
+    assert table.c.outbound_message_id.primary_key is True
+    assert table.c.tenant_id.nullable is False
+    assert table.c.order_id.nullable is False
+    assert table.c.acknowledgement_type.nullable is False
+    assert isinstance(table.c.body.type, Text)
+    assert isinstance(table.c.status.type, String)
+    assert isinstance(table.c.attempt_count.type, Integer)
+    assert isinstance(table.c.created_at.type, DateTime)
+    assert isinstance(table.c.updated_at.type, DateTime)
+
+
+def test_outbound_messages_unique_constraint_and_indexes_exist() -> None:
+    load_postgres_models()
+
+    table = Base.metadata.tables[OUTBOUND_MESSAGES_TAB]
+    unique_constraints = {
+        constraint.name: [column.name for column in constraint.columns]
+        for constraint in table.constraints
+        if constraint.name
+    }
+    actual_indexes = {index.name for index in table.indexes}
+
+    assert unique_constraints["uq_outbound_messages_tenant_order_ack_type"] == [
+        "tenant_id",
+        "order_id",
+        "acknowledgement_type",
+    ]
+    assert {
+        "ix_outbound_messages_tenant_id_order_id",
+        "ix_outbound_messages_tenant_id_status",
+        "ix_outbound_messages_tenant_id_created_at",
+    } <= actual_indexes

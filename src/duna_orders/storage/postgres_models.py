@@ -3,7 +3,18 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from duna_orders.domain.models import utc_now
@@ -13,6 +24,7 @@ from duna_orders.storage.schema import (
     ORDERS_TAB,
     ORDER_ITEMS_TAB,
     ORDER_STATUS_TRANSITIONS_TAB,
+    OUTBOUND_MESSAGES_TAB,
     PARSE_LOG_TAB,
     PRODUCTS_TAB,
     STOCK_MOVEMENTS_TAB,
@@ -277,4 +289,46 @@ class ProcessedMessageRow(Base):
     __table_args__ = (
         Index("ix_processed_messages_tenant_id_received_at", "tenant_id", "received_at"),
         Index("ix_processed_messages_tenant_id_resulting_order_id", "tenant_id", "resulting_order_id"),
+    )
+
+
+class OutboundMessageRow(Base):
+    __tablename__ = OUTBOUND_MESSAGES_TAB
+
+    outbound_message_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(TENANT_ID_LENGTH), nullable=False)
+    order_id: Mapped[str] = mapped_column(String(ID_LENGTH), nullable=False)
+    acknowledgement_type: Mapped[str] = mapped_column(String(STATUS_LENGTH), nullable=False)
+    to_number: Mapped[str] = mapped_column(String(PHONE_LENGTH), nullable=False)
+    from_number: Mapped[str] = mapped_column(String(PHONE_LENGTH), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(STATUS_LENGTH), nullable=False)
+    provider: Mapped[str] = mapped_column(String(STATUS_LENGTH), nullable=False)
+    provider_message_sid: Mapped[str | None] = mapped_column(String(ID_LENGTH))
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_error_code: Mapped[str | None] = mapped_column(String(SHORT_TEXT_LENGTH))
+    last_error_message: Mapped[str | None] = mapped_column(Text)
+    requested_by: Mapped[str] = mapped_column(String(SHORT_TEXT_LENGTH), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "order_id",
+            "acknowledgement_type",
+            name="uq_outbound_messages_tenant_order_ack_type",
+        ),
+        Index("ix_outbound_messages_tenant_id_order_id", "tenant_id", "order_id"),
+        Index("ix_outbound_messages_tenant_id_status", "tenant_id", "status"),
+        Index("ix_outbound_messages_tenant_id_created_at", "tenant_id", "created_at"),
     )

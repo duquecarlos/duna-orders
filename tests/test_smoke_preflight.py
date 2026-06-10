@@ -45,7 +45,7 @@ def test_preflight_passes_with_configured_sqlite_database_at_head(
     capsys,
 ) -> None:
     database_url = sqlite_url(tmp_path)
-    stamp_revision(database_url, "d2f7b8a4c901")
+    stamp_revision(database_url, "f3b2c1d4e5a6")
 
     exit_code = smoke_preflight.run_preflight(make_settings(database_url))
 
@@ -53,7 +53,7 @@ def test_preflight_passes_with_configured_sqlite_database_at_head(
 
     assert exit_code == 0
     assert "PASS: database connectivity - connected" in output
-    assert "PASS: alembic revision state - current=d2f7b8a4c901; head=d2f7b8a4c901" in output
+    assert "PASS: alembic revision state - current=f3b2c1d4e5a6; head=f3b2c1d4e5a6" in output
     assert "SUMMARY: PASS" in output
     assert "super-secret-token" not in output
 
@@ -70,7 +70,7 @@ def test_preflight_fails_and_prints_upgrade_command_when_database_is_behind(
     output = capsys.readouterr().out
 
     assert exit_code == 1
-    assert "FAIL: alembic revision state - current=b7f4c8e2a901; head=d2f7b8a4c901" in output
+    assert "FAIL: alembic revision state - current=b7f4c8e2a901; head=f3b2c1d4e5a6" in output
     assert "alembic upgrade head" in output
     assert "SUMMARY: FAIL" in output
 

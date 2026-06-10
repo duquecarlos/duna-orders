@@ -6,6 +6,7 @@ STOCK_MOVEMENTS_TAB = "stock_movements"
 PARSE_LOG_TAB = "parse_log"
 PROCESSED_MESSAGES_TAB = "processed_messages"
 ORDER_STATUS_TRANSITIONS_TAB = "order_status_transitions"
+OUTBOUND_MESSAGES_TAB = "outbound_messages"
 
 ORDER_STATUSES = (
     "draft",
