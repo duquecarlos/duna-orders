@@ -1,6 +1,55 @@
 # Changelog
 ## Unreleased
 
+### M9.1 - Conversation store foundation
+
+Implemented in `e25634a feat(m9): add conversation state store`.
+
+#### Delivered
+
+* Added a narrow `ConversationStateStore` protocol outside `StorageInterface`.
+* Added `PostgresConversationStateStore` as a persistence-only store.
+* Added Postgres conversation state models:
+  `conversation_sessions` and `conversation_turns`.
+* Added Alembic migration
+  `alembic/versions/2026_06_10_0003-add_conversation_state.py`.
+* Added schema constants for conversation session and turn tables.
+* Added store-only tests for idempotency, tenant isolation, turn ordering,
+  reachable status, and session timestamp/version behavior.
+* Added live Postgres coverage for concurrent open-session creation and
+  concurrent duplicate turn append.
+* Added metadata guard coverage for the new Postgres-only tables.
+* Updated smoke preflight's Alembic head expectation.
+
+#### Safety conclusions
+
+* Store is persistence only.
+* No parser imports or calls.
+* No draft creation.
+* No webhook wiring.
+* No UI.
+* No `StorageInterface` changes.
+* No `OrderService` changes.
+* No `PROMPT_VERSION` changes.
+* No customer phone normalization or matching changes.
+* No four-hour expiry logic in the store.
+* No `accumulated_text`.
+* No `resulting_order_id`.
+* No `latest_parse_status` or `latest_parse_error`.
+* No `mark_draft_created(...)` or `expire_session(...)` methods.
+* Only `open` status is written/reachable by M9.1 store methods.
+* Turns are the canonical transcript source for future M9.2 work.
+
+#### Verification
+
+* `pytest -q` passed: `519 passed, 25 deselected`.
+* `pytest -q -m live_postgres tests\test_conversation_state_store.py tests\test_postgres_live_smoke.py`
+  passed: `4 passed, 8 deselected`.
+* `ruff check src tests` passed.
+* `python -m compileall src tests` passed.
+* `alembic upgrade head` passed against configured Postgres.
+* `git diff --check` passed with LF-to-CRLF warnings only.
+
 ### M9.0 - Conversation state architecture design lock
 
 Documented.

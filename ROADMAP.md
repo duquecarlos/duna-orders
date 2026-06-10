@@ -8,7 +8,7 @@ Detailed completed work belongs in `CHANGELOG.md`. This file only keeps mileston
 
 ## M9 - Conversation state architecture
 
-Status: design locked for M9.0; implementation not started.
+Status: M9.1 closed; M9.2 planned.
 
 M9 introduces conversation state as the next real WhatsApp capability. The goal
 is to support customers who order across multiple messages while preserving the
@@ -37,17 +37,21 @@ Scope completed:
 
 ### M9.1 - Conversation store foundation
 
-Status: planned.
+Status: closed.
 
-Scope:
+Scope completed:
 
-* Add conversation session and turn state models.
-* Add a narrow `ConversationStateStore` protocol outside `StorageInterface`.
-* Add Postgres tables for sessions and turns.
-* Enforce append-turn idempotency by `message_sid`.
-* Resolve sessions by `tenant_id`, customer phone, and idle boundary.
-* Add optimistic versioning or transaction-level locking for close-arriving
-  same-customer turns.
+* Added conversation session and turn state models.
+* Added a narrow `ConversationStateStore` protocol outside `StorageInterface`.
+* Added `PostgresConversationStateStore`.
+* Added Postgres tables for sessions and turns.
+* Added append-turn idempotency by tenant-scoped `message_sid`.
+* Added one-open-session protection through a partial unique index on
+  `(tenant_id, customer_phone) WHERE status = 'open'`.
+* Added transaction-level locking for append sequencing and session timestamp
+  updates.
+* Added store-only tests and live Postgres constraint/concurrency coverage.
+* Updated Postgres metadata guards and smoke preflight Alembic head expectation.
 
 Explicitly excluded:
 
@@ -56,6 +60,9 @@ Explicitly excluded:
 * Webhook wiring.
 * UI.
 * Outbound conversational replies.
+* Four-hour expiry policy in the store.
+* `resulting_order_id`, parse-status fields, `mark_draft_created(...)`, and
+  `expire_session(...)`.
 
 ### M9.2 - Conversation advancement service
 

@@ -1,4 +1,48 @@
 # Architectural Decisions
+## M9.1 - Conversation store foundation is persistence-only
+
+Decision:
+Close M9.1 as a narrow Postgres-backed conversation persistence slice outside
+`StorageInterface`.
+
+Details:
+
+* `ConversationStateStore` exposes exactly four methods:
+  `get_or_create_open_session(...)`, `append_turn_if_new(...)`,
+  `list_turns(...)`, and `get_session(...)`.
+* `PostgresConversationStateStore` is persistence only. It does not import or
+  call parser code, `OrderService`, webhook code, UI code, or draft-creation
+  paths.
+* `conversation_sessions` stores only `conversation_id`, `tenant_id`,
+  `customer_phone`, `status`, `opened_at`, `last_message_at`, `version`,
+  `created_at`, and `updated_at`.
+* `conversation_turns` stores only `turn_id`, `conversation_id`, `tenant_id`,
+  `message_sid`, `from_number`, `body`, `received_at`, `sequence_number`, and
+  `created_at`.
+* The database enforces at most one open session per tenant/customer with a
+  partial unique index on `(tenant_id, customer_phone) WHERE status = 'open'`.
+* Conversation turn idempotency is tenant-scoped with a unique constraint on
+  `(tenant_id, message_sid)`.
+* Turns are canonical. M9.1 does not add `accumulated_text`.
+* M9.1 defines the stable status set `open`, `draft_created`, `expired`, and
+  `failed`, but only `open` is written/reachable by store methods.
+* The store accepts `customer_phone` as supplied by its caller and does not
+  normalize or match customer identity.
+* M9.1 does not implement four-hour expiry logic; idle policy belongs to the
+  future advancement/service layer.
+
+Deferred:
+
+* Parser calls and transcript rendering.
+* Draft creation.
+* Webhook wiring.
+* Operator UI.
+* `mark_draft_created(...)`.
+* `expire_session(...)`.
+* `resulting_order_id`.
+* `latest_parse_status` and `latest_parse_error`.
+* Bot question policy and outbound conversational replies.
+
 ## M9.0 - Conversation state architecture design lock
 
 Decision:

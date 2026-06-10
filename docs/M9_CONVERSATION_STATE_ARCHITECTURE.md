@@ -1,6 +1,6 @@
 # M9 Conversation State Architecture
 
-Status: design locked for M9.0.
+Status: M9.0 design locked; M9.1 store foundation implemented.
 
 Baseline: `6bd4c40 docs(outbound): close retry attempt limit`
 
@@ -118,8 +118,10 @@ Minimal conversation session fields:
 * `opened_at`;
 * `last_message_at`;
 * `version`;
-* `resulting_order_id`;
-* optional derived cache fields for read efficiency.
+
+M9.1 implemented only those persistence fields. Orchestration-owned fields such
+as `resulting_order_id`, `latest_parse_status`, and `latest_parse_error` are
+deferred to M9.2 or later.
 
 Recommended session statuses:
 
@@ -139,10 +141,9 @@ Minimal conversation turn fields:
 * `received_at`;
 * `sequence_number`.
 
-Conversation turns are canonical. Any `accumulated_text` or transcript summary
-stored on the session is a derived cache only. It must not be the only source
-of truth because operator review, replay, idempotency checks, and future evals
-need the original ordered turns.
+Conversation turns are canonical. M9.1 does not store `accumulated_text`.
+Future transcript text must be reconstructed from ordered turns, or treated as
+a derived cache only.
 
 ## 3. Persistence boundary
 
@@ -165,15 +166,25 @@ Reasons:
 
 Store responsibilities:
 
-* find or create an open conversation for `(tenant_id, customer_phone)` within
-  the idle window;
+* find or create an open conversation for `(tenant_id, customer_phone)`;
 * append a turn idempotently by `message_sid`;
 * preserve turn order;
 * enforce `message_sid` uniqueness;
 * protect same-customer concurrent updates through optimistic versioning or
   transaction-level locking;
-* update session status and `resulting_order_id`;
 * expose read methods needed later by operator diagnostics.
+
+M9.1 store responsibilities are narrower:
+
+* expose exactly `get_or_create_open_session(...)`,
+  `append_turn_if_new(...)`, `list_turns(...)`, and `get_session(...)`;
+* write only `open` sessions;
+* store customer phone exactly as received from the caller;
+* avoid idle-expiry policy, parser calls, draft creation, webhook wiring, and
+  UI behavior.
+
+M9.1 deliberately does not expose `mark_draft_created(...)` or
+`expire_session(...)`; those require orchestration state and are deferred.
 
 Service responsibilities:
 
@@ -411,14 +422,21 @@ No code, tests, migrations, commits, or pushes.
 
 ### M9.1 - Store foundation only
 
-Scope:
+Status: implemented in `e25634a feat(m9): add conversation state store`.
 
-* domain/state models for conversation session and turn;
-* narrow `ConversationStateStore` protocol outside `StorageInterface`;
-* Postgres tables for sessions and turns;
-* append-turn idempotency by `message_sid`;
-* session lookup by `tenant_id`, `customer_phone`, and idle boundary;
-* versioning or locking contract for close-arriving turns.
+Scope completed:
+
+* Added domain/state dataclasses for conversation session and turn.
+* Added narrow `ConversationStateStore` protocol outside `StorageInterface`.
+* Added `PostgresConversationStateStore`.
+* Added Postgres tables for sessions and turns.
+* Added append-turn idempotency by tenant-scoped `message_sid`.
+* Added session lookup by `tenant_id` and `customer_phone`.
+* Added a partial unique index enforcing one open session per tenant/customer.
+* Added transaction-level locking for append sequencing and session timestamp
+  updates.
+* Added store-only tests, metadata guard coverage, and live Postgres
+  constraint/concurrency coverage.
 
 Explicitly excluded:
 
@@ -428,6 +446,9 @@ Explicitly excluded:
 * UI;
 * outbound replies;
 * `StorageInterface` changes.
+* four-hour expiry policy in the store;
+* `resulting_order_id`, parse-status fields, `mark_draft_created(...)`, and
+  `expire_session(...)`.
 
 ### M9.2 - Advancement service
 
