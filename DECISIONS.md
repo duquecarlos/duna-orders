@@ -1,4 +1,44 @@
 # Architectural Decisions
+## M9.2C-0 - Latest customer conversation lookup is implemented
+
+Decision:
+Add a read-only routing lookup,
+`get_latest_session_for_customer(tenant_id, customer_phone)`, ahead of the
+M9.2C advancement service so the service can route a post-`draft_created`
+message to the customer's existing latest session instead of opening a new
+one.
+
+Details:
+
+* `ConversationStateStore.get_latest_session_for_customer(*, tenant_id,
+  customer_phone)` is implemented in `PostgresConversationStateStore`.
+* `tenant_id` is required explicitly; `customer_phone` is matched exactly as
+  stored, with no normalization.
+* Returns the latest `ConversationSession` for the tenant/customer regardless
+  of status (`open`, `draft_created`, `expired`, or `failed`).
+* Ordering is deterministic: `last_message_at DESC, updated_at DESC,
+  opened_at DESC, conversation_id DESC`.
+* Returns `None` if no session exists for the tenant/customer.
+* Read-only: does not create sessions, append turns, mark `draft_created`,
+  call the parser, call `OrderService`, or touch `StorageInterface`.
+* No migration needed; no `conversation_sessions` schema change.
+
+Rationale:
+
+* `get_or_create_open_session` only finds sessions with `status="open"`. After
+  a session is marked `draft_created`, it is invisible to that lookup, so a
+  later message from the same customer would open a brand-new session instead
+  of attaching to the session that already produced a draft.
+* M9.2C needs to find that latest session, regardless of status, to route the
+  message and return `ALREADY_HAS_DRAFT` rather than risk a second draft.
+
+Deferred:
+
+* M9.2C conversation advancement service orchestration, including how it uses
+  this lookup.
+* True new-order session boundary / idle-expiry policy.
+* Webhook, UI, and outbound wiring.
+
 ## M9.2B - Conversation draft-link schema and persistence are implemented
 
 Decision:

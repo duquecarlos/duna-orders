@@ -1,7 +1,8 @@
 # M9 Conversation State Architecture
 
 Status: M9.0 design locked; M9.1 store foundation implemented; M9.2A
-advancement seam refined; M9.2B draft-link persistence implemented.
+advancement seam refined; M9.2B draft-link persistence implemented; M9.2C-0
+latest-session lookup implemented.
 
 Baseline: `6bd4c40 docs(outbound): close retry attempt limit`
 

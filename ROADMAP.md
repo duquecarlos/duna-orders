@@ -8,7 +8,7 @@ Detailed completed work belongs in `CHANGELOG.md`. This file only keeps mileston
 
 ## M9 - Conversation state architecture
 
-Status: M9.2B closed; M9.2C planned.
+Status: M9.2C-0 closed; M9.2C planned.
 
 M9 introduces conversation state as the next real WhatsApp capability. The goal
 is to support customers who order across multiple messages while preserving the
@@ -109,6 +109,37 @@ Explicitly excluded:
 * Draft advancement flow.
 * Header migration for existing live Sheets spreadsheets predating the new
   `conversation_id` column; `live_sheets` was not run.
+
+### M9.2C-0 - Latest customer conversation lookup
+
+Status: closed.
+
+Scope completed:
+
+* Added `ConversationStateStore.get_latest_session_for_customer(tenant_id,
+  customer_phone)`.
+* Implemented it in `PostgresConversationStateStore`.
+* Requires explicit `tenant_id` and matches `customer_phone` exactly as
+  stored, with no normalization.
+* Returns the latest `ConversationSession` for a tenant/customer regardless of
+  status, ordered deterministically by `last_message_at DESC, updated_at DESC,
+  opened_at DESC, conversation_id DESC`.
+* Returns `None` if no matching session exists.
+* Read-only: does not create sessions, append turns, mark `draft_created`,
+  call the parser, call `OrderService`, or touch `StorageInterface`.
+
+Reason:
+
+* M9.2C must not call `get_or_create_open_session` blindly after a customer's
+  latest session is `draft_created`. A post-`draft_created` message must
+  attach to that existing latest session and return `ALREADY_HAS_DRAFT`, not
+  create a new open session and not create a second draft.
+
+Explicitly excluded:
+
+* M9.2C service orchestration.
+* True new-order session boundary / idle-expiry policy.
+* Webhook, UI, and outbound.
 
 ### M9.2C - Conversation advancement service
 

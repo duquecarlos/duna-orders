@@ -1,6 +1,50 @@
 # Changelog
 ## Unreleased
 
+### M9.2C-0 - Latest customer conversation lookup
+
+Implemented in `981604a feat(m9): add latest conversation session lookup`.
+
+#### Delivered
+
+* Added `ConversationStateStore.get_latest_session_for_customer(tenant_id,
+  customer_phone)`.
+* Implemented it in `PostgresConversationStateStore`.
+* Returns the latest `ConversationSession` for a tenant/customer regardless of
+  status, ordered deterministically by `last_message_at DESC, updated_at DESC,
+  opened_at DESC, conversation_id DESC`.
+* Returns `None` if no matching session exists.
+
+#### Safety conclusions
+
+* Read-only: does not create sessions, append turns, mark `draft_created`,
+  call the parser, call `OrderService`, or touch `StorageInterface`.
+* Requires explicit `tenant_id`.
+* Matches `customer_phone` exactly as stored; no normalization.
+* No migration needed.
+
+#### Reason
+
+* M9.2C must not call `get_or_create_open_session` blindly after a customer's
+  latest session is `draft_created`. A post-`draft_created` message must
+  attach to that existing latest session and return `ALREADY_HAS_DRAFT`, not
+  create a new open session and not create a second draft.
+
+#### Deferred
+
+* True new-order session boundary / idle-expiry policy.
+* M9.2C service implementation.
+* Webhook, UI, and outbound remain untouched.
+
+#### Verification
+
+* `pytest tests/test_conversation_state_store.py -q` passed:
+  `22 passed, 4 deselected`.
+* `pytest -q` passed: `548 passed, 29 deselected`.
+* `ruff check src tests pages` passed.
+* `python -m compileall src tests pages` passed.
+* `git diff --check` passed with LF-to-CRLF warnings only.
+
 ### M9.2B - Conversation draft-link schema and persistence
 
 Implemented in `9677ded feat(m9): add conversation draft links`.

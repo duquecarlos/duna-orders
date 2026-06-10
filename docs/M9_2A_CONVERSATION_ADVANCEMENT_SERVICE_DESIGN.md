@@ -191,6 +191,29 @@ Explicitly excluded:
 * UI;
 * draft advancement flow.
 
+### M9.2C-0 - Latest customer conversation lookup
+
+Status: implemented in `981604a feat(m9): add latest conversation session
+lookup`.
+
+Scope:
+
+* `ConversationStateStore.get_latest_session_for_customer(tenant_id,
+  customer_phone)`, implemented in `PostgresConversationStateStore`.
+* Read-only; returns the latest `ConversationSession` for a tenant/customer
+  regardless of status, ordered by `last_message_at DESC, updated_at DESC,
+  opened_at DESC, conversation_id DESC`, or `None`.
+* Required so M9.2C can route a post-`draft_created` message to the existing
+  latest session and return `ALREADY_HAS_DRAFT`, instead of calling
+  `get_or_create_open_session` (which only finds `open` sessions) and risking
+  a second draft.
+
+Explicitly excluded:
+
+* service orchestration;
+* webhook wiring;
+* UI.
+
 ### M9.2C - Advancement service
 
 Scope:
@@ -263,6 +286,13 @@ Duplicate `message_sid` behavior:
 * no parser call;
 * no draft creation;
 * return `DUPLICATE_MESSAGE`.
+
+M9.2C-0 added `get_latest_session_for_customer(tenant_id, customer_phone)` as
+a read-only routing lookup. Before step 1, M9.2C must use it to check the
+customer's latest session: if it exists and is not `open` (for example
+`draft_created`), M9.2C routes the inbound message to that latest session
+instead of opening a new one, because `get_or_create_open_session` only finds
+`open` sessions and would otherwise miss it.
 
 Draft creation flow:
 
