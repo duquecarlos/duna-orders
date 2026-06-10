@@ -6,6 +6,71 @@ number for one already-confirmed order, using a throwaway Neon branch.
 Do not run this smoke against production or the keeper runtime database. Do not
 automate real sends. Keep outbound disabled by default outside this manual run.
 
+## Latest Result
+
+Status: passed.
+
+Manual outbound smoke passed on a throwaway Neon branch. Alembic upgraded
+successfully to head `a4b7c9d2e6f1`, and preflight passed with
+`SUMMARY: PASS (15/15 checks passed)`.
+
+Initial diagnostic attempts failed safely:
+
+* first attempt failed with Twilio `20003` because credentials were placeholder
+  or incorrect;
+* second attempt failed with Twilio `21910` because the WhatsApp From/To channel
+  pair was invalid.
+
+The channel-pair issue was fixed by
+`c769dae fix(outbound): normalize WhatsApp recipient addresses`. When the sender
+starts with `whatsapp:`, the adapter sends a plain E.164 customer phone snapshot
+to Twilio as `whatsapp:+...` without mutating stored order or customer data.
+
+After joining the Twilio WhatsApp Sandbox again and using fresh confirmed order
+`demo_ord_01486`, the real WhatsApp acknowledgement arrived.
+
+Successful outbound row:
+
+```text
+outbound_message_id=out_01ktr15dq66n1q6x3v8atdwz6f
+tenant_id=el-fogon-colombiano
+order_id=demo_ord_01486
+acknowledgement_type=order_confirmed_ack
+status=sent
+provider=twilio
+provider_message_id=<populated>
+attempt_count=1
+last_error_code=null
+last_error_message=null
+sent_at=<populated>
+```
+
+Duplicate suppression check passed:
+
+```text
+outcome=suppressed_duplicate
+reason=Acknowledgement was already sent.
+attempted=False
+sent=False
+```
+
+The duplicate attempt reused the same `outbound_message_id`, left status as
+`sent`, kept `provider_message_id` populated, kept `attempt_count=1`, created no
+second row, and produced no second send side effect.
+
+The local `.env` was reset after the smoke:
+
+```text
+DUNA_STORAGE_BACKEND=memory
+DUNA_OUTBOUND_ENABLED=false
+```
+
+The throwaway Neon branch is being kept temporarily and will auto-delete later.
+
+Important constraints remain unchanged: Twilio API acceptance is not delivery or
+read callback proof; delivery/read callbacks, UI, queue/worker behavior,
+auto-send on confirm, and payment-dependent content remain deferred.
+
 ## 1. Prepare Throwaway Neon Branch
 
 Create a throwaway Neon branch, for example:
@@ -33,6 +98,10 @@ $env:TWILIO_WHATSAPP_FROM="whatsapp:+14155238886"
 Use the Twilio WhatsApp sender approved for the account or sandbox. Send only to
 your own WhatsApp number by choosing or creating a confirmed test order whose
 customer phone snapshot is your own test number.
+
+For Twilio Sandbox smoke, the recipient number must be joined to the sandbox
+before sending. If the recipient has left or the sandbox session expires, join
+the sandbox again before running the smoke.
 
 The confirmed order may store the customer phone as plain E.164, such as
 `+573001112233`. When `TWILIO_WHATSAPP_FROM` starts with `whatsapp:`, the

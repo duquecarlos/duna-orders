@@ -332,15 +332,22 @@ Completed scope:
   states.
 * Kept outbound persistence outside `StorageInterface` and decoupled from the
   confirmation transaction.
+* Added the real Twilio outbound adapter behind the proven provider-neutral
+  boundary.
+* Added env-gated outbound pilot configuration and preflight checks.
+* Manual real Twilio outbound smoke passed on a throwaway Neon branch with
+  confirmed order `demo_ord_01486`.
+* Duplicate suppression passed with no second row and no second send side
+  effect.
+* The adapter normalizes plain E.164 customer phone snapshots to
+  `whatsapp:+...` when the configured sender is a WhatsApp channel address.
 
 Deferred follow-ups:
 
-* M8.6.1A-3: real adapter plus outbound smoke behind the proven adapter
-  boundary.
-* M8.6.1B: operator UI plus a UI-facing result model with a distinct
-  may-have-sent investigation state.
+* M8.6.1B: operator UI.
 * Delivery/read callbacks.
 * Queue/worker behavior.
+* Auto-send on confirm.
 * Payment-dependent acknowledgement content.
 
 ### M8.5D-F - Stage 1 scoped-read caller migrations

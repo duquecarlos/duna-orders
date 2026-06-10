@@ -22,16 +22,68 @@ Implemented.
 * Kept outbound persistence outside `StorageInterface`.
 * Kept outbound service reads tenant-scoped and covered by the architecture
   boundary guard.
+* Added the real Twilio outbound acknowledgement adapter behind the proven
+  provider-neutral adapter boundary.
+* Added env-gated outbound pilot configuration with outbound disabled by
+  default.
+* Added outbound smoke preflight checks for tenant binding, Twilio credentials,
+  and WhatsApp sender identity.
+* Added a guarded manual outbound smoke script and runbook for throwaway-branch
+  verification only.
+* Confirmed the adapter normalizes plain E.164 customer phone snapshots to
+  `whatsapp:+...` when the configured sender is a WhatsApp channel address.
+
+#### Manual outbound smoke
+
+* Real Twilio adapter smoke passed on a throwaway Neon branch.
+* Alembic upgraded successfully to head `a4b7c9d2e6f1`.
+* Preflight passed with `SUMMARY: PASS (15/15 checks passed)`.
+* Initial diagnostic attempts failed safely:
+  * Twilio `20003` from placeholder/bad credentials;
+  * Twilio `21910` from an invalid WhatsApp From/To channel pair.
+* The WhatsApp channel mismatch was fixed by
+  `c769dae fix(outbound): normalize WhatsApp recipient addresses`.
+* After rejoining the Twilio WhatsApp Sandbox and using fresh confirmed order
+  `demo_ord_01486`, the real WhatsApp acknowledgement arrived.
+* The successful `outbound_messages` row was:
+  * `outbound_message_id=out_01ktr15dq66n1q6x3v8atdwz6f`;
+  * `tenant_id=el-fogon-colombiano`;
+  * `order_id=demo_ord_01486`;
+  * `acknowledgement_type=order_confirmed_ack`;
+  * `status=sent`;
+  * `provider=twilio`;
+  * `provider_message_id` populated;
+  * `attempt_count=1`;
+  * `last_error_code=null`;
+  * `last_error_message=null`;
+  * `sent_at` populated.
+* Duplicate suppression passed:
+  * service outcome `suppressed_duplicate`;
+  * reason `Acknowledgement was already sent.`;
+  * `attempted=False`;
+  * `sent=False`;
+  * same `outbound_message_id`;
+  * status remained `sent`;
+  * `provider_message_id` remained populated;
+  * `attempt_count` stayed `1`;
+  * no second row and no second send side effect.
+* Local `.env` was reset after smoke:
+  * `DUNA_STORAGE_BACKEND=memory`;
+  * `DUNA_OUTBOUND_ENABLED=false`.
+* The throwaway Neon branch is being kept temporarily and will auto-delete
+  later.
 
 #### Deferred
 
-* No real Twilio adapter or Twilio REST client.
-* No config/env sender wiring.
 * No UI or Streamlit changes.
-* No real sends.
 * No coupling into the confirmation transaction or `OrderService`.
 * No parser behavior or `PROMPT_VERSION` changes.
 * No `StorageInterface` extension.
+* No auto-send on confirm.
+* No queue/worker behavior.
+* No delivery/read callbacks. Twilio API acceptance is not proof of delivery or
+  read status.
+* No payment-dependent acknowledgement content.
 
 ### M8.5 Stage 2B-2 - Unscoped broad-read naming
 
