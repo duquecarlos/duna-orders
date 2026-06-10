@@ -20,7 +20,10 @@ from duna_orders.services.tenant_scoped_reads import TenantScopedReadService
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.storage.sheets import GoogleSheetsStorage
-from duna_orders.storage.outbound_messages import PostgresOutboundAcknowledgementStore
+from duna_orders.storage.outbound_messages import (
+    OutboundAcknowledgementStore,
+    PostgresOutboundAcknowledgementStore,
+)
 from duna_orders.storage.order_lifecycle import PostgresOrderLifecycleStore
 from duna_orders.storage.postgres import PostgresStorage
 from duna_orders.storage.processed_messages import PostgresProcessedMessageStore
@@ -29,6 +32,7 @@ from duna_orders.storage.processed_messages import PostgresProcessedMessageStore
 @dataclass(frozen=True)
 class OutboundAcknowledgementServiceSetup:
     service: OutboundAcknowledgementService | None
+    acknowledgement_store: OutboundAcknowledgementStore | None = None
     tenant_id: str | None = None
     from_number: str | None = None
     unavailable_reason: str | None = None
@@ -92,15 +96,18 @@ def get_outbound_acknowledgement_service(
     if from_number is None:
         return _outbound_unavailable("Twilio WhatsApp sender is not configured.")
 
+    acknowledgement_store = PostgresOutboundAcknowledgementStore(storage._session_factory)
+
     return OutboundAcknowledgementServiceSetup(
         service=OutboundAcknowledgementService(
             order_reader=TenantScopedReadService(storage),
-            store=PostgresOutboundAcknowledgementStore(storage._session_factory),
+            store=acknowledgement_store,
             adapter=TwilioOutboundMessageAdapter(
                 account_sid=account_sid,
                 auth_token=auth_token,
             ),
         ),
+        acknowledgement_store=acknowledgement_store,
         tenant_id=tenant_id,
         from_number=from_number,
     )

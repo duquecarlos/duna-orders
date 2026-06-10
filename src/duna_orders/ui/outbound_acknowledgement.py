@@ -7,6 +7,7 @@ from duna_orders.services.outbound_acknowledgement import (
     OutboundAcknowledgementOutcome,
     OutboundAcknowledgementResult,
 )
+from duna_orders.storage.outbound_messages import OutboundAcknowledgement
 
 
 OutboundAcknowledgementUiSeverity = Literal["success", "info", "warning", "error"]
@@ -18,6 +19,12 @@ _BLOCKED_PRECONDITION_FALLBACK_MESSAGE = "Acknowledgement cannot be sent yet."
 class OutboundAcknowledgementUiMessage:
     severity: OutboundAcknowledgementUiSeverity
     message: str
+
+
+@dataclass(frozen=True)
+class OutboundAcknowledgementStatusUiState:
+    message: str
+    show_send_button: bool
 
 
 def map_acknowledgement_result_to_ui_message(
@@ -64,3 +71,56 @@ def _blocked_precondition_message(reason: object) -> str:
         return reason
 
     return _BLOCKED_PRECONDITION_FALLBACK_MESSAGE
+
+
+def map_acknowledgement_status_to_ui_state(
+    acknowledgement: OutboundAcknowledgement | None,
+    *,
+    has_required_order_details: bool,
+) -> OutboundAcknowledgementStatusUiState:
+    if not has_required_order_details:
+        return OutboundAcknowledgementStatusUiState(
+            message="Acknowledgement cannot be sent — order is missing required details.",
+            show_send_button=False,
+        )
+
+    if acknowledgement is None:
+        return OutboundAcknowledgementStatusUiState(
+            message="No acknowledgement has been sent yet.",
+            show_send_button=True,
+        )
+
+    if acknowledgement.status == "sent":
+        return OutboundAcknowledgementStatusUiState(
+            message="Acknowledgement was already sent.",
+            show_send_button=False,
+        )
+
+    if acknowledgement.status in {"send_requested", "sending"}:
+        return OutboundAcknowledgementStatusUiState(
+            message="Acknowledgement is being sent.",
+            show_send_button=False,
+        )
+
+    if acknowledgement.status == "unknown":
+        return OutboundAcknowledgementStatusUiState(
+            message=(
+                "Acknowledgement status is unclear — it may already have been sent. "
+                "Check before taking any action."
+            ),
+            show_send_button=False,
+        )
+
+    if acknowledgement.status == "failed":
+        return OutboundAcknowledgementStatusUiState(
+            message="Acknowledgement could not be sent. Retry is not available yet.",
+            show_send_button=False,
+        )
+
+    return OutboundAcknowledgementStatusUiState(
+        message=(
+            "Acknowledgement status is unclear — it may already have been sent. "
+            "Check before taking any action."
+        ),
+        show_send_button=False,
+    )

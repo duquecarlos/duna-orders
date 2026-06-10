@@ -252,6 +252,7 @@ def test_get_outbound_acknowledgement_service_constructs_when_ready(
 
     assert result.is_available is True
     assert isinstance(result.service, OutboundAcknowledgementService)
+    assert result.acknowledgement_store is not None
     assert result.tenant_id == "tenant-a"
     assert result.from_number == "whatsapp:+15551234567"
     assert result.unavailable_reason is None

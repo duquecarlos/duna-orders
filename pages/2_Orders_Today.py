@@ -14,10 +14,10 @@ from duna_orders.services.order_visibility import filter_today_orders
 from duna_orders.services.orders import OrderService, get_allowed_next_statuses
 from duna_orders.services.tenant_scoped_reads import TenantScopedReadService
 from duna_orders.storage.base import StorageInterface
+from duna_orders.storage.outbound_messages import ORDER_CONFIRMED_ACK
 from duna_orders.storage.read_context import sheets_request_context
 from duna_orders.ui.outbound_acknowledgement import (
-    OutboundAcknowledgementUiMessage,
-    map_acknowledgement_result_to_ui_message,
+    map_acknowledgement_status_to_ui_state,
 )
 from duna_orders.ui.setup import (
     OutboundAcknowledgementServiceSetup,
@@ -79,19 +79,6 @@ def _format_local_datetime(value: datetime) -> str:
     timezone = ZoneInfo(settings.default_timezone)
     return value.astimezone(timezone).strftime("%Y-%m-%d %H:%M")
 
-def _display_acknowledgement_ui_message(
-    message: OutboundAcknowledgementUiMessage,
-) -> None:
-    if message.severity == "success":
-        st.success(message.message)
-    elif message.severity == "info":
-        st.info(message.message)
-    elif message.severity == "warning":
-        st.warning(message.message)
-    else:
-        st.error(message.message)
-
-
 def _render_outbound_acknowledgement_action(
     order: Order,
     *,
@@ -104,24 +91,39 @@ def _render_outbound_acknowledgement_action(
         st.info(setup.unavailable_reason or "Outbound acknowledgement is unavailable.")
         return
 
-    if setup.service is None or setup.tenant_id is None or setup.from_number is None:
+    if (
+        setup.service is None
+        or setup.tenant_id is None
+        or setup.from_number is None
+        or setup.acknowledgement_store is None
+    ):
         st.warning("Outbound acknowledgement is not fully configured.")
         return
 
-    if st.button(
+    acknowledgement = setup.acknowledgement_store.get_for_order_acknowledgement(
+        tenant_id=setup.tenant_id,
+        order_id=order.order_id,
+        acknowledgement_type=ORDER_CONFIRMED_ACK,
+    )
+    status_state = map_acknowledgement_status_to_ui_state(
+        acknowledgement,
+        has_required_order_details=bool(order.customer_phone_snapshot),
+    )
+
+    if status_state.show_send_button and st.button(
         "Send acknowledgement",
         key=f"{order.order_id}_send_acknowledgement",
     ):
-        result = setup.service.send_order_confirmed_acknowledgement(
+        setup.service.send_order_confirmed_acknowledgement(
             tenant_id=setup.tenant_id,
             order_id=order.order_id,
             from_number=setup.from_number,
             requested_by="operator",
             business_name=business_name,
         )
-        _display_acknowledgement_ui_message(
-            map_acknowledgement_result_to_ui_message(result)
-        )
+        st.rerun()
+
+    st.info(status_state.message)
 
 
 def _render_order_card(
