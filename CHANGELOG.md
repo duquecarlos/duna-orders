@@ -1,6 +1,32 @@
 # Changelog
 ## Unreleased
 
+### M9.0 - Conversation state architecture design lock
+
+Documented.
+
+#### Delivered
+
+* Added the M9 conversation state architecture design.
+* Defined conversation state as a front-end intake stage that produces an
+  existing operator-reviewable draft order.
+* Locked `processed_messages.MessageSid` as the first idempotency gate for
+  conversation advancement.
+* Chose a narrow Postgres-backed conversation-state protocol outside
+  `StorageInterface`.
+* Required conversation turns as the canonical source of truth.
+* Required `message_sid` uniqueness plus optimistic versioning or
+  transaction-level locking for close-arriving same-customer turns.
+* Preserved parser statelessness, `ParserInterface`, and `PROMPT_VERSION`.
+* Preserved `OrderService` lifecycle, confirmation transaction, and
+  outbound/provider behavior.
+* Deferred automatic draft amendment after `draft_created`.
+
+#### Verification
+
+* Documentation-only change.
+* No code, tests, migrations, commit, or push.
+
 ### M8.6.3E - Retry max-attempt enforcement
 
 Implemented.

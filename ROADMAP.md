@@ -6,6 +6,90 @@ Detailed completed work belongs in `CHANGELOG.md`. This file only keeps mileston
 
 ## High priority
 
+## M9 - Conversation state architecture
+
+Status: design locked for M9.0; implementation not started.
+
+M9 introduces conversation state as the next real WhatsApp capability. The goal
+is to support customers who order across multiple messages while preserving the
+existing downstream lifecycle:
+
+```text
+draft -> approved -> confirmed -> atomic inventory commit -> outbound acknowledgement
+```
+
+### M9.0 - Conversation state architecture design lock
+
+Status: closed.
+
+Scope completed:
+
+* Added `docs/M9_CONVERSATION_STATE_ARCHITECTURE.md`.
+* Locked the conversation seam as a front-end intake stage that produces the
+  existing operator-reviewable draft.
+* Chose a narrow `ConversationStateStore` protocol outside `StorageInterface`.
+* Kept parser statefulness, `ParserInterface`, and `PROMPT_VERSION` unchanged.
+* Kept `OrderService` lifecycle, confirmation transaction, and outbound/provider
+  behavior unchanged.
+* Defined `processed_messages.MessageSid` as the first idempotency gate for
+  conversation advancement.
+* Deferred automatic draft amendment after `draft_created`.
+
+### M9.1 - Conversation store foundation
+
+Status: planned.
+
+Scope:
+
+* Add conversation session and turn state models.
+* Add a narrow `ConversationStateStore` protocol outside `StorageInterface`.
+* Add Postgres tables for sessions and turns.
+* Enforce append-turn idempotency by `message_sid`.
+* Resolve sessions by `tenant_id`, customer phone, and idle boundary.
+* Add optimistic versioning or transaction-level locking for close-arriving
+  same-customer turns.
+
+Explicitly excluded:
+
+* Parser calls.
+* Draft creation.
+* Webhook wiring.
+* UI.
+* Outbound conversational replies.
+
+### M9.2 - Conversation advancement service
+
+Status: planned.
+
+Scope:
+
+* Append inbound turn.
+* Render deterministic transcript from canonical turns.
+* Call existing `ParsingService`.
+* Apply deterministic operator-reviewable draft completeness rule.
+* Create draft through existing `OrderService.create_draft(...)`.
+
+### M9.3 - Webhook wiring
+
+Status: planned.
+
+Scope:
+
+* Replace direct one-message draft creation with conversation advancement.
+* Preserve Twilio signature validation.
+* Preserve `processed_messages` first-gate idempotency.
+* Preserve tenant-scoped product reads.
+
+### M9.4 - Tests and observability hardening
+
+Status: planned.
+
+Scope:
+
+* Prove duplicate and racing turns do not create duplicate drafts.
+* Prove tenant isolation and idle-boundary behavior.
+* Add observability hooks for a later operator conversation view.
+
 ## M8 - WhatsApp conversational ordering and Postgres runtime foundation
 
 Status: in progress.

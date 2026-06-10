@@ -1,4 +1,52 @@
 # Architectural Decisions
+## M9.0 - Conversation state architecture design lock
+
+Decision:
+Introduce conversation state as a front-end intake stage that accumulates
+multiple inbound customer messages into one existing operator-reviewable draft
+order.
+
+Details:
+
+* The output seam is the existing `DraftOrderRequest` consumed by
+  `OrderService.create_draft(...)`.
+* Complete enough means complete enough to create an operator-reviewable draft,
+  not enough to approve, confirm, commit inventory, or send an acknowledgement.
+* Operator review remains the safety boundary.
+* Conversation persistence will use a narrow Postgres-backed
+  `ConversationStateStore` protocol outside `StorageInterface`, following the
+  outbound acknowledgement store precedent.
+* Conversation turns are canonical. Any accumulated transcript field is a
+  derived cache only.
+* `processed_messages.MessageSid` remains the first idempotency gate.
+  Conversation advancement may run only after a message is recorded as new.
+* The conversation store must enforce `message_sid` uniqueness and protect
+  same-tenant/customer close-arriving turns through optimistic versioning or
+  transaction-level locking.
+* The parser remains stateless. M9.0 and M9.1 do not change
+  `ParserInterface`, parser prompt behavior, or `PROMPT_VERSION`.
+* Transcript rendering is service-owned, not parser-owned.
+* After `draft_created`, the first implementation must not automatically amend
+  existing drafts or mutate approved/confirmed orders.
+* The downstream lifecycle remains unchanged:
+  `draft -> approved -> confirmed -> atomic inventory commit -> outbound
+  acknowledgement`.
+
+Deferred:
+
+* Bot question policy.
+* Outbound conversational replies.
+* Automatic draft amendment after `draft_created`.
+* Parser prompt changes for transcript-specific understanding.
+* Queue/worker processing.
+* Operator conversation UI.
+* Inbound media/comprobante handling.
+* Payment gates.
+* Auto-confirmation.
+* `StorageInterface` evolution.
+* `OrderService` lifecycle or confirmation transaction changes.
+* Outbound/provider behavior changes.
+
 ## M8.6.1A - Outbound acknowledgement idempotency core
 
 Decision:
