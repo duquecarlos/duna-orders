@@ -4,6 +4,10 @@ This runbook is for the manual local plus tunnel smoke for the Twilio WhatsApp i
 
 Use [docs/SMOKE_CHECKLIST.md](SMOKE_CHECKLIST.md) as the execution checklist and pass/fail sheet for the manual run.
 
+For the separate manual outbound acknowledgement smoke, use
+[docs/SMOKE_OUTBOUND.md](SMOKE_OUTBOUND.md). Do not combine inbound and outbound
+smokes unless that is the explicit run plan.
+
 ## 1. Prepare Throwaway Neon Branch
 
 Use a throwaway Neon branch as the default smoke target. Do not run the inbound smoke against the keeper or production branch unless that is the explicit purpose of the run.

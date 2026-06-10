@@ -9,3 +9,4 @@ python-ulid>=2.7
 tenacity>=9.0
 gspread==6.2.1
 google-auth==2.53.0
+twilio==9.10.9

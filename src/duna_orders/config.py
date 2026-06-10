@@ -15,9 +15,14 @@ class Settings(BaseSettings):
     # Database
     database_url: str | None = None
     # Webhook
+    twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_webhook_public_url: str | None = None
+    twilio_whatsapp_from: str | None = None
     webhook_tenant_id: str = "el-fogon-colombiano"
+    # Outbound messaging
+    duna_outbound_enabled: bool = False
+    duna_outbound_tenant_id: str | None = None
     # LLM
     llm_provider: str = "anthropic"
     llm_model: str = "claude-sonnet-4-5"

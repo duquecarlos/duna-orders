@@ -26,6 +26,22 @@ def make_settings(database_url: str, **overrides: object) -> Settings:
     return Settings(**values)
 
 
+def make_outbound_settings(**overrides: object) -> Settings:
+    values = {
+        "duna_storage_backend": "postgres",
+        "database_url": "sqlite:///unused.db",
+        "twilio_auth_token": "super-secret-token",
+        "twilio_webhook_public_url": "https://example.trycloudflare.com/webhooks/twilio/whatsapp",
+        "webhook_tenant_id": "el-fogon-colombiano",
+        "duna_outbound_enabled": True,
+        "duna_outbound_tenant_id": "el-fogon-colombiano",
+        "twilio_account_sid": "AC_TEST",
+        "twilio_whatsapp_from": "whatsapp:+15551234567",
+    }
+    values.update(overrides)
+    return Settings(**values)
+
+
 def sqlite_url(tmp_path: Path) -> str:
     return f"sqlite:///{tmp_path / 'smoke.db'}"
 
@@ -230,3 +246,58 @@ def test_preflight_fails_for_wrong_twilio_webhook_path(
     assert exit_code == 1
     assert f"FAIL: twilio_webhook_public_url path - {expected_detail}" in output
     assert "SUMMARY: FAIL" in output
+
+
+def test_outbound_preflight_is_disabled_by_default() -> None:
+    settings = make_settings("sqlite:///unused.db")
+
+    checks = smoke_preflight.validate_outbound_settings(settings)
+
+    assert checks == [
+        smoke_preflight.CheckResult(
+            name="DUNA_OUTBOUND_ENABLED",
+            passed=True,
+            detail="disabled",
+        )
+    ]
+
+
+def test_outbound_preflight_fails_when_enabled_without_from_number() -> None:
+    checks = smoke_preflight.validate_outbound_settings(
+        make_outbound_settings(twilio_whatsapp_from="")
+    )
+
+    failed = {check.name: check.detail for check in checks if not check.passed}
+
+    assert failed["TWILIO_WHATSAPP_FROM present"] == "missing or empty"
+
+
+def test_outbound_preflight_fails_when_enabled_without_tenant_binding() -> None:
+    checks = smoke_preflight.validate_outbound_settings(
+        make_outbound_settings(duna_outbound_tenant_id="")
+    )
+
+    failed = {check.name: check.detail for check in checks if not check.passed}
+
+    assert failed["DUNA_OUTBOUND_TENANT_ID present"] == "missing or empty"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"twilio_account_sid": ""},
+        {"twilio_auth_token": ""},
+    ],
+)
+def test_outbound_preflight_fails_when_enabled_without_account_credentials(
+    overrides: dict[str, str],
+) -> None:
+    checks = smoke_preflight.validate_outbound_settings(make_outbound_settings(**overrides))
+
+    assert any(not check.passed for check in checks)
+
+
+def test_outbound_preflight_passes_with_valid_enabled_config() -> None:
+    checks = smoke_preflight.validate_outbound_settings(make_outbound_settings())
+
+    assert all(check.passed for check in checks)

@@ -72,7 +72,7 @@ def _mask_url_password(text: str, database_url: str | None) -> str:
 
 
 def validate_settings(settings: Settings) -> list[CheckResult]:
-    return [
+    checks = [
         CheckResult(
             name="DUNA_STORAGE_BACKEND=postgres",
             passed=settings.duna_storage_backend == "postgres",
@@ -113,6 +113,50 @@ def validate_settings(settings: Settings) -> list[CheckResult]:
             name="webhook_tenant_id present",
             passed=_is_non_empty(settings.webhook_tenant_id),
             detail="configured" if _is_non_empty(settings.webhook_tenant_id) else "missing or empty",
+        ),
+    ]
+
+    checks.extend(validate_outbound_settings(settings))
+    return checks
+
+
+def validate_outbound_settings(settings: Settings) -> list[CheckResult]:
+    if not settings.duna_outbound_enabled:
+        return [
+            CheckResult(
+                name="DUNA_OUTBOUND_ENABLED",
+                passed=True,
+                detail="disabled",
+            )
+        ]
+
+    return [
+        CheckResult(
+            name="DUNA_OUTBOUND_ENABLED",
+            passed=True,
+            detail="enabled",
+        ),
+        CheckResult(
+            name="DUNA_OUTBOUND_TENANT_ID present",
+            passed=_is_non_empty(settings.duna_outbound_tenant_id),
+            detail="configured"
+            if _is_non_empty(settings.duna_outbound_tenant_id)
+            else "missing or empty",
+        ),
+        CheckResult(
+            name="TWILIO_WHATSAPP_FROM present",
+            passed=_is_non_empty(settings.twilio_whatsapp_from),
+            detail="configured" if _is_non_empty(settings.twilio_whatsapp_from) else "missing or empty",
+        ),
+        CheckResult(
+            name="TWILIO_ACCOUNT_SID present",
+            passed=_is_non_empty(settings.twilio_account_sid),
+            detail="configured" if _is_non_empty(settings.twilio_account_sid) else "missing or empty",
+        ),
+        CheckResult(
+            name="TWILIO_AUTH_TOKEN present for outbound",
+            passed=_is_non_empty(settings.twilio_auth_token),
+            detail="configured" if _is_non_empty(settings.twilio_auth_token) else "missing or empty",
         ),
     ]
 
