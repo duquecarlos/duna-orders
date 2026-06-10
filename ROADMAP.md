@@ -8,7 +8,7 @@ Detailed completed work belongs in `CHANGELOG.md`. This file only keeps mileston
 
 ## M9 - Conversation state architecture
 
-Status: M9.2A design refined; M9.2B planned.
+Status: M9.2B closed; M9.2C planned.
 
 M9 introduces conversation state as the next real WhatsApp capability. The goal
 is to support customers who order across multiple messages while preserving the
@@ -80,17 +80,25 @@ Scope completed:
 
 ### M9.2B - Conversation draft link persistence
 
-Status: planned.
+Status: closed.
 
-Scope:
+Scope completed:
 
-* Add nullable `conversation_id` to `DraftOrderRequest` and `Order`.
-* Add nullable `conversation_id` to persisted orders.
-* Add unique non-null `conversation_id` constraint/index on orders.
-* Add nullable `resulting_order_id` to `conversation_sessions`.
-* Add `mark_draft_created(tenant_id, conversation_id, order_id)`.
-* Add narrow Postgres-backed lookup by `conversation_id` outside
-  `StorageInterface`.
+* Added nullable `conversation_id` to `DraftOrderRequest` and `Order`.
+* `OrderService.create_draft` carries `request.conversation_id` into the
+  created draft `Order`.
+* Added nullable `orders.conversation_id` in Postgres.
+* Added a one-order-row-per-non-null-`conversation_id` constraint/index,
+  global and not status-dependent; multiple `NULL` `conversation_id` orders
+  remain allowed.
+* Added a `tenant_id` + `conversation_id` lookup index.
+* Added nullable `resulting_order_id` to `conversation_sessions`.
+* Added `mark_draft_created(tenant_id, conversation_id, order_id)`.
+* Added `PostgresConversationOrderLookup`, a narrow Postgres-backed lookup by
+  `conversation_id` outside `StorageInterface`.
+* Carried nullable `conversation_id` across Postgres, memory, and
+  Sheets-backed order paths and updated schema constants and tests.
+* Updated the Alembic head expectation to `d6e7f8a9b0c1`.
 
 Explicitly excluded:
 
@@ -99,6 +107,8 @@ Explicitly excluded:
 * Webhook wiring.
 * UI.
 * Draft advancement flow.
+* Header migration for existing live Sheets spreadsheets predating the new
+  `conversation_id` column; `live_sheets` was not run.
 
 ### M9.2C - Conversation advancement service
 

@@ -1,6 +1,78 @@
 # Changelog
 ## Unreleased
 
+### M9.2B - Conversation draft-link schema and persistence
+
+Implemented in `9677ded feat(m9): add conversation draft links`.
+
+#### Delivered
+
+* Added nullable `conversation_id` to `DraftOrderRequest`.
+* Added nullable `conversation_id` to `Order`.
+* `OrderService.create_draft` carries `request.conversation_id` into the
+  created draft `Order`.
+* Added nullable `orders.conversation_id` in Postgres.
+* Added a one-order-row-per-non-null-`conversation_id` constraint/index
+  (`uq_orders_conversation_id_not_null`). The constraint is global and not
+  status-dependent; multiple `NULL` `conversation_id` orders remain allowed.
+* Added a `tenant_id` + `conversation_id` lookup index
+  (`ix_orders_tenant_id_conversation_id`).
+* Added nullable `resulting_order_id` to `conversation_sessions`.
+* Added `mark_draft_created(tenant_id, conversation_id, order_id)` to
+  `ConversationStateStore`.
+* Added `PostgresConversationOrderLookup` as a narrow helper outside
+  `StorageInterface`.
+* Carried nullable `conversation_id` across Postgres, memory, and
+  Sheets-backed order paths; updated schema constants and tests.
+* Updated the smoke preflight Alembic head expectation.
+
+#### Safety conclusions
+
+* M9.2B is schema/domain/persistence only.
+* No parser imports or calls.
+* No `PROMPT_VERSION` changes.
+* No advancement service.
+* No webhook wiring.
+* No UI.
+* No outbound/provider changes.
+* No `StorageInterface` signature changes.
+* No `OrderService` lifecycle/state transition changes.
+* No confirmation transaction changes.
+* No draft amendment behavior.
+* No cross-store transaction.
+* No parse-status persistence.
+* No `resulting_order_id` on orders; `resulting_order_id` exists only on
+  `conversation_sessions`.
+* `PostgresConversationOrderLookup` is outside `StorageInterface`, requires
+  `tenant_id` explicitly, finds by `tenant_id` + `conversation_id`, mutates
+  nothing, and does not import or call `OrderService`.
+* `mark_draft_created(...)` is tenant-scoped, sets `status="draft_created"`,
+  sets `resulting_order_id`, increments `version` on first mark, is idempotent
+  for the same order id, and conflicts on a different order id.
+* The orphan-draft idempotency foundation is ready for M9.2C.
+
+#### Sheets note
+
+* `schema.py` and `sheets.py` were updated so the `orders` tab carries
+  `conversation_id`.
+* Existing live Sheets spreadsheets created before this change do not have a
+  `conversation_id` header and may need a header migration before
+  `live_sheets` is run against them.
+* `live_sheets` was not run as part of this verification.
+
+#### Verification
+
+* `pytest tests/test_conversation_state_store.py tests/test_postgres_models.py tests/test_smoke_preflight.py -q`
+  passed: `44 passed, 4 deselected`.
+* `pytest -q` passed: `539 passed, 29 deselected`.
+* `pytest -q -m live_postgres tests/test_conversation_state_store.py tests/test_postgres_live_smoke.py`:
+  first run timed out at 124s; rerun passed: `6 passed, 13 deselected`.
+* `ruff check src tests pages` passed.
+* `python -m compileall src tests pages` passed.
+* `alembic heads` reported `d6e7f8a9b0c1 (head)`.
+* `alembic upgrade head` passed against configured Postgres.
+* `git diff --check` passed with LF-to-CRLF warnings only.
+
 ### M9.2A - Conversation advancement service design refinement
 
 Documented.

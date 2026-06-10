@@ -1,4 +1,48 @@
 # Architectural Decisions
+## M9.2B - Conversation draft-link schema and persistence are implemented
+
+Decision:
+Close M9.2B as the schema/domain/persistence implementation of the M9.2A
+orphan-draft idempotency design.
+
+Details:
+
+* `DraftOrderRequest` and `Order` carry nullable `conversation_id`.
+  `OrderService.create_draft` passes `request.conversation_id` onto the
+  created `Order` with no other lifecycle change.
+* Postgres `orders.conversation_id` is nullable, with a unique index on
+  non-null values (`uq_orders_conversation_id_not_null`) and a
+  `(tenant_id, conversation_id)` lookup index
+  (`ix_orders_tenant_id_conversation_id`).
+* The unique constraint is global and not status-dependent, per the M9.2A
+  decision: multiple `NULL` `conversation_id` orders remain allowed, and the
+  linked draft may later become approved or confirmed under the same
+  constraint.
+* `conversation_sessions.resulting_order_id` is nullable. Orders do not gain a
+  `resulting_order_id` column; it exists only on `conversation_sessions`.
+* `ConversationStateStore.mark_draft_created(tenant_id, conversation_id,
+  order_id)` is tenant-scoped, sets `status="draft_created"` and
+  `resulting_order_id`, increments `version` on first mark, is idempotent when
+  called again with the same `order_id`, and raises on a different
+  `order_id`.
+* `PostgresConversationOrderLookup.get_order_by_conversation_id(...)` lives
+  outside `StorageInterface`, requires `tenant_id` explicitly, only reads, and
+  does not import or call `OrderService`.
+* `GoogleSheetsStorage` and the Sheets `orders` schema carry `conversation_id`
+  so the Sheets-backed order path stays in parity with Postgres and memory.
+* Alembic head is `d6e7f8a9b0c1`.
+
+Deferred:
+
+* M9.2C conversation advancement service orchestration.
+* Passing `conversation_id` from a real conversation into
+  `OrderService.create_draft(...)`.
+* Webhook wiring.
+* UI.
+* Outbound/provider behavior.
+* Header migration for existing live Sheets spreadsheets created before this
+  change; `live_sheets` was not run against them.
+
 ## M9.2A - Orphan-draft idempotency uses conversation-linked orders
 
 Decision:

@@ -170,6 +170,8 @@ No code, tests, migrations, commit, or push.
 
 ### M9.2B - Schema/domain/persistence only
 
+Status: implemented in `9677ded feat(m9): add conversation draft links`.
+
 Scope:
 
 * nullable `conversation_id` on `DraftOrderRequest`;
