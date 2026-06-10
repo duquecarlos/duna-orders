@@ -89,6 +89,14 @@ class ConversationStateStore(Protocol):
     ) -> ConversationSession | None:
         ...
 
+    def get_latest_session_for_customer(
+        self,
+        *,
+        tenant_id: str,
+        customer_phone: str,
+    ) -> ConversationSession | None:
+        ...
+
     def mark_draft_created(
         self,
         *,
@@ -206,6 +214,31 @@ class PostgresConversationStateStore:
                 select(ConversationSessionRow)
                 .where(ConversationSessionRow.tenant_id == tenant_id)
                 .where(ConversationSessionRow.conversation_id == conversation_id)
+            )
+
+            return _session_from_row(row) if row is not None else None
+
+    def get_latest_session_for_customer(
+        self,
+        *,
+        tenant_id: str,
+        customer_phone: str,
+    ) -> ConversationSession | None:
+        _require_text(tenant_id, "tenant_id")
+        _require_text(customer_phone, "customer_phone")
+
+        with session_scope(self._session_factory) as session:
+            row = session.scalar(
+                select(ConversationSessionRow)
+                .where(ConversationSessionRow.tenant_id == tenant_id)
+                .where(ConversationSessionRow.customer_phone == customer_phone)
+                .order_by(
+                    ConversationSessionRow.last_message_at.desc(),
+                    ConversationSessionRow.updated_at.desc(),
+                    ConversationSessionRow.opened_at.desc(),
+                    ConversationSessionRow.conversation_id.desc(),
+                )
+                .limit(1)
             )
 
             return _session_from_row(row) if row is not None else None

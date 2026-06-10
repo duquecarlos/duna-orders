@@ -336,6 +336,207 @@ def test_mark_draft_created_requires_tenant_scoped_session(
         )
 
 
+def test_get_latest_session_for_customer_returns_none_when_no_session_exists(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+
+    latest = store.get_latest_session_for_customer(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+    )
+
+    assert latest is None
+
+
+def test_get_latest_session_for_customer_does_not_create_session(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+
+    latest = store.get_latest_session_for_customer(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+    )
+    created = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    assert latest is None
+    assert created.version == 1
+    assert created.opened_at == BASE_TIME
+
+
+def test_get_latest_session_for_customer_returns_open_session(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    latest = store.get_latest_session_for_customer(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+    )
+
+    assert latest is not None
+    assert latest.conversation_id == session.conversation_id
+    assert latest.status == "open"
+
+
+def test_get_latest_session_for_customer_does_not_mutate_session(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    latest = store.get_latest_session_for_customer(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+    )
+
+    assert latest == session
+
+
+def test_get_or_create_open_session_opens_new_session_after_draft_created(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    first = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    store.mark_draft_created(
+        tenant_id=TENANT_A,
+        conversation_id=first.conversation_id,
+        order_id="ord_first_conversation",
+    )
+
+    second = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME + timedelta(hours=1),
+    )
+
+    assert second.conversation_id != first.conversation_id
+    assert second.status == "open"
+    assert second.opened_at == BASE_TIME + timedelta(hours=1)
+
+
+def test_get_latest_session_for_customer_returns_draft_created_session(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    store.mark_draft_created(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        order_id="ord_latest_draft",
+    )
+
+    latest = store.get_latest_session_for_customer(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+    )
+
+    assert latest is not None
+    assert latest.conversation_id == session.conversation_id
+    assert latest.status == "draft_created"
+    assert latest.resulting_order_id == "ord_latest_draft"
+
+
+def test_get_latest_session_for_customer_returns_most_recent_by_last_message_at(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    older = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    store.mark_draft_created(
+        tenant_id=TENANT_A,
+        conversation_id=older.conversation_id,
+        order_id="ord_older_conversation",
+    )
+    newer = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME + timedelta(hours=1),
+    )
+
+    latest = store.get_latest_session_for_customer(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+    )
+
+    assert latest is not None
+    assert latest.conversation_id == newer.conversation_id
+    assert latest.status == "open"
+
+
+def test_get_latest_session_for_customer_is_tenant_isolated(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session_a = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    session_b = store.get_or_create_open_session(
+        tenant_id=TENANT_B,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME + timedelta(hours=1),
+    )
+
+    latest_a = store.get_latest_session_for_customer(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+    )
+    latest_b = store.get_latest_session_for_customer(
+        tenant_id=TENANT_B,
+        customer_phone=CUSTOMER_PHONE,
+    )
+
+    assert latest_a is not None
+    assert latest_a.conversation_id == session_a.conversation_id
+    assert latest_b is not None
+    assert latest_b.conversation_id == session_b.conversation_id
+
+
+def test_get_latest_session_for_customer_requires_exact_phone_match(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    latest = store.get_latest_session_for_customer(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE.removeprefix("whatsapp:"),
+    )
+
+    assert latest is None
+
+
 def test_conversation_sessions_have_no_parse_status_fields() -> None:
     row_attributes = set(vars(ConversationSessionRow))
 
