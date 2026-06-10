@@ -29,6 +29,8 @@ from duna_orders.storage.schema import (
     PRODUCTS_TAB,
     STOCK_MOVEMENTS_TAB,
     PROCESSED_MESSAGES_TAB,
+    CONVERSATION_SESSIONS_TAB,
+    CONVERSATION_TURNS_TAB,
 )
 
 
@@ -331,4 +333,90 @@ class OutboundMessageRow(Base):
         Index("ix_outbound_messages_tenant_id_order_id", "tenant_id", "order_id"),
         Index("ix_outbound_messages_tenant_id_status", "tenant_id", "status"),
         Index("ix_outbound_messages_tenant_id_created_at", "tenant_id", "created_at"),
+    )
+
+
+class ConversationSessionRow(Base):
+    __tablename__ = CONVERSATION_SESSIONS_TAB
+
+    conversation_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(TENANT_ID_LENGTH), nullable=False)
+    customer_phone: Mapped[str] = mapped_column(String(PHONE_LENGTH), nullable=False)
+    status: Mapped[str] = mapped_column(String(STATUS_LENGTH), nullable=False)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_message_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+    turns: Mapped[list[ConversationTurnRow]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_conversation_sessions_one_open_per_customer",
+            "tenant_id",
+            "customer_phone",
+            unique=True,
+            postgresql_where=(status == "open"),
+            sqlite_where=(status == "open"),
+        ),
+        Index(
+            "ix_conversation_sessions_tenant_id_customer_phone",
+            "tenant_id",
+            "customer_phone",
+        ),
+        Index("ix_conversation_sessions_tenant_id_status", "tenant_id", "status"),
+    )
+
+
+class ConversationTurnRow(Base):
+    __tablename__ = CONVERSATION_TURNS_TAB
+
+    turn_id: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(
+        String(ID_LENGTH),
+        ForeignKey(f"{CONVERSATION_SESSIONS_TAB}.conversation_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    tenant_id: Mapped[str] = mapped_column(String(TENANT_ID_LENGTH), nullable=False)
+    message_sid: Mapped[str] = mapped_column(String(ID_LENGTH), nullable=False)
+    from_number: Mapped[str | None] = mapped_column(String(PHONE_LENGTH))
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+    session: Mapped[ConversationSessionRow] = relationship(back_populates="turns")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "message_sid",
+            name="uq_conversation_turns_tenant_message_sid",
+        ),
+        Index(
+            "ix_conversation_turns_tenant_id_conversation_id",
+            "tenant_id",
+            "conversation_id",
+        ),
+        Index(
+            "ix_conversation_turns_conversation_sequence",
+            "conversation_id",
+            "sequence_number",
+        ),
     )

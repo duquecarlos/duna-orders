@@ -7,6 +7,8 @@ PARSE_LOG_TAB = "parse_log"
 PROCESSED_MESSAGES_TAB = "processed_messages"
 ORDER_STATUS_TRANSITIONS_TAB = "order_status_transitions"
 OUTBOUND_MESSAGES_TAB = "outbound_messages"
+CONVERSATION_SESSIONS_TAB = "conversation_sessions"
+CONVERSATION_TURNS_TAB = "conversation_turns"
 
 ORDER_STATUSES = (
     "draft",

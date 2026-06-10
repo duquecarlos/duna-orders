@@ -13,12 +13,16 @@ from duna_orders.storage.schema import (
     TABS,
     OUTBOUND_MESSAGES_TAB,
     PROCESSED_MESSAGES_TAB,
+    CONVERSATION_SESSIONS_TAB,
+    CONVERSATION_TURNS_TAB,
 )
 
 POSTGRES_ONLY_TABLES = {
     "processed_messages",
     "order_status_transitions",
     "outbound_messages",
+    "conversation_sessions",
+    "conversation_turns",
 }
 PRIMARY_ID_COLUMNS = {
     PRODUCTS_TAB: "product_id",
@@ -29,6 +33,8 @@ PRIMARY_ID_COLUMNS = {
     PARSE_LOG_TAB: "parse_id",
     PROCESSED_MESSAGES_TAB: "message_sid",
     OUTBOUND_MESSAGES_TAB: "outbound_message_id",
+    CONVERSATION_SESSIONS_TAB: "conversation_id",
+    CONVERSATION_TURNS_TAB: "turn_id",
 }
 
 
@@ -251,3 +257,85 @@ def test_outbound_messages_unique_constraint_and_indexes_exist() -> None:
         "ix_outbound_messages_tenant_id_status",
         "ix_outbound_messages_tenant_id_created_at",
     } <= actual_indexes
+
+
+def test_conversation_sessions_table_is_postgres_only() -> None:
+    load_postgres_models()
+
+    table = Base.metadata.tables[CONVERSATION_SESSIONS_TAB]
+
+    assert [column.name for column in table.columns] == [
+        "conversation_id",
+        "tenant_id",
+        "customer_phone",
+        "status",
+        "opened_at",
+        "last_message_at",
+        "version",
+        "created_at",
+        "updated_at",
+    ]
+    assert CONVERSATION_SESSIONS_TAB not in TABS
+    assert table.c.conversation_id.primary_key is True
+    assert table.c.tenant_id.nullable is False
+    assert table.c.customer_phone.nullable is False
+    assert table.c.status.nullable is False
+    assert isinstance(table.c.version.type, Integer)
+    assert isinstance(table.c.opened_at.type, DateTime)
+    assert isinstance(table.c.last_message_at.type, DateTime)
+    assert "resulting_order_id" not in table.c
+    assert "latest_parse_status" not in table.c
+    assert "latest_parse_error" not in table.c
+    assert "accumulated_text" not in table.c
+
+
+def test_conversation_turns_table_is_postgres_only() -> None:
+    load_postgres_models()
+
+    table = Base.metadata.tables[CONVERSATION_TURNS_TAB]
+
+    assert [column.name for column in table.columns] == [
+        "turn_id",
+        "conversation_id",
+        "tenant_id",
+        "message_sid",
+        "from_number",
+        "body",
+        "received_at",
+        "sequence_number",
+        "created_at",
+    ]
+    assert CONVERSATION_TURNS_TAB not in TABS
+    assert table.c.turn_id.primary_key is True
+    assert table.c.tenant_id.nullable is False
+    assert table.c.message_sid.nullable is False
+    assert isinstance(table.c.body.type, Text)
+    assert isinstance(table.c.sequence_number.type, Integer)
+
+
+def test_conversation_state_constraints_and_indexes_exist() -> None:
+    load_postgres_models()
+
+    sessions = Base.metadata.tables[CONVERSATION_SESSIONS_TAB]
+    turns = Base.metadata.tables[CONVERSATION_TURNS_TAB]
+    turn_unique_constraints = {
+        constraint.name: [column.name for column in constraint.columns]
+        for constraint in turns.constraints
+        if constraint.name
+    }
+    session_indexes = {index.name for index in sessions.indexes}
+    turn_indexes = {index.name for index in turns.indexes}
+
+    assert "uq_conversation_sessions_one_open_per_customer" in session_indexes
+    assert {
+        "ix_conversation_sessions_tenant_id_customer_phone",
+        "ix_conversation_sessions_tenant_id_status",
+    } <= session_indexes
+    assert turn_unique_constraints["uq_conversation_turns_tenant_message_sid"] == [
+        "tenant_id",
+        "message_sid",
+    ]
+    assert {
+        "ix_conversation_turns_tenant_id_conversation_id",
+        "ix_conversation_turns_conversation_sequence",
+    } <= turn_indexes
