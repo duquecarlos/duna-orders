@@ -15,9 +15,15 @@ from duna_orders.services.orders import OrderService, get_allowed_next_statuses
 from duna_orders.services.tenant_scoped_reads import TenantScopedReadService
 from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.read_context import sheets_request_context
+from duna_orders.ui.outbound_acknowledgement import (
+    OutboundAcknowledgementUiMessage,
+    map_acknowledgement_result_to_ui_message,
+)
 from duna_orders.ui.setup import (
+    OutboundAcknowledgementServiceSetup,
     get_demo_catalog,
     get_order_service,
+    get_outbound_acknowledgement_service,
     get_storage,
 )
 from duna_orders.services.customer_context import (
@@ -63,10 +69,60 @@ def _bootstrap_session() -> None:
     if "order_service" not in st.session_state:
         st.session_state.order_service = get_order_service(st.session_state.storage)
 
+    if "outbound_acknowledgement_setup" not in st.session_state:
+        st.session_state.outbound_acknowledgement_setup = (
+            get_outbound_acknowledgement_service(st.session_state.storage)
+        )
+
 
 def _format_local_datetime(value: datetime) -> str:
     timezone = ZoneInfo(settings.default_timezone)
     return value.astimezone(timezone).strftime("%Y-%m-%d %H:%M")
+
+def _display_acknowledgement_ui_message(
+    message: OutboundAcknowledgementUiMessage,
+) -> None:
+    if message.severity == "success":
+        st.success(message.message)
+    elif message.severity == "info":
+        st.info(message.message)
+    elif message.severity == "warning":
+        st.warning(message.message)
+    else:
+        st.error(message.message)
+
+
+def _render_outbound_acknowledgement_action(
+    order: Order,
+    *,
+    setup: OutboundAcknowledgementServiceSetup,
+    business_name: str,
+) -> None:
+    st.write("Acknowledgement")
+
+    if not setup.is_available:
+        st.info(setup.unavailable_reason or "Outbound acknowledgement is unavailable.")
+        return
+
+    if setup.service is None or setup.tenant_id is None or setup.from_number is None:
+        st.warning("Outbound acknowledgement is not fully configured.")
+        return
+
+    if st.button(
+        "Send acknowledgement",
+        key=f"{order.order_id}_send_acknowledgement",
+    ):
+        result = setup.service.send_order_confirmed_acknowledgement(
+            tenant_id=setup.tenant_id,
+            order_id=order.order_id,
+            from_number=setup.from_number,
+            requested_by="operator",
+            business_name=business_name,
+        )
+        _display_acknowledgement_ui_message(
+            map_acknowledgement_result_to_ui_message(result)
+        )
+
 
 def _render_order_card(
     order: Order,
@@ -74,6 +130,8 @@ def _render_order_card(
     storage: StorageInterface,
     order_service: OrderService,
     tenant_id: str,
+    business_name: str,
+    outbound_acknowledgement_setup: OutboundAcknowledgementServiceSetup,
 ) -> None:
     with st.container(border=True):
         top_left, top_right = st.columns([3, 1])
@@ -122,6 +180,13 @@ def _render_order_card(
 
         st.dataframe(item_rows, use_container_width=True, hide_index=True)
 
+        if order.status == "confirmed":
+            _render_outbound_acknowledgement_action(
+                order,
+                setup=outbound_acknowledgement_setup,
+                business_name=business_name,
+            )
+
         allowed_statuses = get_allowed_next_statuses(order)
 
         if not allowed_statuses:
@@ -160,6 +225,9 @@ _bootstrap_session()
 catalog: DemoCatalogFile = st.session_state.demo_catalog
 storage: StorageInterface = st.session_state.storage
 order_service: OrderService = st.session_state.order_service
+outbound_acknowledgement_setup: OutboundAcknowledgementServiceSetup = (
+    st.session_state.outbound_acknowledgement_setup
+)
 
 tenant_id = catalog.business.tenant_id
 timezone = ZoneInfo(settings.default_timezone)
@@ -211,4 +279,6 @@ with sheets_request_context(storage):
             storage=storage,
             order_service=order_service,
             tenant_id=tenant_id,
+            business_name=catalog.business.business_name,
+            outbound_acknowledgement_setup=outbound_acknowledgement_setup,
         )
