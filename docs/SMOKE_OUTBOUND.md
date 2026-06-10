@@ -34,6 +34,11 @@ Use the Twilio WhatsApp sender approved for the account or sandbox. Send only to
 your own WhatsApp number by choosing or creating a confirmed test order whose
 customer phone snapshot is your own test number.
 
+The confirmed order may store the customer phone as plain E.164, such as
+`+573001112233`. When `TWILIO_WHATSAPP_FROM` starts with `whatsapp:`, the
+outbound Twilio adapter sends the recipient to Twilio as `whatsapp:+...` without
+mutating the stored order or customer snapshot.
+
 ## 3. Preflight
 
 Run the read-only preflight:

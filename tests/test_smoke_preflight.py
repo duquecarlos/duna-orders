@@ -21,6 +21,7 @@ def make_settings(database_url: str, **overrides: object) -> Settings:
         "twilio_auth_token": "super-secret-token",
         "twilio_webhook_public_url": "https://example.trycloudflare.com/webhooks/twilio/whatsapp",
         "webhook_tenant_id": "el-fogon-colombiano",
+        "duna_outbound_enabled": False,
     }
     values.update(overrides)
     return Settings(**values)

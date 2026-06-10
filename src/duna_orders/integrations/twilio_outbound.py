@@ -48,7 +48,7 @@ class TwilioOutboundMessageAdapter:
         try:
             message = self._client.messages.create(
                 from_=from_number,
-                to=to_number,
+                to=_twilio_recipient_address(from_number=from_number, to_number=to_number),
                 body=body,
             )
         except (TimeoutError, RequestsTimeout) as error:
@@ -89,6 +89,13 @@ def _result_from_twilio_error(error: TwilioRestException) -> OutboundProviderRes
         error_code=error_code,
         error_message="Twilio send result is unknown.",
     )
+
+
+def _twilio_recipient_address(*, from_number: str, to_number: str) -> str:
+    if from_number.startswith("whatsapp:") and not to_number.startswith("whatsapp:"):
+        return f"whatsapp:{to_number}"
+
+    return to_number
 
 
 def _require_text(value: str, field_name: str) -> None:

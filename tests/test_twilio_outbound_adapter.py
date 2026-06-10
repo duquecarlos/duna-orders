@@ -60,6 +60,57 @@ def test_twilio_outbound_success_maps_message_sid_to_provider_message_id() -> No
     ]
 
 
+def test_twilio_outbound_whatsapp_from_normalizes_plain_e164_recipient() -> None:
+    messages = FakeMessages(response=FakeMessage(sid="SM_SENT"))
+    adapter = TwilioOutboundMessageAdapter(
+        account_sid="AC_TEST",
+        auth_token="auth-token",
+        client=FakeClient(messages=messages),
+    )
+
+    adapter.send_message(
+        from_number="whatsapp:+15551234567",
+        to_number="+573001112233",
+        body="Hola",
+    )
+
+    assert messages.calls[0]["to"] == "whatsapp:+573001112233"
+
+
+def test_twilio_outbound_whatsapp_from_preserves_whatsapp_prefixed_recipient() -> None:
+    messages = FakeMessages(response=FakeMessage(sid="SM_SENT"))
+    adapter = TwilioOutboundMessageAdapter(
+        account_sid="AC_TEST",
+        auth_token="auth-token",
+        client=FakeClient(messages=messages),
+    )
+
+    adapter.send_message(
+        from_number="whatsapp:+15551234567",
+        to_number="whatsapp:+573001112233",
+        body="Hola",
+    )
+
+    assert messages.calls[0]["to"] == "whatsapp:+573001112233"
+
+
+def test_twilio_outbound_non_whatsapp_from_preserves_plain_recipient() -> None:
+    messages = FakeMessages(response=FakeMessage(sid="SM_SENT"))
+    adapter = TwilioOutboundMessageAdapter(
+        account_sid="AC_TEST",
+        auth_token="auth-token",
+        client=FakeClient(messages=messages),
+    )
+
+    adapter.send_message(
+        from_number="+15551234567",
+        to_number="+573001112233",
+        body="Hola",
+    )
+
+    assert messages.calls[0]["to"] == "+573001112233"
+
+
 def test_twilio_outbound_timeout_maps_to_unknown() -> None:
     adapter = TwilioOutboundMessageAdapter(
         account_sid="AC_TEST",
