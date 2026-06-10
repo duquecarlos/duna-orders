@@ -97,6 +97,7 @@ def make_draft_request(
     customer_notes: str | None = None,
     payment_method: str | None = None,
     modifications: str | None = None,
+    conversation_id: str | None = None,
 ) -> DraftOrderRequest:
     if items is None:
         items = [
@@ -113,6 +114,7 @@ def make_draft_request(
         raw_message=raw_message,
         customer_name=customer_name,
         customer_phone=customer_phone,
+        conversation_id=conversation_id,
         items=items,
         fulfillment_type=fulfillment_type,
         delivery_zone=delivery_zone,
@@ -201,6 +203,22 @@ def test_create_draft_happy_path():
     assert order.customer_notes == "Sin cubiertos"
     assert order.payment_method == "nequi"
     assert order.items[0].modifications == "sin cebolla"
+    assert order.conversation_id is None
+
+
+def test_create_draft_carries_optional_conversation_id():
+    storage = InMemoryStorage()
+    storage.upsert_product(make_product())
+    service = OrderService(storage)
+
+    order = service.create_draft(
+        make_draft_request(conversation_id="conv_service_link")
+    )
+    saved_order = storage.get_order(order.order_id)
+
+    assert order.conversation_id == "conv_service_link"
+    assert saved_order is not None
+    assert saved_order.conversation_id == "conv_service_link"
 
 def test_create_draft_creates_customer_when_phone_is_new():
     storage = InMemoryStorage()

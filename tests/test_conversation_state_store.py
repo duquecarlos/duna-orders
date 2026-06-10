@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
@@ -9,9 +10,13 @@ import pytest
 from alembic.command import upgrade
 from alembic.config import Config
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
+from duna_orders.domain.models import Order, OrderItem
 from duna_orders.config import settings
 from duna_orders.storage.conversation_state import PostgresConversationStateStore
+from duna_orders.storage.conversation_orders import PostgresConversationOrderLookup
+from duna_orders.storage.postgres import PostgresStorage
 from duna_orders.storage.postgres_base import Base
 from duna_orders.storage.postgres_models import ConversationSessionRow
 from duna_orders.storage.postgres_session import make_engine, make_session_factory
@@ -235,6 +240,109 @@ def test_only_open_status_is_written_by_m9_1_store_methods(tmp_path: Path) -> No
     assert current.status not in {"draft_created", "expired", "failed"}
 
 
+def test_mark_draft_created_sets_status_resulting_order_and_version(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    marked = store.mark_draft_created(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        order_id="ord_resulting",
+    )
+
+    current = store.get_session(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+    )
+
+    assert marked.status == "draft_created"
+    assert marked.resulting_order_id == "ord_resulting"
+    assert marked.version == session.version + 1
+    assert marked.updated_at >= session.updated_at
+    assert current is not None
+    assert current.resulting_order_id == "ord_resulting"
+
+
+def test_mark_draft_created_is_idempotent_for_same_order_id(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    first = store.mark_draft_created(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        order_id="ord_same",
+    )
+    second = store.mark_draft_created(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        order_id="ord_same",
+    )
+
+    assert first == second
+    assert second.status == "draft_created"
+    assert second.resulting_order_id == "ord_same"
+
+
+def test_mark_draft_created_conflicts_for_different_order_id(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    store.mark_draft_created(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        order_id="ord_first",
+    )
+
+    with pytest.raises(ValueError, match="different order"):
+        store.mark_draft_created(
+            tenant_id=TENANT_A,
+            conversation_id=session.conversation_id,
+            order_id="ord_second",
+        )
+
+
+def test_mark_draft_created_requires_tenant_scoped_session(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    with pytest.raises(ValueError, match="not found"):
+        store.mark_draft_created(
+            tenant_id=TENANT_B,
+            conversation_id=session.conversation_id,
+            order_id="ord_resulting",
+        )
+
+
+def test_conversation_sessions_have_no_parse_status_fields() -> None:
+    row_attributes = set(vars(ConversationSessionRow))
+
+    assert "latest_parse_status" not in row_attributes
+    assert "latest_parse_error" not in row_attributes
+
+
 def test_store_does_not_import_parser_order_service_or_webhook() -> None:
     source = Path("src/duna_orders/storage/conversation_state.py").read_text()
 
@@ -276,6 +384,85 @@ def test_live_postgres_concurrent_open_session_creation_returns_one_session() ->
             ).all()
 
         assert len(count) == 1
+    finally:
+        _cleanup_tenant(engine, tenant_id)
+        engine.dispose()
+
+
+@pytest.mark.live_postgres
+def test_live_postgres_order_conversation_id_is_globally_unique() -> None:
+    if not settings.database_url:
+        pytest.skip("DATABASE_URL is required for live_postgres tests")
+
+    upgrade(Config("alembic.ini"), "head")
+    engine = make_engine(settings.database_url)
+    session_factory = make_session_factory(engine)
+    storage = PostgresStorage(session_factory)
+    tenant_a = f"tenant_live_order_a_{uuid4().hex}"
+    tenant_b = f"tenant_live_order_b_{uuid4().hex}"
+    conversation_id = f"conv_live_{uuid4().hex}"
+
+    try:
+        _cleanup_tenant(engine, tenant_a)
+        _cleanup_tenant(engine, tenant_b)
+        storage.create_order(
+            _make_order(
+                tenant_id=tenant_a,
+                order_id=f"ord_live_a_{uuid4().hex}",
+                conversation_id=conversation_id,
+            )
+        )
+
+        with pytest.raises(IntegrityError):
+            storage.create_order(
+                _make_order(
+                    tenant_id=tenant_b,
+                    order_id=f"ord_live_b_{uuid4().hex}",
+                    conversation_id=conversation_id,
+                )
+            )
+    finally:
+        _cleanup_tenant(engine, tenant_a)
+        _cleanup_tenant(engine, tenant_b)
+        engine.dispose()
+
+
+@pytest.mark.live_postgres
+def test_live_postgres_conversation_order_lookup_is_tenant_scoped() -> None:
+    if not settings.database_url:
+        pytest.skip("DATABASE_URL is required for live_postgres tests")
+
+    upgrade(Config("alembic.ini"), "head")
+    engine = make_engine(settings.database_url)
+    session_factory = make_session_factory(engine)
+    storage = PostgresStorage(session_factory)
+    lookup = PostgresConversationOrderLookup(session_factory)
+    tenant_id = f"tenant_live_lookup_{uuid4().hex}"
+    conversation_id = f"conv_lookup_{uuid4().hex}"
+    order_id = f"ord_lookup_{uuid4().hex}"
+
+    try:
+        _cleanup_tenant(engine, tenant_id)
+        storage.create_order(
+            _make_order(
+                tenant_id=tenant_id,
+                order_id=order_id,
+                conversation_id=conversation_id,
+            )
+        )
+
+        found = lookup.get_order_by_conversation_id(
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+        )
+        wrong_tenant = lookup.get_order_by_conversation_id(
+            tenant_id=f"wrong_{tenant_id}",
+            conversation_id=conversation_id,
+        )
+
+        assert found is not None
+        assert found.order_id == order_id
+        assert wrong_tenant is None
     finally:
         _cleanup_tenant(engine, tenant_id)
         engine.dispose()
@@ -338,3 +525,35 @@ def _cleanup_tenant(engine, tenant_id: str) -> None:
         for table in reversed(Base.metadata.sorted_tables):
             if "tenant_id" in table.c:
                 connection.execute(table.delete().where(table.c.tenant_id == tenant_id))
+
+
+def _make_order(
+    *,
+    tenant_id: str,
+    order_id: str,
+    conversation_id: str,
+) -> Order:
+    item = OrderItem(
+        tenant_id=tenant_id,
+        order_item_id=f"oit_{order_id}",
+        order_id=order_id,
+        product_id="prd_live_conversation",
+        product_name_snapshot="Producto Live Conversation",
+        unit_snapshot="unit",
+        quantity=Decimal("1"),
+        unit_price_snapshot=Decimal("1000"),
+        line_total=Decimal("1000"),
+        validation_status="ok",
+    )
+    return Order(
+        tenant_id=tenant_id,
+        order_id=order_id,
+        conversation_id=conversation_id,
+        raw_message="conversation-linked order",
+        status="draft",
+        items=[item],
+        subtotal=Decimal("1000"),
+        delivery_fee=Decimal("0"),
+        packaging_fee=Decimal("0"),
+        total=Decimal("1000"),
+    )

@@ -58,6 +58,7 @@ def make_order(
     created_at: datetime | None = None,
     customer_id: str | None = None,
     tenant_id: str = DEFAULT_TEST_TENANT_ID,
+    conversation_id: str | None = None,
 ) -> Order:
     resolved_order_id = order_id or f"{run_token}ord_test"
     resolved_product_id = product_id or f"{run_token}prd_test"
@@ -80,6 +81,7 @@ def make_order(
         tenant_id=tenant_id,
         customer_id=customer_id,
         customer_phone_snapshot="3001234567",
+        conversation_id=conversation_id,
         order_id=resolved_order_id,
         created_at=created_at or datetime.now(timezone.utc),
         raw_message="Quiero 2 empanadas",
@@ -291,6 +293,35 @@ def test_create_order_persists_items_and_status_starts_draft(
     assert saved_order.customer_notes == "Dejar en portería"
     assert saved_order.payment_method == "nequi"
     assert saved_order.items[0].modifications == "sin cebolla"
+
+
+def test_create_order_preserves_optional_conversation_id(
+    storage_case: StorageCase,
+):
+    storage = storage_case.storage
+    token = storage_case.run_token
+    order = make_order(token, conversation_id=f"{token}conv_link")
+
+    created = storage.create_order(order)
+    saved_order = storage.get_order(order.order_id)
+
+    assert created.conversation_id == f"{token}conv_link"
+    assert saved_order is not None
+    assert saved_order.conversation_id == f"{token}conv_link"
+
+
+def test_create_order_without_conversation_id_still_works(
+    storage_case: StorageCase,
+):
+    storage = storage_case.storage
+    token = storage_case.run_token
+    order = make_order(token)
+
+    storage.create_order(order)
+    saved_order = storage.get_order(order.order_id)
+
+    assert saved_order is not None
+    assert saved_order.conversation_id is None
 
 
 def test_create_order_raises_on_duplicate(storage_case: StorageCase):

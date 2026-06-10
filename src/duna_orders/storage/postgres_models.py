@@ -118,6 +118,7 @@ class OrderRow(Base):
     customer_id: Mapped[str | None] = mapped_column(String(ID_LENGTH))
     customer_name_snapshot: Mapped[str | None] = mapped_column(String(SHORT_TEXT_LENGTH))
     customer_phone_snapshot: Mapped[str | None] = mapped_column(String(PHONE_LENGTH))
+    conversation_id: Mapped[str | None] = mapped_column(String(ID_LENGTH))
 
     raw_message: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(STATUS_LENGTH), nullable=False, default="draft")
@@ -150,6 +151,14 @@ class OrderRow(Base):
     )
 
     __table_args__ = (
+        Index(
+            "uq_orders_conversation_id_not_null",
+            "conversation_id",
+            unique=True,
+            postgresql_where=(conversation_id.is_not(None)),
+            sqlite_where=(conversation_id.is_not(None)),
+        ),
+        Index("ix_orders_tenant_id_conversation_id", "tenant_id", "conversation_id"),
         Index("ix_orders_tenant_id_status", "tenant_id", "status"),
         Index("ix_orders_tenant_id_created_at", "tenant_id", "created_at"),
         Index("ix_orders_tenant_id_customer_id", "tenant_id", "customer_id"),
@@ -346,6 +355,7 @@ class ConversationSessionRow(Base):
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_message_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
+    resulting_order_id: Mapped[str | None] = mapped_column(String(ID_LENGTH))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

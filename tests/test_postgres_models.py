@@ -146,6 +146,8 @@ def test_tenant_lookup_indexes_exist_for_expected_access_patterns() -> None:
             "ix_customers_tenant_id_phone",
         },
         ORDERS_TAB: {
+            "uq_orders_conversation_id_not_null",
+            "ix_orders_tenant_id_conversation_id",
             "ix_orders_tenant_id_status",
             "ix_orders_tenant_id_created_at",
             "ix_orders_tenant_id_customer_id",
@@ -259,6 +261,23 @@ def test_outbound_messages_unique_constraint_and_indexes_exist() -> None:
     } <= actual_indexes
 
 
+def test_orders_conversation_id_is_nullable_and_unique_when_not_null() -> None:
+    load_postgres_models()
+
+    table = Base.metadata.tables[ORDERS_TAB]
+    indexes = {index.name: index for index in table.indexes}
+
+    assert table.c.conversation_id.nullable is True
+    assert indexes["uq_orders_conversation_id_not_null"].unique is True
+    assert [column.name for column in indexes["uq_orders_conversation_id_not_null"].columns] == [
+        "conversation_id"
+    ]
+    assert [column.name for column in indexes["ix_orders_tenant_id_conversation_id"].columns] == [
+        "tenant_id",
+        "conversation_id",
+    ]
+
+
 def test_conversation_sessions_table_is_postgres_only() -> None:
     load_postgres_models()
 
@@ -272,6 +291,7 @@ def test_conversation_sessions_table_is_postgres_only() -> None:
         "opened_at",
         "last_message_at",
         "version",
+        "resulting_order_id",
         "created_at",
         "updated_at",
     ]
@@ -280,10 +300,10 @@ def test_conversation_sessions_table_is_postgres_only() -> None:
     assert table.c.tenant_id.nullable is False
     assert table.c.customer_phone.nullable is False
     assert table.c.status.nullable is False
+    assert table.c.resulting_order_id.nullable is True
     assert isinstance(table.c.version.type, Integer)
     assert isinstance(table.c.opened_at.type, DateTime)
     assert isinstance(table.c.last_message_at.type, DateTime)
-    assert "resulting_order_id" not in table.c
     assert "latest_parse_status" not in table.c
     assert "latest_parse_error" not in table.c
     assert "accumulated_text" not in table.c

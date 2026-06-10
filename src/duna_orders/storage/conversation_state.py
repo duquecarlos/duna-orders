@@ -27,6 +27,7 @@ class ConversationSession:
     opened_at: datetime
     last_message_at: datetime
     version: int
+    resulting_order_id: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -86,6 +87,15 @@ class ConversationStateStore(Protocol):
         tenant_id: str,
         conversation_id: str,
     ) -> ConversationSession | None:
+        ...
+
+    def mark_draft_created(
+        self,
+        *,
+        tenant_id: str,
+        conversation_id: str,
+        order_id: str,
+    ) -> ConversationSession:
         ...
 
 
@@ -199,6 +209,44 @@ class PostgresConversationStateStore:
             )
 
             return _session_from_row(row) if row is not None else None
+
+    def mark_draft_created(
+        self,
+        *,
+        tenant_id: str,
+        conversation_id: str,
+        order_id: str,
+    ) -> ConversationSession:
+        _require_text(tenant_id, "tenant_id")
+        _require_text(conversation_id, "conversation_id")
+        _require_text(order_id, "order_id")
+
+        with session_scope(self._session_factory) as session:
+            row = session.scalar(
+                select(ConversationSessionRow)
+                .where(ConversationSessionRow.tenant_id == tenant_id)
+                .where(ConversationSessionRow.conversation_id == conversation_id)
+                .with_for_update()
+            )
+
+            if row is None:
+                raise ValueError(f"Conversation session not found: {conversation_id}")
+
+            if row.resulting_order_id is not None:
+                if row.resulting_order_id != order_id:
+                    raise ValueError(
+                        "Conversation session already linked to a different order"
+                    )
+                return _session_from_row(row)
+
+            now = utc_now()
+            row.status = "draft_created"
+            row.resulting_order_id = order_id
+            row.version += 1
+            row.updated_at = now
+            session.flush()
+
+            return _session_from_row(row)
 
     def _get_open_session(
         self,
@@ -328,6 +376,7 @@ def _session_from_row(row: ConversationSessionRow) -> ConversationSession:
         opened_at=_utc_aware(row.opened_at),
         last_message_at=_utc_aware(row.last_message_at),
         version=row.version,
+        resulting_order_id=row.resulting_order_id,
         created_at=_utc_aware(row.created_at),
         updated_at=_utc_aware(row.updated_at),
     )

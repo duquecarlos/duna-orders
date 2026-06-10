@@ -414,6 +414,7 @@ class GoogleSheetsStorage(StorageInterface):
             self._optional_text(order.customer_id),
             self._optional_text(order.customer_name_snapshot),
             self._optional_text(order.customer_phone_snapshot),
+            self._optional_text(order.conversation_id),
             order.raw_message,
             order.status,
             self._optional_text(
@@ -454,6 +455,9 @@ class GoogleSheetsStorage(StorageInterface):
                 ),
                 "customer_phone_snapshot": self._optional_string(
                     record["customer_phone_snapshot"]
+                ),
+                "conversation_id": self._empty_to_none(
+                    record.get("conversation_id", "")
                 ),
                 "raw_message": record["raw_message"],
                 "status": record["status"],

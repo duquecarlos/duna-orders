@@ -159,6 +159,7 @@ class OrderService:
             customer_id=customer_id,
             customer_name_snapshot=customer_name_snapshot,
             customer_phone_snapshot=customer_phone_snapshot,
+            conversation_id=request.conversation_id,
             raw_message=request.raw_message,
             status="draft",
             items=order_items,

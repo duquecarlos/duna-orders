@@ -117,6 +117,7 @@ class Order(BaseModel):
     customer_id: str | None = None
     customer_name_snapshot: str | None = None
     customer_phone_snapshot: str | None = None
+    conversation_id: str | None = None
 
     raw_message: str
     status: OrderStatus = "draft"
@@ -182,6 +183,7 @@ class DraftOrderRequest(BaseModel):
     raw_message: str
     customer_name: str
     customer_phone: str | None = None
+    conversation_id: str | None = None
     items: list[DraftItemRequest]
 
     fulfillment_type: FulfillmentType | None = None

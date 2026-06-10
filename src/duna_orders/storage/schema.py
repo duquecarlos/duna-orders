@@ -64,6 +64,7 @@ TABS = {
         "customer_id",
         "customer_name_snapshot",
         "customer_phone_snapshot",
+        "conversation_id",
         "raw_message",
         "status",
         "confirmed_at",
