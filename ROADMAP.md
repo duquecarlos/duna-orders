@@ -315,6 +315,43 @@ Exit criteria:
 
 ## Recently closed
 
+### M8.6.3C - Guarded retry execution smoke
+
+Closed.
+
+Completed scope:
+
+* Performed smoke-only validation of the M8.6.3B retry UI against the
+  throwaway Neon branch.
+* Used a safe operator-controlled WhatsApp recipient ending in `4241`.
+* Verified the real retry execution path from Orders Today UI through service,
+  store, and Twilio.
+* Confirmed the retry reused the same outbound idempotency row:
+  `out_ui_retry_execution_smoke_20260610`.
+* Confirmed the outbound row count stayed `1`.
+* Confirmed `attempt_count` increased from `1` to `2`.
+* Confirmed the row reached `status=sent` with provider message id and sent
+  timestamp populated.
+* Confirmed the WhatsApp message was received by the safe test recipient.
+* Made no code changes.
+
+Smoke evidence:
+
+* Source safe-recipient order: `demo_ord_01486`.
+* Retry execution order: `ord_ui_retry_execution_smoke_20260610`.
+* Masked recipient: `****4241`.
+* Result: `RETRY_EXECUTION_SMOKE_RESULT=PASS`.
+
+Deferred follow-ups:
+
+* Retry-limit/max-attempts policy.
+* `attempt_count` display.
+* Last failure time display.
+* Delivery/read callbacks.
+* Queue/worker behavior.
+* Auto-send on confirm.
+* Payment-dependent acknowledgement content.
+
 ### M8.6.3B - Retry acknowledgement UI implementation
 
 Closed.

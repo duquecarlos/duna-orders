@@ -388,6 +388,23 @@ Required test themes for implementation slice:
 * Retry-limit policy, `attempt_count` display, and last failure time display
   remain deferred.
 
+### M8.6.3C - Guarded Retry Execution Smoke
+
+* Smoke-only validation ran against the throwaway Neon branch with no code
+  changes.
+* Used a safe operator-controlled WhatsApp recipient ending in `4241`.
+* Verified the real retry execution path from Orders Today UI through service,
+  store, and Twilio.
+* Confirmed retry reused outbound row
+  `out_ui_retry_execution_smoke_20260610`.
+* Confirmed row count stayed `1`, `attempt_count` increased from `1` to `2`,
+  final status was `sent`, provider message id was populated, and sent timestamp
+  was populated.
+* Confirmed the WhatsApp message was received by the safe test recipient.
+* No retry-limit policy, attempt-count display, failure-time display,
+  delivery/read callbacks, queue/worker behavior, auto-send, or
+  payment-dependent content was added.
+
 ## 11. Explicitly Out of Scope
 
 * No auto-send on confirm.

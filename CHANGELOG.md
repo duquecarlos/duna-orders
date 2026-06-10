@@ -1,6 +1,73 @@
 # Changelog
 ## Unreleased
 
+### M8.6.3C - Guarded retry execution smoke
+
+Completed smoke validation.
+
+#### Scope
+
+* Performed smoke-only validation of the M8.6.3B retry UI against the
+  throwaway Neon branch.
+* Made no code changes.
+* Used a safe operator-controlled WhatsApp recipient ending in `4241`.
+* Verified the real retry execution path from Orders Today UI through the
+  service, store, and Twilio.
+* Confirmed retry reused the same outbound idempotency row.
+* Confirmed no duplicate outbound row was created.
+* Confirmed the WhatsApp message was received.
+
+#### Smoke setup
+
+* Confirmed the throwaway Neon branch through the known sent guard row.
+* Safe recipient source was prior successful manual outbound smoke:
+  `SAFE_SOURCE_ORDER_ID=demo_ord_01486`,
+  `SAFE_SOURCE_CUSTOMER_NAME=Carlos Smoke`,
+  `SAFE_SOURCE_MASKED_PHONE_LAST4=****4241`.
+* Prepared confirmed retry execution order
+  `ord_ui_retry_execution_smoke_20260610`.
+* Prepared failed outbound row
+  `out_ui_retry_execution_smoke_20260610` with initial `status=failed`,
+  `OUTBOUND_ACK_ROW_COUNT=1`, `SERVICE_SEND_PATH_CALLED=false`, and
+  `TWILIO_CALLED=false` during DB prep.
+
+#### Manual Streamlit smoke
+
+* Orders Today showed failed retry UI:
+  `Acknowledgement was not sent. You can retry.` and `Retry acknowledgement`.
+* First click opened explicit confirmation:
+  `Send this acknowledgement again? The previous attempt failed.`
+* Final confirmation executed the real retry.
+* The safe test recipient received the WhatsApp message.
+
+#### DB verification after retry
+
+* `ORDER_ID=ord_ui_retry_execution_smoke_20260610`.
+* `CUSTOMER_NAME=Carlos Smoke Retry Smoke`.
+* `MASKED_CUSTOMER_PHONE_LAST4=****4241`.
+* `OUTBOUND_ROW_COUNT=1`.
+* `OUTBOUND_MESSAGE_ID=out_ui_retry_execution_smoke_20260610`.
+* `STATUS=sent`.
+* `ATTEMPT_COUNT=2`.
+* `PROVIDER=twilio`.
+* `PROVIDER_MESSAGE_ID_POPULATED=true`.
+* `SENT_AT_POPULATED=true`.
+* `LAST_ERROR_CODE=null`.
+* `LAST_ERROR_MESSAGE=null`.
+* `SAME_OUTBOUND_MESSAGE_ID_REUSED=true`.
+* `ROW_COUNT_STAYED_1=true`.
+* `ATTEMPT_COUNT_INCREASED_FROM_1=true`.
+* `RETRY_EXECUTION_SMOKE_RESULT=PASS`.
+
+#### Safety conclusions
+
+* Retry execution works end to end.
+* Same outbound row was reused.
+* Row count stayed `1`.
+* `attempt_count` increased from `1` to `2`.
+* No provider secrets or full phone number were documented.
+* No new behavior was implemented in this slice.
+
 ### M8.6.3B - Retry acknowledgement UI implementation
 
 Implemented.

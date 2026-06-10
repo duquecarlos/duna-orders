@@ -18,6 +18,13 @@ requires explicit confirmation, hides retry for `unknown` and in-progress
 states, and does not display provider internals, delivery wording,
 `attempt_count`, or failure time.
 
+Smoke follow-up: M8.6.3C validated the real retry execution path on the
+throwaway Neon branch with a safe operator-controlled WhatsApp recipient ending
+in `4241`. The retry reused the same outbound row, kept row count at `1`,
+increased `attempt_count` from `1` to `2`, reached `status=sent`, and the
+WhatsApp message was received. No new behavior was implemented in that
+smoke-only slice.
+
 ## Pre-flight Contract Findings
 
 Current service method:
