@@ -67,8 +67,101 @@ DUNA_OUTBOUND_ENABLED=false
 
 The throwaway Neon branch is being kept temporarily and will auto-delete later.
 
+## Manual Acknowledgement UI Result
+
+Status: passed.
+
+M8.6.1B added the operator-triggered manual acknowledgement UI in Orders Today.
+The acknowledgement section renders only for confirmed orders. When outbound
+setup is unavailable, the UI shows a safe reason and does not call the service.
+When setup is available, the UI shows `Send acknowledgement`; the service call
+happens only on explicit button click. Results are mapped through the UI-safe
+outcome mapper and displayed by severity. The UI does not show
+`provider_message_id`, provider error codes, provider error messages, Twilio
+SIDs, auth tokens, or other provider internals.
+
+Implementation commits:
+
+* `feat(outbound): add acknowledgement UI result mapping`
+* `a669fdd feat(outbound): add acknowledgement UI service setup`
+* `a872131 feat(outbound): add manual acknowledgement UI`
+
+Local safety smoke passed with default local safety settings:
+
+```text
+DUNA_STORAGE_BACKEND='memory'
+DUNA_OUTBOUND_ENABLED=False
+DUNA_OUTBOUND_TENANT_ID='el-fogon-colombiano'
+TWILIO_WHATSAPP_FROM='whatsapp:+14155238886'
+```
+
+Twilio SID and token were set locally, but outbound was disabled. Orders Today
+loaded with a memory/local confirmed test order. The confirmed card showed
+`Acknowledgement` and the safe message `Outbound acknowledgement is disabled.`
+The visible buttons were `Start preparation`, `Cancel`, and `Refresh`.
+`Send acknowledgement` was not present, no provider internals were visible, and
+no send path was available. Streamlit was stopped, local env remained or was
+reset to memory/outbound disabled, focused tests reported `62 passed`, ruff
+passed, and git status was clean.
+
+An initial Postgres duplicate-suppression UI smoke attempt failed safely. The
+known already-sent smoke order `demo_ord_01486` was confirmed but not visible in
+Orders Today because `created_at=2026-05-27` and Orders Today filtered for
+`2026-06-10`. Existing row `out_01ktr15dq66n1q6x3v8atdwz6f` remained unchanged:
+`status=sent`, `provider=twilio`, `provider_message_id` populated,
+`attempt_count=1`, no error fields, and populated `sent_at`. No UI click
+occurred, no service/send attempt occurred, and no second WhatsApp send
+happened.
+
+Postgres UI duplicate-suppression smoke then passed on the throwaway Neon smoke
+branch using process environment only. No secrets were printed. A guard check
+confirmed the prior throwaway smoke row for `demo_ord_01486` existed.
+
+Seeded today-visible confirmed order:
+
+```text
+order_id=ord_ui_dup_smoke_20260610
+tenant_id=el-fogon-colombiano
+status=confirmed
+created_at=2026-06-10 06:45:09.634329+00
+```
+
+Seeded sent outbound acknowledgement row:
+
+```text
+outbound_message_id=out_01ktr4e71rw6hqeadbyb5dwgq7
+acknowledgement_type=order_confirmed_ack
+status=sent
+provider=twilio
+provider_message_id=<populated fake smoke value>
+attempt_count=1
+last_error_code=null
+last_error_message=null
+sent_at=<populated>
+```
+
+Orders Today showed the seeded order and the buttons `Send acknowledgement`,
+`Start preparation`, `Cancel`, and `Refresh`. Clicking `Send acknowledgement`
+once displayed:
+
+```text
+Acknowledgement was already sent.
+```
+
+After the click, the outbound row count for the tenant/order/type remained
+`1`, the same `outbound_message_id` remained `sent`, `attempt_count` stayed
+`1`, and no error fields were populated. No new WhatsApp send happened.
+Streamlit was stopped and local environment was reset to:
+
+```text
+DUNA_STORAGE_BACKEND=memory
+DUNA_OUTBOUND_ENABLED=false
+```
+
+Focused tests reported `62 passed`, ruff passed, and git status was clean.
+
 Important constraints remain unchanged: Twilio API acceptance is not delivery or
-read callback proof; delivery/read callbacks, UI, queue/worker behavior,
+read callback proof; delivery/read callbacks, queue/worker behavior, retry UI,
 auto-send on confirm, and payment-dependent content remain deferred.
 
 ## 1. Prepare Throwaway Neon Branch

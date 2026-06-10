@@ -1,6 +1,77 @@
 # Changelog
 ## Unreleased
 
+### M8.6.1B - Manual acknowledgement UI
+
+Implemented.
+
+#### Delivered
+
+* Added a pure UI result mapper for outbound acknowledgement outcomes.
+* Added UI setup/factory readiness for constructing the outbound
+  acknowledgement service only when outbound is enabled, Postgres storage is in
+  use, tenant binding is configured, and Twilio outbound settings are present.
+* Added an operator-triggered acknowledgement section to Orders Today.
+* Rendered the acknowledgement section only for confirmed orders.
+* Showed a safe unavailable reason when outbound setup is not ready, without
+  calling the service.
+* Showed `Send acknowledgement` only when setup is available.
+* Kept the service call behind an explicit operator button click.
+* Mapped service results through the UI-safe outcome mapper and displayed by
+  severity.
+* Kept provider internals out of the UI.
+
+#### Manual UI smoke
+
+* Local safety smoke passed with `DUNA_STORAGE_BACKEND='memory'` and
+  `DUNA_OUTBOUND_ENABLED=False`.
+* Orders Today loaded with a memory/local confirmed test order.
+* The confirmed card showed `Acknowledgement`.
+* The visible safe message was `Outbound acknowledgement is disabled.`
+* Visible buttons were `Start preparation`, `Cancel`, and `Refresh`.
+* `Send acknowledgement` was not present, no provider internals were visible,
+  and no send path was available.
+* Initial Postgres duplicate-suppression UI smoke attempt failed safely because
+  known sent smoke order `demo_ord_01486` was created on `2026-05-27` and was
+  not visible in Orders Today for `2026-06-10`.
+* During that safe-fail attempt, outbound row
+  `out_01ktr15dq66n1q6x3v8atdwz6f` remained `sent`, kept
+  `provider_message_id` populated, kept `attempt_count=1`, had no error fields,
+  and no UI click or send attempt occurred.
+* Postgres duplicate-suppression UI smoke passed on the throwaway Neon smoke
+  branch using a today-visible seeded duplicate.
+* Seeded confirmed order `ord_ui_dup_smoke_20260610` for tenant
+  `el-fogon-colombiano` with `created_at=2026-06-10 06:45:09.634329+00`.
+* Seeded sent outbound row `out_01ktr4e71rw6hqeadbyb5dwgq7` with
+  `acknowledgement_type=order_confirmed_ack`, `status=sent`,
+  `provider=twilio`, populated fake smoke `provider_message_id`,
+  `attempt_count=1`, no error fields, and populated `sent_at`.
+* Orders Today showed the seeded order and the buttons `Send acknowledgement`,
+  `Start preparation`, `Cancel`, and `Refresh`.
+* Clicking `Send acknowledgement` once displayed
+  `Acknowledgement was already sent.`
+* After the click, the outbound row count remained `1`, the same
+  `outbound_message_id` remained `sent`, `attempt_count` stayed `1`, and no
+  error fields were populated.
+* No new WhatsApp send happened.
+* Streamlit was stopped after both smokes and local settings were reset to
+  `DUNA_STORAGE_BACKEND=memory` and `DUNA_OUTBOUND_ENABLED=false`.
+* Focused verification passed with `62 passed`; ruff passed; git status was
+  clean.
+
+#### Deferred
+
+* No retry UI.
+* No auto-send on confirm.
+* No inbound review changes.
+* No coupling into `OrderService.confirm_approved_order` or the confirmation
+  transaction.
+* No `StorageInterface` extension.
+* No parser behavior or `PROMPT_VERSION` changes.
+* No delivery/read callbacks.
+* No queue/worker behavior.
+* No payment-dependent acknowledgement content.
+
 ### M8.6.1A - Outbound acknowledgement core
 
 Implemented.

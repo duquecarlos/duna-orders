@@ -315,6 +315,40 @@ Exit criteria:
 
 ## Recently closed
 
+### M8.6.1B - Manual acknowledgement UI
+
+Closed.
+
+Completed scope:
+
+* Added a pure UI mapper for outbound acknowledgement service outcomes.
+* Added UI setup/factory readiness for outbound acknowledgement service
+  construction.
+* Added the operator-triggered manual acknowledgement action to Orders Today.
+* Rendered the acknowledgement section only for confirmed orders.
+* Kept sends behind an explicit `Send acknowledgement` button click.
+* Displayed unavailable setup states as safe operator-facing messages.
+* Displayed service results through the UI-safe outcome mapper.
+* Kept provider internals out of the UI.
+* Local memory/outbound-disabled safety smoke passed: confirmed cards showed
+  `Acknowledgement`, displayed `Outbound acknowledgement is disabled.`, and did
+  not show `Send acknowledgement`.
+* Postgres UI duplicate-suppression smoke passed on the throwaway Neon smoke
+  branch using seeded today-visible duplicate order
+  `ord_ui_dup_smoke_20260610`.
+* The UI click displayed `Acknowledgement was already sent.`, kept the existing
+  outbound row count at `1`, kept the same `outbound_message_id`, kept
+  `status=sent`, and kept `attempt_count=1`.
+* No new WhatsApp send happened.
+
+Deferred follow-ups:
+
+* Retry UI for failed retryable acknowledgements.
+* Delivery/read callbacks.
+* Queue/worker behavior.
+* Auto-send on confirm.
+* Payment-dependent acknowledgement content.
+
 ### M8.6.1A - Outbound acknowledgement core
 
 Closed.
@@ -344,7 +378,6 @@ Completed scope:
 
 Deferred follow-ups:
 
-* M8.6.1B: operator UI.
 * Delivery/read callbacks.
 * Queue/worker behavior.
 * Auto-send on confirm.
