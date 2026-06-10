@@ -338,18 +338,36 @@ Required test themes for implementation slice:
 
 ### M8.6.1B - Operator UI and Smoke
 
-* UI preview/send action.
-* Status display.
-* Retry button only for `failed`.
-* Manual Twilio sandbox smoke with throwaway Neon branch.
+* Operator-triggered manual acknowledgement action in Orders Today.
+* Send button renders only for confirmed orders when outbound setup is ready.
+* Service call happens only on explicit operator click.
+* Results are mapped through UI-safe outcome messages.
+* Manual disabled-mode and duplicate-suppression UI smoke passed.
 * No auto-send.
+* No retry UI.
 * Delivery/read callbacks still deferred.
 
-### M8.6.1C - Closeout
+### M8.6.1C - Read-Only Status Visibility
 
-* Smoke checklist/docs updates.
-* Decisions/changelog closeout.
-* Optional design note for future delivery callbacks.
+* Orders Today renders read-only acknowledgement state before the operator
+  decides whether to send.
+* No-row state shows `No acknowledgement has been sent yet.` and shows the send
+  button.
+* Sent, sending/send_requested, unknown/may-have-sent, failed, and blocked
+  states hide the send button.
+* UI status is display-only; backend claim-before-send remains the final send
+  authority.
+* Manual Streamlit smoke passed for disabled, sent existing-row, and no-record
+  states.
+
+### M8.6.1D - Provider-Neutral Unavailable UI
+
+* Orders Today no longer renders provider-specific unavailable/not-ready setup
+  details.
+* Disabled still renders `Outbound acknowledgement is disabled.`
+* Enabled but not fully configured renders
+  `Outbound acknowledgement is not fully configured.`
+* Provider-specific setup diagnostics remain internal.
 
 ## 11. Explicitly Out of Scope
 

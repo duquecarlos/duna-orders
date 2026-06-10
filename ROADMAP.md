@@ -315,6 +315,72 @@ Exit criteria:
 
 ## Recently closed
 
+### M8.6.1D - Provider-neutral outbound unavailable UI messages
+
+Closed.
+
+Completed scope:
+
+* Updated Orders Today acknowledgement unavailable/not-ready rendering so
+  provider-specific setup diagnostics are not exposed in the operator-facing UI.
+* Preserved the disabled message exactly:
+  `Outbound acknowledgement is disabled.`
+* Rendered enabled-but-not-ready setup as:
+  `Outbound acknowledgement is not fully configured.`
+* Kept provider-specific setup diagnostics internal.
+* Preserved send behavior, adapter behavior, preflight behavior, parser
+  behavior, `StorageInterface`, and `OrderService` boundaries.
+
+Deferred follow-ups:
+
+* Retry UI for failed retryable acknowledgements.
+* Delivery/read callbacks.
+* Queue/worker behavior.
+* Auto-send on confirm.
+* Payment-dependent acknowledgement content.
+
+### M8.6.1C - Read-only manual acknowledgement status visibility
+
+Closed.
+
+Completed scope:
+
+* Added read-only outbound acknowledgement status visibility to Orders Today for
+  confirmed orders.
+* Rendered no-record, sent, sending/send_requested, unknown/may-have-sent,
+  failed retryable, and blocked/missing-detail states with safe
+  operator-facing text.
+* Showed `Send acknowledgement` only for the no-record state.
+* Hid the send button for sent, sending, unknown, failed, and blocked states.
+* Kept status visibility display-only; backend claim-before-send remains the
+  final send authority.
+* Kept the send button routed through
+  `OutboundAcknowledgementService.send_order_confirmed_acknowledgement(...)`.
+* Preserved disabled/not-ready behavior.
+* Manual Streamlit smoke passed for disabled, sent existing-row, and no-record
+  states.
+
+Smoke evidence:
+
+* Sent-row smoke used order `ord_ui_dup_smoke_20260610` and outbound row
+  `out_01ktr4e71rw6hqeadbyb5dwgq7`.
+* No-record smoke used order `ord_ui_no_record_smoke_20260610` with
+  `OUTBOUND_ACK_ROW_COUNT 0`.
+
+Known unrelated issue:
+
+* `pages/1_New_Order.py` can crash when `st.session_state.catalog_ready` is
+  missing. This is unrelated to M8.6.1C/D because those slices only changed
+  Orders Today outbound acknowledgement display.
+
+Deferred follow-ups:
+
+* Retry UI for failed retryable acknowledgements.
+* Delivery/read callbacks.
+* Queue/worker behavior.
+* Auto-send on confirm.
+* Payment-dependent acknowledgement content.
+
 ### M8.6.1B - Manual acknowledgement UI
 
 Closed.

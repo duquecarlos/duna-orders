@@ -1,6 +1,103 @@
 # Changelog
 ## Unreleased
 
+### M8.6.1D - Provider-neutral outbound unavailable UI messages
+
+Implemented.
+
+#### Delivered
+
+* Updated Orders Today acknowledgement unavailable/not-ready rendering so
+  provider-specific setup diagnostics are not shown to operators.
+* Kept disabled outbound rendering exactly as
+  `Outbound acknowledgement is disabled.`
+* Mapped enabled-but-not-ready outbound setup to
+  `Outbound acknowledgement is not fully configured.`
+* Kept provider-specific setup diagnostics internal for developer/operator
+  diagnostics.
+
+#### Verification
+
+* Targeted tests passed: `56 passed`.
+* `pytest -q` passed: `489 passed, 23 deselected`.
+* `ruff check src tests` passed.
+* `python -m compileall src tests` passed.
+* `git diff --check` reported only LF-to-CRLF warnings.
+
+#### Deferred
+
+* No send behavior changes.
+* No adapter changes.
+* No preflight changes.
+* No parser behavior or `PROMPT_VERSION` changes.
+* No `StorageInterface` extension.
+* No `OrderService` coupling.
+
+### M8.6.1C - Read-only manual acknowledgement status visibility
+
+Implemented.
+
+#### Delivered
+
+* Added read-only outbound acknowledgement status visibility to Orders Today
+  for confirmed orders.
+* For no outbound row, Orders Today shows
+  `No acknowledgement has been sent yet.` and shows `Send acknowledgement`.
+* For a sent row, Orders Today shows `Acknowledgement was already sent.` and
+  hides the send button.
+* For `sending` or `send_requested`, Orders Today shows
+  `Acknowledgement is being sent.` and hides the send button.
+* For `unknown` or may-have-sent states, Orders Today shows
+  `Acknowledgement status is unclear — it may already have been sent. Check before taking any action.`
+  and hides the send button.
+* For failed retryable state, Orders Today shows
+  `Acknowledgement could not be sent. Retry is not available yet.` and hides
+  the send button.
+* For blocked or missing required details, Orders Today shows
+  `Acknowledgement cannot be sent — order is missing required details.` and
+  hides the send button.
+* Preserved disabled/not-ready behavior.
+* Kept UI status display-only; backend claim-before-send remains the final send
+  authority.
+* Kept the button routed through
+  `OutboundAcknowledgementService.send_order_confirmed_acknowledgement(...)`.
+* Kept provider internals out of the UI.
+
+#### Manual UI smoke
+
+* Disabled/outbound-off confirmed order smoke passed: Orders Today showed
+  `Outbound acknowledgement is disabled.` and no `Send acknowledgement` button.
+* Sent existing row smoke passed using order `ord_ui_dup_smoke_20260610` and
+  outbound row `out_01ktr4e71rw6hqeadbyb5dwgq7`: Orders Today showed
+  `Acknowledgement was already sent.` and no send button.
+* No-record confirmed order smoke passed using order
+  `ord_ui_no_record_smoke_20260610`, with `OUTBOUND_ACK_ROW_COUNT 0`: Orders
+  Today showed `No acknowledgement has been sent yet.` and showed
+  `Send acknowledgement`.
+
+#### Verification
+
+* `pytest -q` passed: `481 passed, 23 deselected`.
+* `ruff check src tests` passed.
+* `python -m compileall src tests` passed.
+* `git diff --check` reported only LF-to-CRLF warnings.
+
+#### Deferred
+
+* No retry UI or resend button.
+* No auto-send on confirm.
+* No delivery/read callbacks.
+* No queue/worker behavior.
+* No `StorageInterface` extension.
+* No `OrderService` coupling.
+
+#### Known unrelated issue
+
+* During manual smoke setup, `pages/1_New_Order.py` was observed to crash when
+  `st.session_state.catalog_ready` is missing.
+* This is unrelated to M8.6.1C/D because those slices only changed Orders Today
+  outbound acknowledgement display.
+
 ### M8.6.1B - Manual acknowledgement UI
 
 Implemented.

@@ -160,6 +160,80 @@ DUNA_OUTBOUND_ENABLED=false
 
 Focused tests reported `62 passed`, ruff passed, and git status was clean.
 
+## Manual Acknowledgement Status UI Result
+
+Status: passed.
+
+M8.6.1C added read-only outbound acknowledgement status visibility to Orders
+Today for confirmed orders. The status display is only a hint; backend
+claim-before-send remains the final send authority, and the button still routes
+through `OutboundAcknowledgementService.send_order_confirmed_acknowledgement(...)`.
+
+Orders Today now renders:
+
+* no outbound row: `No acknowledgement has been sent yet.` with
+  `Send acknowledgement` visible;
+* sent row: `Acknowledgement was already sent.` with the send button hidden;
+* `sending` or `send_requested`: `Acknowledgement is being sent.` with the send
+  button hidden;
+* unknown or may-have-sent: `Acknowledgement status is unclear — it may already have been sent. Check before taking any action.`
+  with the send button hidden;
+* failed retryable: `Acknowledgement could not be sent. Retry is not available yet.`
+  with the send button hidden;
+* blocked or missing required details:
+  `Acknowledgement cannot be sent — order is missing required details.` with
+  the send button hidden.
+
+Manual Streamlit smoke passed:
+
+* disabled/outbound-off confirmed order showed
+  `Outbound acknowledgement is disabled.` and no `Send acknowledgement` button;
+* sent existing-row order `ord_ui_dup_smoke_20260610` with outbound row
+  `out_01ktr4e71rw6hqeadbyb5dwgq7` showed
+  `Acknowledgement was already sent.` and no send button;
+* no-record confirmed order `ord_ui_no_record_smoke_20260610` had
+  `OUTBOUND_ACK_ROW_COUNT 0`, showed `No acknowledgement has been sent yet.`,
+  and showed `Send acknowledgement`.
+
+M8.6.1C verification passed:
+
+```text
+pytest -q -> 481 passed, 23 deselected
+ruff check src tests -> passed
+python -m compileall src tests -> passed
+git diff --check -> only LF-to-CRLF warnings
+```
+
+## Provider-Neutral Unavailable UI Result
+
+Status: passed.
+
+M8.6.1D removed provider-specific details from Orders Today acknowledgement
+unavailable/not-ready messages. Provider-specific setup diagnostics remain
+internal, but Orders Today now renders:
+
+* outbound disabled: `Outbound acknowledgement is disabled.`
+* enabled but not fully configured:
+  `Outbound acknowledgement is not fully configured.`
+
+No send behavior, adapter behavior, preflight behavior, parser behavior,
+`StorageInterface`, or `OrderService` coupling changed.
+
+M8.6.1D verification passed:
+
+```text
+targeted tests -> 56 passed
+pytest -q -> 489 passed, 23 deselected
+ruff check src tests -> passed
+python -m compileall src tests -> passed
+git diff --check -> only LF-to-CRLF warnings
+```
+
+Known unrelated issue: during manual smoke setup,
+`pages/1_New_Order.py` was observed to crash when
+`st.session_state.catalog_ready` is missing. This was not caused by M8.6.1C/D;
+those slices only changed Orders Today outbound acknowledgement display.
+
 Important constraints remain unchanged: Twilio API acceptance is not delivery or
 read callback proof; delivery/read callbacks, queue/worker behavior, retry UI,
 auto-send on confirm, and payment-dependent content remain deferred.
