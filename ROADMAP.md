@@ -315,6 +315,38 @@ Exit criteria:
 
 ## Recently closed
 
+### M8.6.3B - Retry acknowledgement UI implementation
+
+Closed.
+
+Completed scope:
+
+* Added a guarded `Retry acknowledgement` UI in Orders Today for outbound
+  acknowledgement rows with `status=failed`.
+* Rendered failed rows as:
+  `Acknowledgement was not sent. You can retry.`
+* Required an explicit confirmation step before retry fires, using:
+  `Send this acknowledgement again? The previous attempt failed.`
+* Routed confirmed retry through
+  `OutboundAcknowledgementService.send_order_confirmed_acknowledgement(..., retry_failed=True)`.
+* Kept the UI from calling provider adapters or creating outbound rows.
+* Preserved backend claim/idempotency as final send authority.
+* Hid retry for `sent`, `sending`, `send_requested`, `unknown`, no-record,
+  blocked/missing-detail, and disabled/not-ready states.
+* Preserved existing `Send acknowledgement` behavior for no-record rows.
+* Manual Streamlit UI-gate smoke passed using seeded failed-row order
+  `ord_ui_retry_failed_smoke_20260610`.
+
+Deferred follow-ups:
+
+* Retry-limit/max-attempts policy.
+* `attempt_count` display.
+* Last failure time display.
+* Delivery/read callbacks.
+* Queue/worker behavior.
+* Auto-send on confirm.
+* Payment-dependent acknowledgement content.
+
 ### M8.6.2A - New Order session-state initialization guard
 
 Closed.
@@ -356,7 +388,9 @@ Completed scope:
 
 Deferred follow-ups:
 
-* Retry UI for failed retryable acknowledgements.
+* Retry-limit/max-attempts policy.
+* `attempt_count` display.
+* Last failure time display.
 * Delivery/read callbacks.
 * Queue/worker behavior.
 * Auto-send on confirm.
@@ -392,7 +426,9 @@ Smoke evidence:
 
 Deferred follow-ups:
 
-* Retry UI for failed retryable acknowledgements.
+* Retry-limit/max-attempts policy.
+* `attempt_count` display.
+* Last failure time display.
 * Delivery/read callbacks.
 * Queue/worker behavior.
 * Auto-send on confirm.
@@ -426,7 +462,9 @@ Completed scope:
 
 Deferred follow-ups:
 
-* Retry UI for failed retryable acknowledgements.
+* Retry-limit/max-attempts policy.
+* `attempt_count` display.
+* Last failure time display.
 * Delivery/read callbacks.
 * Queue/worker behavior.
 * Auto-send on confirm.

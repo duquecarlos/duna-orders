@@ -1,6 +1,6 @@
 # M8.6.3A Retry UI Safety Design
 
-Status: design policy only.
+Status: design policy accepted. M8.6.3B implemented the first retry UI slice.
 
 Baseline: `8f3eda1 docs(ui): close new order session-state fix`
 
@@ -9,6 +9,14 @@ future operator-triggered `Retry acknowledgement` button. Retry is the first
 outbound UI action that can cause a second send attempt to a real customer, so
 the UI must stay conservative and the backend claim/idempotency path must remain
 the final authority.
+
+Implementation follow-up: `8f5f518 feat(outbound): add acknowledgement retry UI`
+implemented the guarded Orders Today retry UI for failed outbound
+acknowledgement rows only. It preserved the policy that retry routes through
+`OutboundAcknowledgementService.send_order_confirmed_acknowledgement(..., retry_failed=True)`,
+requires explicit confirmation, hides retry for `unknown` and in-progress
+states, and does not display provider internals, delivery wording,
+`attempt_count`, or failure time.
 
 ## Pre-flight Contract Findings
 

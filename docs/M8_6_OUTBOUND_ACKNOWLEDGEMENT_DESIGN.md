@@ -369,6 +369,25 @@ Required test themes for implementation slice:
   `Outbound acknowledgement is not fully configured.`
 * Provider-specific setup diagnostics remain internal.
 
+### M8.6.3B - Retry Acknowledgement UI
+
+* Orders Today renders `Retry acknowledgement` only for failed outbound
+  acknowledgement rows.
+* Failed rows render `Acknowledgement was not sent. You can retry.`
+* The first retry click opens explicit confirmation only:
+  `Send this acknowledgement again? The previous attempt failed.`
+* Confirmed retry routes through
+  `OutboundAcknowledgementService.send_order_confirmed_acknowledgement(..., retry_failed=True)`.
+* The UI does not call provider adapters directly and does not create outbound
+  rows.
+* Backend claim/idempotency remains the final send authority.
+* `sent`, `sending`, `send_requested`, `unknown`, no-record,
+  blocked/missing-detail, and disabled/not-ready states do not show retry.
+* Manual Streamlit UI-gate smoke passed using seeded failed-row order
+  `ord_ui_retry_failed_smoke_20260610`.
+* Retry-limit policy, `attempt_count` display, and last failure time display
+  remain deferred.
+
 ## 11. Explicitly Out of Scope
 
 * No auto-send on confirm.

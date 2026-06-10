@@ -1,6 +1,78 @@
 # Changelog
 ## Unreleased
 
+### M8.6.3B - Retry acknowledgement UI implementation
+
+Implemented.
+
+#### Delivered
+
+* Added the smallest safe retry UI for outbound acknowledgements in Orders
+  Today.
+* Rendered retry only for outbound acknowledgement rows with `status=failed`.
+* Updated failed-row text to
+  `Acknowledgement was not sent. You can retry.`
+* Added the `Retry acknowledgement` button for failed rows only.
+* Required an explicit confirmation step before retry fires.
+* Used the exact confirmation text:
+  `Send this acknowledgement again? The previous attempt failed.`
+* Routed confirmed retry through
+  `OutboundAcknowledgementService.send_order_confirmed_acknowledgement(..., retry_failed=True)`.
+* Kept the UI from calling the provider adapter directly.
+* Kept the UI from creating outbound rows.
+* Preserved backend claim/idempotency as the final send authority.
+* Used rerun/re-query after retry action so stale failed/retryable display does
+  not persist.
+
+#### Non-retryable states
+
+* `sent`: no retry.
+* `sending`: no retry.
+* `send_requested`: no retry.
+* `unknown`: no retry.
+* no outbound row: existing `Send acknowledgement` behavior remains.
+* blocked or missing required details: no retry.
+* disabled or not-ready outbound setup: no retry.
+
+#### Manual UI smoke
+
+* DB-only smoke helper seeded a failed-row smoke order on the throwaway Neon
+  branch without calling the service or Twilio:
+  `ord_ui_retry_failed_smoke_20260610`.
+* Seeded row evidence:
+  `OUTBOUND_MESSAGE_ID=out_ui_retry_failed_smoke_20260610`,
+  `OUTBOUND_STATUS=failed`, `OUTBOUND_ACK_ROW_COUNT=1`,
+  `SERVICE_SEND_PATH_CALLED=false`, `TWILIO_CALLED=false`.
+* Manual Streamlit smoke passed: the failed row showed
+  `Acknowledgement was not sent. You can retry.` and
+  `Retry acknowledgement`.
+* First click showed only the confirmation text:
+  `Send this acknowledgement again? The previous attempt failed.`
+* Final confirmation was not required for this UI-gate smoke.
+* Regression checks passed: sent rows did not show retry, and no-record rows
+  still showed `Send acknowledgement`, not `Retry acknowledgement`.
+
+#### Verification
+
+* Targeted tests passed: `89 passed`.
+* `pytest -q` passed: `502 passed, 23 deselected`.
+* `ruff check src tests pages` passed.
+* `python -m compileall src tests pages` passed.
+* `git diff --check` reported only LF-to-CRLF warnings.
+
+#### Deferred
+
+* No retry-limit or max-attempts policy.
+* No `attempt_count` display.
+* No last failure time display.
+* No auto-send on confirm.
+* No delivery/read callbacks.
+* No queue/worker behavior.
+* No payment-dependent content.
+* No parser behavior or `PROMPT_VERSION` changes.
+* No `StorageInterface` extension.
+* No `OrderService` coupling.
+
 ### M8.6.2A - New Order session-state initialization guard
 
 Implemented.

@@ -229,6 +229,69 @@ python -m compileall src tests -> passed
 git diff --check -> only LF-to-CRLF warnings
 ```
 
+## Retry Acknowledgement UI Result
+
+Status: passed.
+
+M8.6.3B added the guarded `Retry acknowledgement` UI in Orders Today. Retry is
+shown only for outbound acknowledgement rows with `status=failed`. Non-retryable
+states remain gated: `sent`, `sending`, `send_requested`, `unknown`, no-record,
+blocked/missing-detail, and disabled/not-ready states do not show retry.
+
+Failed rows now render:
+
+```text
+Acknowledgement was not sent. You can retry.
+Retry acknowledgement
+```
+
+The first click does not retry or send. It opens explicit confirmation only:
+
+```text
+Send this acknowledgement again? The previous attempt failed.
+```
+
+Confirmed retry routes through
+`OutboundAcknowledgementService.send_order_confirmed_acknowledgement(..., retry_failed=True)`.
+The UI does not call provider adapters directly, does not create outbound rows,
+and continues to rely on backend claim/idempotency as the final send authority.
+Post-action rerun/re-query prevents stale failed/retryable state from
+persisting. Retry-goes-unknown hides retry.
+
+DB-only smoke helper prepared a failed-row smoke order on the throwaway Neon
+branch without calling the service or Twilio:
+
+```text
+ORDER_ID=ord_ui_retry_failed_smoke_20260610
+CUSTOMER_NAME=Retry UI Smoke
+ORDER_STATUS=confirmed
+OUTBOUND_MESSAGE_ID=out_ui_retry_failed_smoke_20260610
+OUTBOUND_STATUS=failed
+OUTBOUND_ACK_ROW_COUNT=1
+SERVICE_SEND_PATH_CALLED=false
+TWILIO_CALLED=false
+```
+
+Manual Streamlit smoke passed. The failed row showed the failed text and
+`Retry acknowledgement`. Clicking retry once showed only the confirmation text.
+Final confirmation was not required for this UI-gate smoke.
+
+Regression checks passed:
+
+* sent row did not show retry;
+* no-record row still showed `Send acknowledgement`, not
+  `Retry acknowledgement`.
+
+M8.6.3B verification passed:
+
+```text
+targeted tests -> 89 passed
+pytest -q -> 502 passed, 23 deselected
+ruff check src tests pages -> passed
+python -m compileall src tests pages -> passed
+git diff --check -> only LF-to-CRLF warnings
+```
+
 Resolved unrelated issue: during manual smoke setup, `pages/1_New_Order.py`
 was observed to crash when `st.session_state.catalog_ready` was missing. This
 was not caused by M8.6.1C/D; those slices only changed Orders Today outbound
@@ -236,8 +299,8 @@ acknowledgement display. M8.6.2A added the missing New Order session-state
 initialization guard.
 
 Important constraints remain unchanged: Twilio API acceptance is not delivery or
-read callback proof; delivery/read callbacks, queue/worker behavior, retry UI,
-auto-send on confirm, and payment-dependent content remain deferred.
+read callback proof; delivery/read callbacks, queue/worker behavior, retry-limit
+policy, auto-send on confirm, and payment-dependent content remain deferred.
 
 ## 1. Prepare Throwaway Neon Branch
 
