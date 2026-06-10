@@ -73,6 +73,12 @@ def _bootstrap_session() -> None:
         )
         st.session_state.storage = storage
 
+    if "catalog_ready" not in st.session_state:
+        st.session_state.catalog_ready = prepare_storage_catalog(
+            st.session_state.storage,
+            st.session_state.demo_catalog,
+        )
+
     if "order_service" not in st.session_state:
         st.session_state.order_service = get_order_service(st.session_state.storage)
 
