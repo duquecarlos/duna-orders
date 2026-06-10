@@ -13,6 +13,8 @@ from duna_orders.storage.outbound_messages import OutboundAcknowledgement
 OutboundAcknowledgementUiSeverity = Literal["success", "info", "warning", "error"]
 
 _BLOCKED_PRECONDITION_FALLBACK_MESSAGE = "Acknowledgement cannot be sent yet."
+_OUTBOUND_DISABLED_MESSAGE = "Outbound acknowledgement is disabled."
+_OUTBOUND_NOT_CONFIGURED_MESSAGE = "Outbound acknowledgement is not fully configured."
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,15 @@ def _blocked_precondition_message(reason: object) -> str:
         return reason
 
     return _BLOCKED_PRECONDITION_FALLBACK_MESSAGE
+
+
+def map_acknowledgement_unavailable_reason_to_ui_message(
+    reason: str | None,
+) -> str:
+    if reason == _OUTBOUND_DISABLED_MESSAGE:
+        return _OUTBOUND_DISABLED_MESSAGE
+
+    return _OUTBOUND_NOT_CONFIGURED_MESSAGE
 
 
 def map_acknowledgement_status_to_ui_state(

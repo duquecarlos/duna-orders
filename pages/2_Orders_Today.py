@@ -18,6 +18,7 @@ from duna_orders.storage.outbound_messages import ORDER_CONFIRMED_ACK
 from duna_orders.storage.read_context import sheets_request_context
 from duna_orders.ui.outbound_acknowledgement import (
     map_acknowledgement_status_to_ui_state,
+    map_acknowledgement_unavailable_reason_to_ui_message,
 )
 from duna_orders.ui.setup import (
     OutboundAcknowledgementServiceSetup,
@@ -88,7 +89,11 @@ def _render_outbound_acknowledgement_action(
     st.write("Acknowledgement")
 
     if not setup.is_available:
-        st.info(setup.unavailable_reason or "Outbound acknowledgement is unavailable.")
+        st.info(
+            map_acknowledgement_unavailable_reason_to_ui_message(
+                setup.unavailable_reason
+            )
+        )
         return
 
     if (

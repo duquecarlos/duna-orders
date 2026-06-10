@@ -11,6 +11,7 @@ from duna_orders.services.outbound_acknowledgement import (
 from duna_orders.ui.outbound_acknowledgement import (
     map_acknowledgement_status_to_ui_state,
     map_acknowledgement_result_to_ui_message,
+    map_acknowledgement_unavailable_reason_to_ui_message,
 )
 
 
@@ -214,3 +215,39 @@ def test_status_display_does_not_leak_provider_details() -> None:
     assert "Twilio" not in rendered
     assert "provider" not in rendered
     assert "twilio" not in rendered
+
+
+def test_disabled_unavailable_reason_remains_operator_visible() -> None:
+    assert (
+        map_acknowledgement_unavailable_reason_to_ui_message(
+            "Outbound acknowledgement is disabled."
+        )
+        == "Outbound acknowledgement is disabled."
+    )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        None,
+        "Twilio account SID is not configured.",
+        "Twilio auth token is not configured.",
+        "Twilio WhatsApp sender is not configured.",
+        "Outbound acknowledgement requires Postgres storage.",
+        "Outbound acknowledgement tenant binding is not configured.",
+    ],
+)
+def test_unavailable_reason_maps_to_provider_neutral_ui_message(
+    reason: str | None,
+) -> None:
+    message = map_acknowledgement_unavailable_reason_to_ui_message(reason)
+
+    assert message == "Outbound acknowledgement is not fully configured."
+    assert "Twilio" not in message
+    assert "twilio" not in message
+    assert "provider" not in message
+    assert "provider_message_id" not in message
+    assert "error_code" not in message
+    assert "account SID" not in message
+    assert "auth token" not in message
+    assert "sender" not in message

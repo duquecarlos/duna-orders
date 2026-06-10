@@ -144,6 +144,32 @@ def test_orders_today_acknowledgement_unavailable_behavior_is_unchanged() -> Non
     assert "Send acknowledgement" not in _button_labels(app)
 
 
+def test_orders_today_acknowledgement_not_ready_message_is_provider_neutral() -> None:
+    storage = _storage_with_confirmed_order()
+    setup = OutboundAcknowledgementServiceSetup(
+        service=None,
+        unavailable_reason="Twilio account SID is not configured.",
+    )
+    app = _orders_today_app(storage=storage, setup=setup)
+
+    app.run()
+
+    assert app.exception == []
+    assert _info_values(app) == [
+        "Outbound acknowledgement is not fully configured."
+    ]
+    assert "Send acknowledgement" not in _button_labels(app)
+    rendered = " ".join(_info_values(app))
+    assert "Twilio" not in rendered
+    assert "twilio" not in rendered
+    assert "provider" not in rendered
+    assert "provider_message_id" not in rendered
+    assert "error_code" not in rendered
+    assert "account SID" not in rendered
+    assert "auth token" not in rendered
+    assert "sender" not in rendered
+
+
 def _orders_today_app(
     *,
     storage: InMemoryStorage,
