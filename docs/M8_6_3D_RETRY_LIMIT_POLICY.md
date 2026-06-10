@@ -1,6 +1,6 @@
 # M8.6.3D Retry Limit Policy
 
-Status: design policy only.
+Status: design policy accepted. M8.6.3E implemented backend and UI enforcement.
 
 Baseline: `d5bbab3 docs(outbound): record retry execution smoke`
 
@@ -14,6 +14,15 @@ acknowledgement. The policy builds on M8.6.3A/B/C:
   reused, row count stayed `1`, `attempt_count` increased from `1` to `2`,
   status became `sent`, and the WhatsApp message was received by a safe test
   recipient.
+
+Implementation follow-up: `7249ac2 feat(outbound): enforce retry attempt limit`
+implemented the policy. Failed rows with `attempt_count >= 2` are suppressed by
+the backend/store with `suppressed_retry_limit_reached`, the service returns the
+UI-safe manual-follow-up result, and Orders Today hides retry for the
+max-attempt state.
+
+Smoke follow-up: M8.6.3E manual UI smoke passed on the throwaway Neon branch for
+both failed `attempt_count=1` and failed `attempt_count=2` rows.
 
 ## Pre-flight Contract Findings
 

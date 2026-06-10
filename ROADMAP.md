@@ -315,6 +315,37 @@ Exit criteria:
 
 ## Recently closed
 
+### M8.6.3E - Retry max-attempt enforcement
+
+Closed.
+
+Completed scope:
+
+* Enforced a maximum of `2` total attempts per outbound acknowledgement row.
+* Suppressed failed rows with `attempt_count >= 2` using
+  `suppressed_retry_limit_reached`, even when `retry_failed=True`.
+* Mapped max-attempt suppression to
+  `Acknowledgement was not sent. Manual follow-up is required.`
+* Kept failed rows with `attempt_count < 2` retryable in Orders Today.
+* Hid retry for failed rows with `attempt_count >= 2`.
+* Preserved backend claim/idempotency as final authority; stale UI cannot
+  bypass the max-attempt rule.
+* Preserved non-retryable `unknown`, `sending`, `send_requested`, and `sent`
+  behavior.
+* Manual UI smoke passed on the throwaway Neon branch using
+  `ord_ui_retry_limit_attempt1_smoke_20260610` and
+  `ord_ui_retry_limit_attempt2_smoke_20260610`.
+
+Deferred follow-ups:
+
+* Optional `attempt_count` display.
+* Optional last failure time display.
+* Delivery/read callbacks.
+* Queue/worker behavior.
+* Auto-send on confirm.
+* Payment-dependent acknowledgement content.
+* Privacy/UX review for full phone display in Orders Today cards.
+
 ### M8.6.3C - Guarded retry execution smoke
 
 Closed.
@@ -344,7 +375,6 @@ Smoke evidence:
 
 Deferred follow-ups:
 
-* Retry-limit/max-attempts policy.
 * `attempt_count` display.
 * Last failure time display.
 * Delivery/read callbacks.
@@ -376,7 +406,6 @@ Completed scope:
 
 Deferred follow-ups:
 
-* Retry-limit/max-attempts policy.
 * `attempt_count` display.
 * Last failure time display.
 * Delivery/read callbacks.

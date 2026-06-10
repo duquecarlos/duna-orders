@@ -1,6 +1,69 @@
 # Changelog
 ## Unreleased
 
+### M8.6.3E - Retry max-attempt enforcement
+
+Implemented.
+
+#### Delivered
+
+* Added backend/store enforcement for a maximum of `2` total attempts per
+  outbound acknowledgement row.
+* Suppressed failed rows with `attempt_count >= 2` using
+  `suppressed_retry_limit_reached`, even when `retry_failed=True`.
+* Mapped max-attempt suppression to the UI-safe non-send result:
+  `Acknowledgement was not sent. Manual follow-up is required.`
+* Kept failed rows with `attempt_count < 2` retryable in Orders Today:
+  `Acknowledgement was not sent. You can retry.` with
+  `Retry acknowledgement`.
+* Rendered failed rows with `attempt_count >= 2` as
+  `Acknowledgement was not sent. Manual follow-up is required.` and hid
+  `Retry acknowledgement`.
+* Ensured max-attempt suppression does not call the adapter, does not create a
+  new outbound row, and keeps row count at `1`.
+* Preserved existing `unknown`, `sending`, `send_requested`, and `sent`
+  suppression behavior.
+* Kept `attempt_count`, failure time, provider errors, and provider internals
+  hidden in the UI.
+
+#### Verification
+
+* Targeted tests passed: `95 passed in 18.57s`.
+* `pytest -q` passed: `508 passed, 23 deselected in 49.83s`.
+* `ruff check src tests pages` passed.
+* `python -m compileall src tests pages` passed.
+* `git diff --check` reported only LF-to-CRLF warnings.
+
+#### Manual UI smoke
+
+* Used the throwaway Neon branch only.
+* DB helper seeded two today-visible confirmed orders without repo edits,
+  service send path, Twilio call, or WhatsApp send.
+* Guard row was present: `GUARD_ORDER_ID=ord_ui_dup_smoke_20260610`,
+  `GUARD_STATUS=sent`.
+* For `ord_ui_retry_limit_attempt1_smoke_20260610`,
+  `OUTBOUND_STATUS=failed`, `ATTEMPT_COUNT=1`, and
+  `OUTBOUND_ACK_ROW_COUNT=1`; Orders Today showed
+  `Acknowledgement was not sent. You can retry.` and
+  `Retry acknowledgement`.
+* For `ord_ui_retry_limit_attempt2_smoke_20260610`,
+  `OUTBOUND_STATUS=failed`, `ATTEMPT_COUNT=2`, and
+  `OUTBOUND_ACK_ROW_COUNT=1`; Orders Today showed
+  `Acknowledgement was not sent. Manual follow-up is required.` and hid
+  `Retry acknowledgement` and `Send acknowledgement`.
+
+#### Safety conclusions
+
+* Backend/store/service is now the final authority for retry max attempts.
+* Stale UI cannot bypass the max-attempt rule.
+* Max-attempt suppression does not call the adapter.
+* Max-attempt suppression does not create duplicate outbound rows.
+* Manual follow-up state is provider-neutral.
+* No delivery, receipt, read, or customer-notified wording was introduced.
+* Full phone display in the Orders Today card remains existing page behavior and
+  is not part of outbound acknowledgement leakage; masking can be considered in
+  a future privacy/UX slice.
+
 ### M8.6.3C - Guarded retry execution smoke
 
 Completed smoke validation.
@@ -129,7 +192,6 @@ Implemented.
 
 #### Deferred
 
-* No retry-limit or max-attempts policy.
 * No `attempt_count` display.
 * No last failure time display.
 * No auto-send on confirm.

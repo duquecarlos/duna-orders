@@ -365,6 +365,97 @@ Safety conclusions:
 * No provider secrets or full phone number are recorded here.
 * No new behavior was implemented in this smoke-only slice.
 
+## Retry Max-Attempt Enforcement UI Result
+
+Status: passed.
+
+M8.6.3E implemented the retry limit policy: outbound acknowledgement rows allow
+at most `2` total attempts. Failed rows with `attempt_count >= 2` are suppressed
+by the backend/store even when `retry_failed=True`; UI hiding is not the final
+authority.
+
+Implemented behavior:
+
+* failed `attempt_count < 2`: Orders Today shows
+  `Acknowledgement was not sent. You can retry.` and `Retry acknowledgement`;
+* failed `attempt_count >= 2`: Orders Today shows
+  `Acknowledgement was not sent. Manual follow-up is required.` and hides
+  `Retry acknowledgement`;
+* max-attempt suppression does not call the adapter;
+* max-attempt suppression does not create a new outbound row;
+* row count stays `1`;
+* `unknown`, `sending`, `send_requested`, and `sent` suppression behavior is
+  unchanged;
+* `attempt_count`, failure time, provider errors, and provider internals remain
+  hidden in the UI.
+
+M8.6.3E verification passed:
+
+```text
+targeted tests -> 95 passed in 18.57s
+pytest -q -> 508 passed, 23 deselected in 49.83s
+ruff check src tests pages -> passed
+python -m compileall src tests pages -> passed
+git diff --check -> only LF-to-CRLF warnings
+```
+
+DB-only smoke helper prepared two today-visible confirmed orders on the
+throwaway Neon branch without repo edits, service send path, Twilio call, or
+WhatsApp send. The guard row `ord_ui_dup_smoke_20260610` was present with
+`status=sent`.
+
+Attempt 1 row:
+
+```text
+ORDER_ID=ord_ui_retry_limit_attempt1_smoke_20260610
+CUSTOMER_NAME=Retry Limit Attempt 1 Smoke
+OUTBOUND_STATUS=failed
+ATTEMPT_COUNT=1
+OUTBOUND_ACK_ROW_COUNT=1
+```
+
+Orders Today showed:
+
+```text
+Acknowledgement was not sent. You can retry.
+Retry acknowledgement
+```
+
+Attempt 2 row:
+
+```text
+ORDER_ID=ord_ui_retry_limit_attempt2_smoke_20260610
+CUSTOMER_NAME=Retry Limit Attempt 2 Smoke
+OUTBOUND_STATUS=failed
+ATTEMPT_COUNT=2
+OUTBOUND_ACK_ROW_COUNT=1
+```
+
+Orders Today showed:
+
+```text
+Acknowledgement was not sent. Manual follow-up is required.
+```
+
+Orders Today hid:
+
+```text
+Retry acknowledgement
+Send acknowledgement
+```
+
+Safety conclusions:
+
+* Backend/store/service is now final authority for retry max attempts.
+* Stale UI cannot bypass the max-attempt rule.
+* Max-attempt suppression does not call the adapter.
+* Max-attempt suppression does not create duplicate outbound rows.
+* Manual follow-up state is provider-neutral.
+* No delivery, receipt, read, or customer-notified wording was introduced.
+* Full phone display in the Orders Today card is existing page behavior and not
+  part of outbound acknowledgement leakage; masking can be considered in a
+  future privacy/UX slice.
+
 Resolved unrelated issue: during manual smoke setup, `pages/1_New_Order.py`
 was observed to crash when `st.session_state.catalog_ready` was missing. This
 was not caused by M8.6.1C/D; those slices only changed Orders Today outbound
@@ -372,8 +463,8 @@ acknowledgement display. M8.6.2A added the missing New Order session-state
 initialization guard.
 
 Important constraints remain unchanged: Twilio API acceptance is not delivery or
-read callback proof; delivery/read callbacks, queue/worker behavior, retry-limit
-policy, auto-send on confirm, and payment-dependent content remain deferred.
+read callback proof; delivery/read callbacks, queue/worker behavior,
+auto-send on confirm, and payment-dependent content remain deferred.
 
 ## 1. Prepare Throwaway Neon Branch
 

@@ -405,6 +405,25 @@ Required test themes for implementation slice:
   delivery/read callbacks, queue/worker behavior, auto-send, or
   payment-dependent content was added.
 
+### M8.6.3E - Retry Max-Attempt Enforcement
+
+* Backend/store enforces a maximum of `2` total attempts per outbound
+  acknowledgement row.
+* Failed rows with `attempt_count >= 2` are suppressed with
+  `suppressed_retry_limit_reached`, even when `retry_failed=True`.
+* The service maps max-attempt suppression to:
+  `Acknowledgement was not sent. Manual follow-up is required.`
+* Orders Today shows `Retry acknowledgement` only for failed rows with
+  `attempt_count < 2`.
+* Orders Today renders failed rows with `attempt_count >= 2` as
+  `Acknowledgement was not sent. Manual follow-up is required.` and hides retry.
+* Max-attempt suppression does not call the adapter, does not create a new
+  outbound row, and keeps row count at `1`.
+* `attempt_count`, failure time, provider errors, and provider internals remain
+  hidden in the UI.
+* Manual UI smoke passed on the throwaway Neon branch for failed
+  `attempt_count=1` and failed `attempt_count=2` rows.
+
 ## 11. Explicitly Out of Scope
 
 * No auto-send on confirm.
