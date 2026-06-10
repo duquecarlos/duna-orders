@@ -155,7 +155,7 @@ Recommended outbound record fields:
 * `body`;
 * `status`;
 * `provider`;
-* `provider_message_sid`;
+* `provider_message_id`;
 * `attempt_count`;
 * `last_error_code`;
 * `last_error_message`;
@@ -280,7 +280,7 @@ Minimal operator UI:
 Success:
 
 * show `sent` state;
-* show provider message SID if available;
+* show provider message id if available;
 * state clearly that this means provider accepted the message, not delivered or
   read.
 
@@ -334,7 +334,7 @@ Required test themes for implementation slice:
 * in-progress statuses suppress duplicate sends;
 * retry reuses existing failed row;
 * unknown state suppresses resend;
-* provider SID stored when available.
+* provider message id stored when available.
 
 ### M8.6.1B - Operator UI and Smoke
 

@@ -52,7 +52,7 @@ class OutboundAcknowledgement:
     requested_by: str
     created_at: datetime
     updated_at: datetime
-    provider_message_sid: str | None = None
+    provider_message_id: str | None = None
     last_error_code: str | None = None
     last_error_message: str | None = None
     sent_at: datetime | None = None
@@ -93,7 +93,7 @@ class OutboundAcknowledgementStore(Protocol):
         self,
         *,
         outbound_message_id: str,
-        provider_message_sid: str,
+        provider_message_id: str,
     ) -> OutboundAcknowledgement:
         ...
 
@@ -205,15 +205,15 @@ class PostgresOutboundAcknowledgementStore:
         self,
         *,
         outbound_message_id: str,
-        provider_message_sid: str,
+        provider_message_id: str,
     ) -> OutboundAcknowledgement:
-        _require_text(provider_message_sid, "provider_message_sid")
+        _require_text(provider_message_id, "provider_message_id")
         with session_scope(self._session_factory) as session:
             row = _get_row_by_id(session, outbound_message_id)
             _require_sending(row, "sent")
             now = utc_now()
             row.status = "sent"
-            row.provider_message_sid = provider_message_sid
+            row.provider_message_id = provider_message_id
             row.sent_at = now
             row.updated_at = now
             row.last_error_code = None
@@ -320,7 +320,7 @@ class PostgresOutboundAcknowledgementStore:
                     attempt_count=OutboundMessageRow.attempt_count + 1,
                     last_error_code=None,
                     last_error_message=None,
-                    provider_message_sid=None,
+                    provider_message_id=None,
                     sent_at=None,
                     updated_at=now,
                 )
@@ -404,7 +404,7 @@ def _acknowledgement_from_row(row: OutboundMessageRow) -> OutboundAcknowledgemen
         body=row.body,
         status=row.status,
         provider=row.provider,
-        provider_message_sid=row.provider_message_sid,
+        provider_message_id=row.provider_message_id,
         attempt_count=row.attempt_count,
         last_error_code=row.last_error_code,
         last_error_message=row.last_error_message,

@@ -96,7 +96,7 @@ def test_sent_suppresses_claim(tmp_path: Path) -> None:
     first = _claim(store)
     store.mark_sent(
         outbound_message_id=first.acknowledgement.outbound_message_id,
-        provider_message_sid="SM_SENT",
+        provider_message_id="SM_SENT",
     )
 
     second = _claim(store)
@@ -125,7 +125,7 @@ def test_failed_suppresses_claim_without_retry(tmp_path: Path) -> None:
     first = _claim(store)
     store.mark_failed(
         outbound_message_id=first.acknowledgement.outbound_message_id,
-        error_code="twilio_error",
+        error_code="provider_error",
         error_message="provider rejected message",
     )
 
@@ -141,7 +141,7 @@ def test_failed_retry_reuses_row_and_increments_attempt_count(tmp_path: Path) ->
     first = _claim(store)
     store.mark_failed(
         outbound_message_id=first.acknowledgement.outbound_message_id,
-        error_code="twilio_error",
+        error_code="provider_error",
         error_message="provider rejected message",
     )
 
@@ -161,7 +161,7 @@ def test_second_failed_retry_claim_is_suppressed_after_first_claims(tmp_path: Pa
     first = _claim(store)
     store.mark_failed(
         outbound_message_id=first.acknowledgement.outbound_message_id,
-        error_code="twilio_error",
+        error_code="provider_error",
         error_message="provider rejected message",
     )
 
@@ -174,7 +174,7 @@ def test_second_failed_retry_claim_is_suppressed_after_first_claims(tmp_path: Pa
     assert second_retry.acknowledgement.attempt_count == 2
 
 
-def test_mark_sent_stores_provider_sid_and_sent_at(tmp_path: Path) -> None:
+def test_mark_sent_stores_provider_id_and_sent_at(tmp_path: Path) -> None:
     store = _store(tmp_path)
     first = _claim(store)
     store.mark_failed(
@@ -186,11 +186,11 @@ def test_mark_sent_stores_provider_sid_and_sent_at(tmp_path: Path) -> None:
 
     sent = store.mark_sent(
         outbound_message_id=retry.acknowledgement.outbound_message_id,
-        provider_message_sid="SM_SENT",
+        provider_message_id="SM_SENT",
     )
 
     assert sent.status == "sent"
-    assert sent.provider_message_sid == "SM_SENT"
+    assert sent.provider_message_id == "SM_SENT"
     assert sent.sent_at is not None
     assert sent.last_error_code is None
     assert sent.last_error_message is None
@@ -201,20 +201,20 @@ def test_mark_sent_refuses_to_overwrite_failed(tmp_path: Path) -> None:
     first = _claim(store)
     failed = store.mark_failed(
         outbound_message_id=first.acknowledgement.outbound_message_id,
-        error_code="twilio_error",
+        error_code="provider_error",
         error_message="provider rejected message",
     )
 
     with pytest.raises(ValueError, match="must be sending"):
         store.mark_sent(
             outbound_message_id=first.acknowledgement.outbound_message_id,
-            provider_message_sid="SM_SENT",
+            provider_message_id="SM_SENT",
         )
 
     current = _get_by_id(store, first.acknowledgement.outbound_message_id)
 
     assert current.status == "failed"
-    assert current.provider_message_sid is None
+    assert current.provider_message_id is None
     assert current.last_error_code == failed.last_error_code
     assert current.last_error_message == failed.last_error_message
 
@@ -225,12 +225,12 @@ def test_mark_failed_stores_error_code_and_message(tmp_path: Path) -> None:
 
     failed = store.mark_failed(
         outbound_message_id=first.acknowledgement.outbound_message_id,
-        error_code="twilio_error",
+        error_code="provider_error",
         error_message="provider rejected message",
     )
 
     assert failed.status == "failed"
-    assert failed.last_error_code == "twilio_error"
+    assert failed.last_error_code == "provider_error"
     assert failed.last_error_message == "provider rejected message"
 
 
@@ -239,7 +239,7 @@ def test_mark_failed_refuses_to_overwrite_sent(tmp_path: Path) -> None:
     first = _claim(store)
     sent = store.mark_sent(
         outbound_message_id=first.acknowledgement.outbound_message_id,
-        provider_message_sid="SM_SENT",
+        provider_message_id="SM_SENT",
     )
 
     with pytest.raises(ValueError, match="must be sending"):
@@ -252,7 +252,7 @@ def test_mark_failed_refuses_to_overwrite_sent(tmp_path: Path) -> None:
     current = _get_by_id(store, first.acknowledgement.outbound_message_id)
 
     assert current.status == "sent"
-    assert current.provider_message_sid == sent.provider_message_sid
+    assert current.provider_message_id == sent.provider_message_id
     assert current.last_error_code is None
     assert current.last_error_message is None
 
@@ -280,7 +280,7 @@ def test_mark_unknown_refuses_to_overwrite_sent(tmp_path: Path) -> None:
     first = _claim(store)
     sent = store.mark_sent(
         outbound_message_id=first.acknowledgement.outbound_message_id,
-        provider_message_sid="SM_SENT",
+        provider_message_id="SM_SENT",
     )
 
     with pytest.raises(ValueError, match="must be sending"):
@@ -293,7 +293,7 @@ def test_mark_unknown_refuses_to_overwrite_sent(tmp_path: Path) -> None:
     current = _get_by_id(store, first.acknowledgement.outbound_message_id)
 
     assert current.status == "sent"
-    assert current.provider_message_sid == sent.provider_message_sid
+    assert current.provider_message_id == sent.provider_message_id
     assert current.last_error_code is None
     assert current.last_error_message is None
 
@@ -303,19 +303,19 @@ def test_failed_retry_transitions_to_sending_then_mark_sent_works(tmp_path: Path
     first = _claim(store)
     store.mark_failed(
         outbound_message_id=first.acknowledgement.outbound_message_id,
-        error_code="twilio_error",
+        error_code="provider_error",
         error_message="provider rejected message",
     )
 
     retry = _claim(store, retry_failed=True)
     sent = store.mark_sent(
         outbound_message_id=retry.acknowledgement.outbound_message_id,
-        provider_message_sid="SM_RETRY_SENT",
+        provider_message_id="SM_RETRY_SENT",
     )
 
     assert retry.acknowledgement.status == "sending"
     assert sent.status == "sent"
-    assert sent.provider_message_sid == "SM_RETRY_SENT"
+    assert sent.provider_message_id == "SM_RETRY_SENT"
     assert sent.attempt_count == 2
 
 

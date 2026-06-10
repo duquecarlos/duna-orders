@@ -32,14 +32,14 @@ class TenantScopedOrderReader(Protocol):
 @dataclass(frozen=True)
 class OutboundProviderResult:
     outcome: ProviderOutcome
-    provider_message_sid: str | None = None
+    provider_message_id: str | None = None
     error_code: str | None = None
     error_message: str | None = None
 
     @classmethod
-    def success(cls, *, provider_message_sid: str) -> OutboundProviderResult:
-        _require_text(provider_message_sid, "provider_message_sid")
-        return cls(outcome="success", provider_message_sid=provider_message_sid)
+    def success(cls, *, provider_message_id: str) -> OutboundProviderResult:
+        _require_text(provider_message_id, "provider_message_id")
+        return cls(outcome="success", provider_message_id=provider_message_id)
 
     @classmethod
     def failed(
@@ -164,12 +164,12 @@ class OutboundAcknowledgementService:
         )
 
         if provider_result.outcome == "success":
-            if provider_result.provider_message_sid is None:
-                raise ValueError("provider_message_sid is required for success")
+            if provider_result.provider_message_id is None:
+                raise ValueError("provider_message_id is required for success")
 
             acknowledgement = self._store.mark_sent(
                 outbound_message_id=claim.acknowledgement.outbound_message_id,
-                provider_message_sid=provider_result.provider_message_sid,
+                provider_message_id=provider_result.provider_message_id,
             )
             return OutboundAcknowledgementResult(
                 acknowledgement=acknowledgement,

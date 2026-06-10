@@ -304,7 +304,7 @@ class OutboundMessageRow(Base):
     body: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(STATUS_LENGTH), nullable=False)
     provider: Mapped[str] = mapped_column(String(STATUS_LENGTH), nullable=False)
-    provider_message_sid: Mapped[str | None] = mapped_column(String(ID_LENGTH))
+    provider_message_id: Mapped[str | None] = mapped_column(String(ID_LENGTH))
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
     last_error_code: Mapped[str | None] = mapped_column(String(SHORT_TEXT_LENGTH))
     last_error_message: Mapped[str | None] = mapped_column(Text)

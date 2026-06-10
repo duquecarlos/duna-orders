@@ -92,7 +92,7 @@ def _service(
     store = _store(tmp_path)
     adapter = FakeOutboundAdapter(
         result=adapter_result
-        or OutboundProviderResult.success(provider_message_sid="SM_SENT")
+        or OutboundProviderResult.success(provider_message_id="SM_SENT")
     )
     reader = FakeTenantScopedOrderReader([order or _order()])
     service = OutboundAcknowledgementService(
@@ -134,7 +134,7 @@ def test_happy_path_builds_body_claims_sends_and_marks_sent(tmp_path: Path) -> N
     assert result.attempted is True
     assert result.sent is True
     assert result.acknowledgement.status == "sent"
-    assert result.acknowledgement.provider_message_sid == "SM_SENT"
+    assert result.acknowledgement.provider_message_id == "SM_SENT"
     assert persisted == result.acknowledgement
     assert len(adapter.calls) == 1
     assert adapter.calls[0] == {
@@ -203,6 +203,29 @@ def test_existing_sending_row_suppresses_adapter_call(tmp_path: Path) -> None:
     assert adapter.calls == []
 
 
+def test_retry_failed_does_not_send_existing_sending_row(tmp_path: Path) -> None:
+    service, store, adapter = _service(tmp_path)
+    order = _order()
+    claim = store.claim_order_acknowledgement_for_send(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        order_id=ORDER_ID,
+        acknowledgement_type=ORDER_CONFIRMED_ACK,
+        to_number=order.customer_phone_snapshot or "",
+        from_number=FROM_NUMBER,
+        body=generate_order_confirmed_acknowledgement(order, business_name="El Fogon"),
+        requested_by=REQUESTED_BY,
+    )
+
+    result = _send(service, retry_failed=True)
+
+    assert claim.acknowledgement.status == "sending"
+    assert result.outcome == "suppressed"
+    assert result.reason == "suppressed_in_progress"
+    assert result.acknowledgement.status == "sending"
+    assert result.acknowledgement.outbound_message_id == claim.acknowledgement.outbound_message_id
+    assert adapter.calls == []
+
+
 def test_existing_unknown_row_suppresses_adapter_call(tmp_path: Path) -> None:
     service, _, adapter = _service(
         tmp_path,
@@ -226,7 +249,7 @@ def test_failed_row_without_retry_suppresses_adapter_call(tmp_path: Path) -> Non
     service, _, adapter = _service(
         tmp_path,
         adapter_result=OutboundProviderResult.failed(
-            error_code="twilio_error",
+            error_code="provider_error",
             error_message="provider rejected message",
         ),
     )
@@ -245,13 +268,13 @@ def test_failed_row_with_retry_calls_adapter_once_and_reuses_row(tmp_path: Path)
     service, _, adapter = _service(
         tmp_path,
         adapter_result=OutboundProviderResult.failed(
-            error_code="twilio_error",
+            error_code="provider_error",
             error_message="provider rejected message",
         ),
     )
     first = _send(service)
     first_id = first.acknowledgement.outbound_message_id
-    adapter.result = OutboundProviderResult.success(provider_message_sid="SM_RETRY")
+    adapter.result = OutboundProviderResult.success(provider_message_id="SM_RETRY")
     adapter.calls.clear()
 
     retry = _send(service, retry_failed=True)
@@ -259,7 +282,7 @@ def test_failed_row_with_retry_calls_adapter_once_and_reuses_row(tmp_path: Path)
     assert retry.outcome == "sent"
     assert retry.acknowledgement.outbound_message_id == first_id
     assert retry.acknowledgement.attempt_count == 2
-    assert retry.acknowledgement.provider_message_sid == "SM_RETRY"
+    assert retry.acknowledgement.provider_message_id == "SM_RETRY"
     assert len(adapter.calls) == 1
 
 
@@ -267,7 +290,7 @@ def test_adapter_known_failure_marks_failed(tmp_path: Path) -> None:
     service, _, adapter = _service(
         tmp_path,
         adapter_result=OutboundProviderResult.failed(
-            error_code="twilio_error",
+            error_code="provider_error",
             error_message="provider rejected message",
         ),
     )
@@ -277,7 +300,7 @@ def test_adapter_known_failure_marks_failed(tmp_path: Path) -> None:
     assert result.outcome == "failed"
     assert result.attempted is True
     assert result.acknowledgement.status == "failed"
-    assert result.acknowledgement.last_error_code == "twilio_error"
+    assert result.acknowledgement.last_error_code == "provider_error"
     assert result.acknowledgement.last_error_message == "provider rejected message"
     assert len(adapter.calls) == 1
 

@@ -1,6 +1,38 @@
 # Changelog
 ## Unreleased
 
+### M8.6.1A - Outbound acknowledgement core
+
+Implemented.
+
+#### Delivered
+
+* Added a deterministic Colombian-Spanish order-confirmed acknowledgement
+  template.
+* Added durable outbound acknowledgement persistence and idempotency keyed by
+  `tenant_id + order_id + acknowledgement_type`.
+* Added service orchestration for operator-triggered confirmed-order
+  acknowledgements behind a fake-adapter-tested provider boundary.
+* Restricted acknowledgements to confirmed orders.
+* Enforced claim-before-send so an outbound row reaches `sending` before any
+  provider adapter call.
+* Enforced store state transitions so `mark_sent(...)`, `mark_failed(...)`,
+  and `mark_unknown(...)` only update rows currently in `sending`.
+* Kept `sending` and `unknown` as non-resendable may-have-sent states.
+* Kept outbound persistence outside `StorageInterface`.
+* Kept outbound service reads tenant-scoped and covered by the architecture
+  boundary guard.
+
+#### Deferred
+
+* No real Twilio adapter or Twilio REST client.
+* No config/env sender wiring.
+* No UI or Streamlit changes.
+* No real sends.
+* No coupling into the confirmation transaction or `OrderService`.
+* No parser behavior or `PROMPT_VERSION` changes.
+* No `StorageInterface` extension.
+
 ### M8.5 Stage 2B-2 - Unscoped broad-read naming
 
 Implemented.

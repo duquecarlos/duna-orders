@@ -315,6 +315,34 @@ Exit criteria:
 
 ## Recently closed
 
+### M8.6.1A - Outbound acknowledgement core
+
+Closed.
+
+Completed scope:
+
+* Added deterministic Colombian-Spanish order-confirmed acknowledgement
+  rendering.
+* Added durable outbound acknowledgement persistence and idempotency with
+  `tenant_id + order_id + acknowledgement_type` as the unique key.
+* Added operator-triggered service orchestration behind a provider-adapter
+  protocol and fake adapter tests.
+* Kept sends limited to confirmed orders.
+* Proved claim-before-send behavior and non-resendable `sending`/`unknown`
+  states.
+* Kept outbound persistence outside `StorageInterface` and decoupled from the
+  confirmation transaction.
+
+Deferred follow-ups:
+
+* M8.6.1A-3: real adapter plus outbound smoke behind the proven adapter
+  boundary.
+* M8.6.1B: operator UI plus a UI-facing result model with a distinct
+  may-have-sent investigation state.
+* Delivery/read callbacks.
+* Queue/worker behavior.
+* Payment-dependent acknowledgement content.
+
 ### M8.5D-F - Stage 1 scoped-read caller migrations
 
 Closed.

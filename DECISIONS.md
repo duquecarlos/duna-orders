@@ -1,4 +1,46 @@
 # Architectural Decisions
+## M8.6.1A - Outbound acknowledgement idempotency core
+
+Decision:
+Close the first outbound acknowledgement core as an operator-triggered,
+fake-adapter-only safety slice. The core includes deterministic message
+rendering, durable idempotency persistence, and service orchestration, but no
+real provider send path or UI.
+
+Details:
+
+* M8.6.1A-1 added a deterministic Colombian-Spanish
+  order-confirmed acknowledgement template.
+* M8.6.1A-2a added the outbound acknowledgement idempotency store.
+* M8.6.1A-2b added the outbound acknowledgement orchestration service behind a
+  provider-adapter protocol.
+* The durable idempotency key is `tenant_id + order_id +
+  acknowledgement_type`.
+* A database unique constraint enforces that key for `outbound_messages`.
+* The required safety sequence is claim-before-send: the store must persist and
+  commit `status = sending` before any provider adapter is called.
+* The store-enforced state machine requires current `status == sending` before
+  `mark_sent(...)`, `mark_failed(...)`, or `mark_unknown(...)` may update the
+  row.
+* `sending` and `unknown` are non-resendable may-have-sent states and require
+  out-of-band verification before any future recovery flow.
+* Only `failed` is retryable, and retries reuse the existing row.
+* Outbound persistence is a narrow protocol/store, not a `StorageInterface`
+  extension.
+* The service reads orders through a tenant-scoped order reader and is covered
+  by the runtime read architecture guard.
+
+Deferred:
+
+* Real Twilio adapter and config/env sender wiring are deferred to M8.6.1A-3
+  behind the proven adapter boundary.
+* UI is deferred to M8.6.1B pending a UI-facing result model.
+* The UI-facing result model must expose outcome categories, including a
+  distinct "may have sent - investigate" state, without leaking provider error
+  detail.
+* Delivery/read callbacks, queue/worker behavior, and payment-dependent content
+  remain deferred.
+
 ## M8.5 Stage 2B-2 - Unscoped broad-read naming starts with products/customers
 
 Decision:

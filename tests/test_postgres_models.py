@@ -209,7 +209,7 @@ def test_outbound_messages_table_is_postgres_only() -> None:
         "body",
         "status",
         "provider",
-        "provider_message_sid",
+        "provider_message_id",
         "attempt_count",
         "last_error_code",
         "last_error_message",
