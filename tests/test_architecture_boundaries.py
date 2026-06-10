@@ -10,6 +10,7 @@ ENFORCED_RUNTIME_READ_MODULES = frozenset(
     {
         Path("pages/1_New_Order.py"),
         Path("pages/2_Orders_Today.py"),
+        Path("src/duna_orders/services/outbound_acknowledgement.py"),
         Path("src/duna_orders/services/dashboard_read_scenario.py"),
         Path("src/duna_orders/web/inbound.py"),
     }
@@ -19,6 +20,7 @@ KNOWN_STAGE1_RUNTIME_READ_MODULES = frozenset(
     {
         Path("pages/1_New_Order.py"),
         Path("pages/2_Orders_Today.py"),
+        Path("src/duna_orders/services/outbound_acknowledgement.py"),
         Path("src/duna_orders/services/dashboard_read_scenario.py"),
         Path("src/duna_orders/web/inbound.py"),
     }
