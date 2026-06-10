@@ -180,6 +180,34 @@ def test_orders_today_failed_acknowledgement_requires_confirmation_before_retry(
     assert stored_after_retry_click.attempt_count == 1
 
 
+def test_orders_today_failed_acknowledgement_at_max_attempts_hides_retry(
+    tmp_path: Path,
+) -> None:
+    storage = _storage_with_confirmed_order()
+    store = CountingOutboundAcknowledgementStore(_outbound_store(tmp_path))
+    _seed_failed_acknowledgement(store, attempt_count=2)
+    setup = OutboundAcknowledgementServiceSetup(
+        service=OutboundAcknowledgementService(
+            order_reader=TenantScopedReadService(storage),
+            store=store,
+            adapter=FakeOutboundAdapter(),
+        ),
+        acknowledgement_store=store,
+        tenant_id=TENANT_ID,
+        from_number=FROM_NUMBER,
+    )
+    app = _orders_today_app(storage=storage, setup=setup)
+
+    app.run()
+
+    assert app.exception == []
+    assert _info_values(app) == [
+        "Acknowledgement was not sent. Manual follow-up is required."
+    ]
+    assert "Retry acknowledgement" not in _button_labels(app)
+    assert "Send acknowledgement" not in _button_labels(app)
+
+
 def test_orders_today_confirmed_retry_routes_through_service_and_rereads(
     tmp_path: Path,
 ) -> None:
@@ -218,6 +246,53 @@ def test_orders_today_confirmed_retry_routes_through_service_and_rereads(
     assert stored is not None
     assert stored.outbound_message_id == failed.outbound_message_id
     assert stored.status == "sent"
+    assert stored.attempt_count == 2
+
+
+def test_orders_today_retry_definitive_failure_rereads_manual_follow_up_state(
+    tmp_path: Path,
+) -> None:
+    storage = _storage_with_confirmed_order()
+    store = CountingOutboundAcknowledgementStore(_outbound_store(tmp_path))
+    failed = _seed_failed_acknowledgement(store)
+    adapter = FakeOutboundAdapter(
+        result=OutboundProviderResult.failed(
+            error_code="provider_error_again",
+            error_message="provider rejected message again",
+        )
+    )
+    setup = OutboundAcknowledgementServiceSetup(
+        service=OutboundAcknowledgementService(
+            order_reader=TenantScopedReadService(storage),
+            store=store,
+            adapter=adapter,
+        ),
+        acknowledgement_store=store,
+        tenant_id=TENANT_ID,
+        from_number=FROM_NUMBER,
+    )
+    app = _orders_today_app(storage=storage, setup=setup)
+
+    app.run()
+    _retry_button(app).click().run()
+    _confirm_retry_button(app).click().run()
+
+    assert app.exception == []
+    assert _info_values(app) == [
+        "Acknowledgement was not sent. Manual follow-up is required."
+    ]
+    assert "Retry acknowledgement" not in _button_labels(app)
+    assert "Send acknowledgement" not in _button_labels(app)
+    assert len(adapter.calls) == 1
+
+    stored = store.get_for_order_acknowledgement(
+        tenant_id=TENANT_ID,
+        order_id=ORDER_ID,
+        acknowledgement_type=ORDER_CONFIRMED_ACK,
+    )
+    assert stored is not None
+    assert stored.outbound_message_id == failed.outbound_message_id
+    assert stored.status == "failed"
     assert stored.attempt_count == 2
 
 
@@ -418,6 +493,8 @@ def _outbound_store(tmp_path: Path) -> PostgresOutboundAcknowledgementStore:
 
 def _seed_failed_acknowledgement(
     store: CountingOutboundAcknowledgementStore,
+    *,
+    attempt_count: int = 1,
 ):
     order = _confirmed_order()
     claim = store.claim_order_acknowledgement_for_send(
@@ -429,10 +506,28 @@ def _seed_failed_acknowledgement(
         body="Hola, tu pedido quedo confirmado.",
         requested_by="operator",
     )
-    return store.mark_failed(
+    failed = store.mark_failed(
         outbound_message_id=claim.acknowledgement.outbound_message_id,
         error_code="provider_error",
         error_message="provider rejected message",
+    )
+    if attempt_count == 1:
+        return failed
+
+    retry = store.claim_order_acknowledgement_for_send(
+        tenant_id=TENANT_ID,
+        order_id=ORDER_ID,
+        acknowledgement_type=ORDER_CONFIRMED_ACK,
+        to_number=order.customer_phone_snapshot or "",
+        from_number=FROM_NUMBER,
+        body="Hola, tu pedido quedo confirmado.",
+        requested_by="operator",
+        retry_failed=True,
+    )
+    return store.mark_failed(
+        outbound_message_id=retry.acknowledgement.outbound_message_id,
+        error_code="provider_error_again",
+        error_message="provider rejected message again",
     )
 
 

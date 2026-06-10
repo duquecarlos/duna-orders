@@ -303,6 +303,42 @@ def test_failed_row_with_retry_calls_adapter_once_and_reuses_row(tmp_path: Path)
     assert len(adapter.calls) == 1
 
 
+def test_failed_row_at_max_attempts_suppresses_retry_without_adapter_call(
+    tmp_path: Path,
+) -> None:
+    service, store, adapter = _service(
+        tmp_path,
+        adapter_result=OutboundProviderResult.failed(
+            error_code="provider_error",
+            error_message="provider rejected message",
+        ),
+    )
+    _send(service)
+    adapter.result = OutboundProviderResult.failed(
+        error_code="provider_error_again",
+        error_message="provider rejected message again",
+    )
+    _send(service, retry_failed=True)
+    stored_after_retry_failure = _stored_ack(store)
+    assert stored_after_retry_failure is not None
+    assert stored_after_retry_failure.status == "failed"
+    assert stored_after_retry_failure.attempt_count == 2
+    adapter.calls.clear()
+
+    blocked = _send(service, retry_failed=True)
+
+    assert blocked.outcome == OutboundAcknowledgementOutcome.BLOCKED_PRECONDITION
+    assert blocked.reason == "Acknowledgement was not sent. Manual follow-up is required."
+    assert blocked.attempted is False
+    assert blocked.sent is False
+    assert adapter.calls == []
+    stored = _stored_ack(store)
+    assert stored is not None
+    assert stored.outbound_message_id == stored_after_retry_failure.outbound_message_id
+    assert stored.status == "failed"
+    assert stored.attempt_count == 2
+
+
 def test_adapter_known_failure_marks_failed(tmp_path: Path) -> None:
     service, store, adapter = _service(
         tmp_path,

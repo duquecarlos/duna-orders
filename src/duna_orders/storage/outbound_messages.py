@@ -17,6 +17,7 @@ from duna_orders.storage.postgres_session import session_scope
 
 ORDER_CONFIRMED_ACK = "order_confirmed_ack"
 OUTBOUND_PROVIDER_TWILIO = "twilio"
+MAX_OUTBOUND_ACKNOWLEDGEMENT_ATTEMPTS = 2
 
 AcknowledgementType = Literal["order_confirmed_ack"]
 OutboundMessageStatus = Literal[
@@ -32,6 +33,7 @@ ClaimReason = Literal[
     "suppressed_existing",
     "suppressed_failed_without_retry",
     "suppressed_in_progress",
+    "suppressed_retry_limit_reached",
     "suppressed_sent",
     "suppressed_unknown",
 ]
@@ -163,6 +165,13 @@ class PostgresOutboundAcknowledgementStore:
             raise RuntimeError("Outbound acknowledgement uniqueness conflict without row")
 
         if existing.status == "failed":
+            if existing.attempt_count >= MAX_OUTBOUND_ACKNOWLEDGEMENT_ATTEMPTS:
+                return OutboundClaimResult(
+                    acknowledgement=existing,
+                    claimed_for_send=False,
+                    reason="suppressed_retry_limit_reached",
+                )
+
             if not retry_failed:
                 return OutboundClaimResult(
                     acknowledgement=existing,
@@ -311,6 +320,7 @@ class PostgresOutboundAcknowledgementStore:
                 update(OutboundMessageRow)
                 .where(OutboundMessageRow.outbound_message_id == outbound_message_id)
                 .where(OutboundMessageRow.status == "failed")
+                .where(OutboundMessageRow.attempt_count < MAX_OUTBOUND_ACKNOWLEDGEMENT_ATTEMPTS)
                 .values(
                     to_number=to_number,
                     from_number=from_number,
@@ -334,10 +344,17 @@ class PostgresOutboundAcknowledgementStore:
                     reason="retry_claimed",
                 )
 
+            acknowledgement = _acknowledgement_from_row(row)
+            reason: ClaimReason
+            if row.status == "failed" and row.attempt_count >= MAX_OUTBOUND_ACKNOWLEDGEMENT_ATTEMPTS:
+                reason = "suppressed_retry_limit_reached"
+            else:
+                reason = _suppression_reason(row.status)
+
             return OutboundClaimResult(
-                acknowledgement=_acknowledgement_from_row(row),
+                acknowledgement=acknowledgement,
                 claimed_for_send=False,
-                reason=_suppression_reason(row.status),
+                reason=reason,
             )
 
     def _mark_terminal_error(

@@ -156,6 +156,31 @@ def test_failed_retry_reuses_row_and_increments_attempt_count(tmp_path: Path) ->
     assert retry.acknowledgement.last_error_message is None
 
 
+def test_failed_retry_at_max_attempts_is_suppressed_without_new_row(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    first = _claim(store)
+    store.mark_failed(
+        outbound_message_id=first.acknowledgement.outbound_message_id,
+        error_code="provider_error",
+        error_message="provider rejected message",
+    )
+    retry = _claim(store, retry_failed=True)
+    store.mark_failed(
+        outbound_message_id=retry.acknowledgement.outbound_message_id,
+        error_code="provider_error_again",
+        error_message="provider rejected message again",
+    )
+
+    blocked = _claim(store, retry_failed=True)
+
+    assert blocked.claimed_for_send is False
+    assert blocked.reason == "suppressed_retry_limit_reached"
+    assert blocked.acknowledgement.outbound_message_id == first.acknowledgement.outbound_message_id
+    assert blocked.acknowledgement.status == "failed"
+    assert blocked.acknowledgement.attempt_count == 2
+    assert _outbound_row_count(store) == 1
+
+
 @pytest.mark.parametrize(
     ("status", "expected_reason"),
     [
@@ -448,5 +473,13 @@ def _get_by_id(
         )
         assert row is not None
         return row
+    finally:
+        session.close()
+
+
+def _outbound_row_count(store: PostgresOutboundAcknowledgementStore) -> int:
+    session = store._session_factory()
+    try:
+        return session.query(OutboundMessageRow).count()
     finally:
         session.close()

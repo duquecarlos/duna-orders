@@ -238,6 +238,14 @@ def _suppressed_result(reason: ClaimReason) -> OutboundAcknowledgementResult:
             sent=False,
         )
 
+    if reason == "suppressed_retry_limit_reached":
+        return OutboundAcknowledgementResult(
+            outcome=OutboundAcknowledgementOutcome.BLOCKED_PRECONDITION,
+            reason="Acknowledgement was not sent. Manual follow-up is required.",
+            attempted=False,
+            sent=False,
+        )
+
     if reason in {"suppressed_in_progress", "suppressed_unknown"}:
         return OutboundAcknowledgementResult(
             outcome=OutboundAcknowledgementOutcome.MAY_HAVE_SENT_INVESTIGATE,

@@ -124,6 +124,12 @@ def map_acknowledgement_status_to_ui_state(
         )
 
     if acknowledgement.status == "failed":
+        if getattr(acknowledgement, "attempt_count", 1) >= 2:
+            return OutboundAcknowledgementStatusUiState(
+                message="Acknowledgement was not sent. Manual follow-up is required.",
+                show_send_button=False,
+            )
+
         return OutboundAcknowledgementStatusUiState(
             message="Acknowledgement was not sent. You can retry.",
             show_send_button=False,
