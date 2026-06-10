@@ -229,10 +229,11 @@ python -m compileall src tests -> passed
 git diff --check -> only LF-to-CRLF warnings
 ```
 
-Known unrelated issue: during manual smoke setup,
-`pages/1_New_Order.py` was observed to crash when
-`st.session_state.catalog_ready` is missing. This was not caused by M8.6.1C/D;
-those slices only changed Orders Today outbound acknowledgement display.
+Resolved unrelated issue: during manual smoke setup, `pages/1_New_Order.py`
+was observed to crash when `st.session_state.catalog_ready` was missing. This
+was not caused by M8.6.1C/D; those slices only changed Orders Today outbound
+acknowledgement display. M8.6.2A added the missing New Order session-state
+initialization guard.
 
 Important constraints remain unchanged: Twilio API acceptance is not delivery or
 read callback proof; delivery/read callbacks, queue/worker behavior, retry UI,

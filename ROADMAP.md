@@ -315,6 +315,29 @@ Exit criteria:
 
 ## Recently closed
 
+### M8.6.2A - New Order session-state initialization guard
+
+Closed.
+
+Completed scope:
+
+* Fixed the New Order page missing-key crash for
+  `st.session_state.catalog_ready`.
+* Added a missing-key guard in `pages/1_New_Order.py`.
+* Preserved existing `catalog_ready` values and initialized the key only when
+  missing.
+* Added regression coverage in `tests/test_new_order_session_state.py`.
+* Manual Streamlit smoke passed with safe local settings:
+  `DUNA_STORAGE_BACKEND=memory` and `DUNA_OUTBOUND_ENABLED=false`.
+
+Explicitly not included:
+
+* No parser behavior or `PROMPT_VERSION` changes.
+* No outbound behavior changes.
+* No Orders Today changes.
+* No storage contract changes.
+* No catalog, product, or order business-rule changes.
+
 ### M8.6.1D - Provider-neutral outbound unavailable UI messages
 
 Closed.
@@ -366,12 +389,6 @@ Smoke evidence:
   `out_01ktr4e71rw6hqeadbyb5dwgq7`.
 * No-record smoke used order `ord_ui_no_record_smoke_20260610` with
   `OUTBOUND_ACK_ROW_COUNT 0`.
-
-Known unrelated issue:
-
-* `pages/1_New_Order.py` can crash when `st.session_state.catalog_ready` is
-  missing. This is unrelated to M8.6.1C/D because those slices only changed
-  Orders Today outbound acknowledgement display.
 
 Deferred follow-ups:
 

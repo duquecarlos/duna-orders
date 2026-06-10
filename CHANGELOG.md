@@ -1,6 +1,43 @@
 # Changelog
 ## Unreleased
 
+### M8.6.2A - New Order session-state initialization guard
+
+Implemented.
+
+#### Delivered
+
+* Fixed a New Order page crash where `pages/1_New_Order.py` could read
+  `st.session_state.catalog_ready` before ensuring the key existed.
+* Added a missing-key guard for `catalog_ready`.
+* Preserved an existing `catalog_ready` value when present.
+* Initialized `catalog_ready` only when missing.
+* Added regression coverage in `tests/test_new_order_session_state.py`.
+
+#### Manual smoke
+
+* Safe local Streamlit smoke passed with `DUNA_STORAGE_BACKEND=memory` and
+  `DUNA_OUTBOUND_ENABLED=false`.
+* The New Order page loaded without the missing `catalog_ready` crash.
+* Successful order creation was not required for this smoke.
+
+#### Verification
+
+* `pytest tests/test_new_order_session_state.py -q` passed: `1 passed`.
+* `pytest -q` passed: `490 passed, 23 deselected`.
+* `ruff check src tests pages` passed.
+* `python -m compileall src tests pages` passed.
+* `git diff --check` reported only LF-to-CRLF warnings.
+
+#### Explicitly not included
+
+* No parser behavior changes.
+* No `PROMPT_VERSION` changes.
+* No outbound behavior changes.
+* No Orders Today changes.
+* No storage contract changes.
+* No catalog, product, or order business-rule changes.
+
 ### M8.6.1D - Provider-neutral outbound unavailable UI messages
 
 Implemented.
@@ -90,13 +127,6 @@ Implemented.
 * No queue/worker behavior.
 * No `StorageInterface` extension.
 * No `OrderService` coupling.
-
-#### Known unrelated issue
-
-* During manual smoke setup, `pages/1_New_Order.py` was observed to crash when
-  `st.session_state.catalog_ready` is missing.
-* This is unrelated to M8.6.1C/D because those slices only changed Orders Today
-  outbound acknowledgement display.
 
 ### M8.6.1B - Manual acknowledgement UI
 
