@@ -12,6 +12,7 @@ from duna_orders.services.acknowledgement_template import (
 )
 from duna_orders.services.outbound_acknowledgement import (
     OutboundAcknowledgementService,
+    OutboundAcknowledgementOutcome,
     OutboundProviderResult,
 )
 from duna_orders.storage.outbound_messages import (
@@ -130,12 +131,13 @@ def test_happy_path_builds_body_claims_sends_and_marks_sent(tmp_path: Path) -> N
         acknowledgement_type=ORDER_CONFIRMED_ACK,
     )
 
-    assert result.outcome == "sent"
+    assert result.outcome == OutboundAcknowledgementOutcome.SENT
+    assert result.reason == "Acknowledgement sent."
     assert result.attempted is True
     assert result.sent is True
-    assert result.acknowledgement.status == "sent"
-    assert result.acknowledgement.provider_message_id == "SM_SENT"
-    assert persisted == result.acknowledgement
+    assert persisted is not None
+    assert persisted.status == "sent"
+    assert persisted.provider_message_id == "SM_SENT"
     assert len(adapter.calls) == 1
     assert adapter.calls[0] == {
         "from_number": FROM_NUMBER,
@@ -164,9 +166,9 @@ def test_duplicate_second_call_is_suppressed_without_adapter_call(tmp_path: Path
 
     second = _send(service)
 
-    assert first.outcome == "sent"
-    assert second.outcome == "suppressed"
-    assert second.reason == "suppressed_sent"
+    assert first.outcome == OutboundAcknowledgementOutcome.SENT
+    assert second.outcome == OutboundAcknowledgementOutcome.SUPPRESSED_DUPLICATE
+    assert second.reason == "Acknowledgement was already sent."
     assert second.attempted is False
     assert len(adapter.calls) == 1
 
@@ -178,8 +180,8 @@ def test_existing_sent_row_suppresses_adapter_call(tmp_path: Path) -> None:
 
     result = _send(service)
 
-    assert result.outcome == "suppressed"
-    assert result.reason == "suppressed_sent"
+    assert result.outcome == OutboundAcknowledgementOutcome.SUPPRESSED_DUPLICATE
+    assert result.reason == "Acknowledgement was already sent."
     assert adapter.calls == []
 
 
@@ -198,8 +200,11 @@ def test_existing_sending_row_suppresses_adapter_call(tmp_path: Path) -> None:
 
     result = _send(service)
 
-    assert result.outcome == "suppressed"
-    assert result.reason == "suppressed_in_progress"
+    assert result.outcome == OutboundAcknowledgementOutcome.MAY_HAVE_SENT_INVESTIGATE
+    assert result.reason == (
+        "The message may have been sent. Verify with the provider "
+        "or customer before retrying."
+    )
     assert adapter.calls == []
 
 
@@ -219,10 +224,15 @@ def test_retry_failed_does_not_send_existing_sending_row(tmp_path: Path) -> None
     result = _send(service, retry_failed=True)
 
     assert claim.acknowledgement.status == "sending"
-    assert result.outcome == "suppressed"
-    assert result.reason == "suppressed_in_progress"
-    assert result.acknowledgement.status == "sending"
-    assert result.acknowledgement.outbound_message_id == claim.acknowledgement.outbound_message_id
+    assert result.outcome == OutboundAcknowledgementOutcome.MAY_HAVE_SENT_INVESTIGATE
+    assert result.reason == (
+        "The message may have been sent. Verify with the provider "
+        "or customer before retrying."
+    )
+    stored = _stored_ack(store)
+    assert stored is not None
+    assert stored.status == "sending"
+    assert stored.outbound_message_id == claim.acknowledgement.outbound_message_id
     assert adapter.calls == []
 
 
@@ -239,9 +249,12 @@ def test_existing_unknown_row_suppresses_adapter_call(tmp_path: Path) -> None:
 
     second = _send(service, retry_failed=True)
 
-    assert first.outcome == "unknown"
-    assert second.outcome == "suppressed"
-    assert second.reason == "suppressed_unknown"
+    assert first.outcome == OutboundAcknowledgementOutcome.MAY_HAVE_SENT_INVESTIGATE
+    assert second.outcome == OutboundAcknowledgementOutcome.MAY_HAVE_SENT_INVESTIGATE
+    assert second.reason == (
+        "The message may have been sent. Verify with the provider "
+        "or customer before retrying."
+    )
     assert adapter.calls == []
 
 
@@ -258,36 +271,40 @@ def test_failed_row_without_retry_suppresses_adapter_call(tmp_path: Path) -> Non
 
     second = _send(service)
 
-    assert first.outcome == "failed"
-    assert second.outcome == "suppressed"
-    assert second.reason == "suppressed_failed_without_retry"
+    assert first.outcome == OutboundAcknowledgementOutcome.FAILED_RETRYABLE
+    assert second.outcome == OutboundAcknowledgementOutcome.FAILED_RETRYABLE
+    assert second.reason == "The previous attempt failed. You can retry."
     assert adapter.calls == []
 
 
 def test_failed_row_with_retry_calls_adapter_once_and_reuses_row(tmp_path: Path) -> None:
-    service, _, adapter = _service(
+    service, store, adapter = _service(
         tmp_path,
         adapter_result=OutboundProviderResult.failed(
             error_code="provider_error",
             error_message="provider rejected message",
         ),
     )
-    first = _send(service)
-    first_id = first.acknowledgement.outbound_message_id
+    _send(service)
+    failed = _stored_ack(store)
+    assert failed is not None
+    first_id = failed.outbound_message_id
     adapter.result = OutboundProviderResult.success(provider_message_id="SM_RETRY")
     adapter.calls.clear()
 
     retry = _send(service, retry_failed=True)
 
-    assert retry.outcome == "sent"
-    assert retry.acknowledgement.outbound_message_id == first_id
-    assert retry.acknowledgement.attempt_count == 2
-    assert retry.acknowledgement.provider_message_id == "SM_RETRY"
+    assert retry.outcome == OutboundAcknowledgementOutcome.SENT
+    stored = _stored_ack(store)
+    assert stored is not None
+    assert stored.outbound_message_id == first_id
+    assert stored.attempt_count == 2
+    assert stored.provider_message_id == "SM_RETRY"
     assert len(adapter.calls) == 1
 
 
 def test_adapter_known_failure_marks_failed(tmp_path: Path) -> None:
-    service, _, adapter = _service(
+    service, store, adapter = _service(
         tmp_path,
         adapter_result=OutboundProviderResult.failed(
             error_code="provider_error",
@@ -297,16 +314,19 @@ def test_adapter_known_failure_marks_failed(tmp_path: Path) -> None:
 
     result = _send(service)
 
-    assert result.outcome == "failed"
+    assert result.outcome == OutboundAcknowledgementOutcome.FAILED_RETRYABLE
+    assert result.reason == "The message was not sent. You can retry."
     assert result.attempted is True
-    assert result.acknowledgement.status == "failed"
-    assert result.acknowledgement.last_error_code == "provider_error"
-    assert result.acknowledgement.last_error_message == "provider rejected message"
+    stored = _stored_ack(store)
+    assert stored is not None
+    assert stored.status == "failed"
+    assert stored.last_error_code == "provider_error"
+    assert stored.last_error_message == "provider rejected message"
     assert len(adapter.calls) == 1
 
 
 def test_adapter_unknown_marks_unknown(tmp_path: Path) -> None:
-    service, _, adapter = _service(
+    service, store, adapter = _service(
         tmp_path,
         adapter_result=OutboundProviderResult.unknown(
             error_code="timeout",
@@ -316,11 +336,17 @@ def test_adapter_unknown_marks_unknown(tmp_path: Path) -> None:
 
     result = _send(service)
 
-    assert result.outcome == "unknown"
+    assert result.outcome == OutboundAcknowledgementOutcome.MAY_HAVE_SENT_INVESTIGATE
+    assert result.reason == (
+        "The message may have been sent. Verify with the provider "
+        "or customer before retrying."
+    )
     assert result.attempted is True
-    assert result.acknowledgement.status == "unknown"
-    assert result.acknowledgement.last_error_code == "timeout"
-    assert result.acknowledgement.last_error_message == "provider response unknown"
+    stored = _stored_ack(store)
+    assert stored is not None
+    assert stored.status == "unknown"
+    assert stored.last_error_code == "timeout"
+    assert stored.last_error_message == "provider response unknown"
     assert len(adapter.calls) == 1
 
 
@@ -331,9 +357,10 @@ def test_only_confirmed_orders_can_be_acknowledged(
 ) -> None:
     service, store, adapter = _service(tmp_path, order=_order(status=status))
 
-    with pytest.raises(ValueError, match="Only confirmed orders"):
-        _send(service)
+    result = _send(service)
 
+    assert result.outcome == OutboundAcknowledgementOutcome.BLOCKED_PRECONDITION
+    assert result.reason == "Only confirmed orders can be acknowledged."
     assert adapter.calls == []
     assert _stored_ack(store) is None
 
@@ -341,9 +368,10 @@ def test_only_confirmed_orders_can_be_acknowledged(
 def test_cross_tenant_order_is_not_read_or_claimed(tmp_path: Path) -> None:
     service, store, adapter = _service(tmp_path, order=_order(tenant_id="tenant-b"))
 
-    with pytest.raises(ValueError, match="Order not found for tenant"):
-        _send(service)
+    result = _send(service)
 
+    assert result.outcome == OutboundAcknowledgementOutcome.BLOCKED_PRECONDITION
+    assert result.reason == "Order was not found for this tenant."
     assert service._order_reader.calls == [
         {"tenant_id": DEFAULT_TEST_TENANT_ID, "order_id": ORDER_ID}
     ]
@@ -354,14 +382,15 @@ def test_cross_tenant_order_is_not_read_or_claimed(tmp_path: Path) -> None:
 def test_missing_order_is_blocked_before_claim_or_send(tmp_path: Path) -> None:
     service, store, adapter = _service(tmp_path)
 
-    with pytest.raises(ValueError, match="Order not found for tenant"):
-        service.send_order_confirmed_acknowledgement(
-            tenant_id=DEFAULT_TEST_TENANT_ID,
-            order_id="missing-order",
-            from_number=FROM_NUMBER,
-            requested_by=REQUESTED_BY,
-        )
+    result = service.send_order_confirmed_acknowledgement(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        order_id="missing-order",
+        from_number=FROM_NUMBER,
+        requested_by=REQUESTED_BY,
+    )
 
+    assert result.outcome == OutboundAcknowledgementOutcome.BLOCKED_PRECONDITION
+    assert result.reason == "Order was not found for this tenant."
     assert adapter.calls == []
     assert _stored_ack(store) is None
 
@@ -372,26 +401,27 @@ def test_missing_customer_phone_is_blocked_before_claim_or_send(tmp_path: Path) 
         order=_order(customer_phone_snapshot=None),
     )
 
-    with pytest.raises(ValueError, match="customer_phone_snapshot is required"):
-        _send(service)
+    result = _send(service)
 
+    assert result.outcome == OutboundAcknowledgementOutcome.BLOCKED_PRECONDITION
+    assert result.reason == "Customer phone number is required."
     assert adapter.calls == []
     assert _stored_ack(store) is None
 
 
 @pytest.mark.parametrize(
-    ("field_name", "overrides"),
+    ("overrides", "expected_reason"),
     [
-        ("from_number", {"from_number": ""}),
-        ("requested_by", {"requested_by": ""}),
-        ("tenant_id", {"tenant_id": ""}),
-        ("order_id", {"order_id": ""}),
+        ({"from_number": ""}, "Sender phone number is required."),
+        ({"requested_by": ""}, "Operator identity is required."),
+        ({"tenant_id": ""}, "Tenant is required."),
+        ({"order_id": ""}, "Order is required."),
     ],
 )
 def test_required_request_fields_are_validated_before_claim_or_send(
     tmp_path: Path,
-    field_name: str,
     overrides: dict[str, str],
+    expected_reason: str,
 ) -> None:
     service, store, adapter = _service(tmp_path)
     params = {
@@ -402,11 +432,70 @@ def test_required_request_fields_are_validated_before_claim_or_send(
     }
     params.update(overrides)
 
-    with pytest.raises(ValueError, match=f"{field_name} is required"):
-        service.send_order_confirmed_acknowledgement(**params)
+    result = service.send_order_confirmed_acknowledgement(**params)
 
+    assert result.outcome == OutboundAcknowledgementOutcome.BLOCKED_PRECONDITION
+    assert result.reason == expected_reason
     assert adapter.calls == []
     assert _stored_ack(store) is None
+
+
+def test_may_have_sent_investigate_is_distinct_from_failed_retryable(
+    tmp_path: Path,
+) -> None:
+    failed_service, _, _ = _service(
+        tmp_path,
+        adapter_result=OutboundProviderResult.failed(
+            error_code="provider_error",
+            error_message="provider rejected message",
+        ),
+    )
+    unknown_service, _, _ = _service(
+        tmp_path,
+        order=_order(order_id="ord_ack_service_unknown"),
+        adapter_result=OutboundProviderResult.unknown(
+            error_code="timeout",
+            error_message="provider response unknown",
+        ),
+    )
+
+    failed = _send(failed_service)
+    unknown = unknown_service.send_order_confirmed_acknowledgement(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        order_id="ord_ack_service_unknown",
+        from_number=FROM_NUMBER,
+        requested_by=REQUESTED_BY,
+        business_name="El Fogon",
+    )
+
+    assert failed.outcome == OutboundAcknowledgementOutcome.FAILED_RETRYABLE
+    assert unknown.outcome == OutboundAcknowledgementOutcome.MAY_HAVE_SENT_INVESTIGATE
+    assert failed.outcome != unknown.outcome
+
+
+def test_service_result_does_not_expose_provider_detail(tmp_path: Path) -> None:
+    service, store, _ = _service(
+        tmp_path,
+        adapter_result=OutboundProviderResult.failed(
+            error_code="raw_provider_code",
+            error_message="raw provider failure detail",
+        ),
+    )
+
+    result = _send(service)
+    stored = _stored_ack(store)
+
+    assert result.outcome == OutboundAcknowledgementOutcome.FAILED_RETRYABLE
+    assert not hasattr(result, "error_code")
+    assert not hasattr(result, "error_message")
+    assert not hasattr(result, "provider_result")
+    assert not hasattr(result, "provider_message_id")
+    assert not hasattr(result, "acknowledgement")
+    assert "raw_provider_code" not in result.reason
+    assert "raw provider failure detail" not in result.reason
+    assert stored is not None
+    assert stored.last_error_code == "raw_provider_code"
+    assert stored.last_error_message == "raw provider failure detail"
 
 
 def test_body_uses_deterministic_template_builder_output(tmp_path: Path) -> None:
@@ -452,13 +541,14 @@ def _stored_ack(store: PostgresOutboundAcknowledgementStore):
 
 def _order(
     *,
+    order_id: str = ORDER_ID,
     tenant_id: str = DEFAULT_TEST_TENANT_ID,
     status: OrderStatus = "confirmed",
     customer_phone_snapshot: str | None = "whatsapp:+573001112233",
 ) -> Order:
     return Order(
         tenant_id=tenant_id,
-        order_id=ORDER_ID,
+        order_id=order_id,
         customer_name_snapshot="Carlos",
         customer_phone_snapshot=customer_phone_snapshot,
         raw_message="Pedido confirmado",
