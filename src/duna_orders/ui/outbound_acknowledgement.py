@@ -27,6 +27,7 @@ class OutboundAcknowledgementUiMessage:
 class OutboundAcknowledgementStatusUiState:
     message: str
     show_send_button: bool
+    show_retry_button: bool = False
 
 
 def map_acknowledgement_result_to_ui_message(
@@ -124,8 +125,9 @@ def map_acknowledgement_status_to_ui_state(
 
     if acknowledgement.status == "failed":
         return OutboundAcknowledgementStatusUiState(
-            message="Acknowledgement could not be sent. Retry is not available yet.",
+            message="Acknowledgement was not sent. You can retry.",
             show_send_button=False,
+            show_retry_button=True,
         )
 
     return OutboundAcknowledgementStatusUiState(

@@ -156,6 +156,44 @@ def test_failed_retry_reuses_row_and_increments_attempt_count(tmp_path: Path) ->
     assert retry.acknowledgement.last_error_message is None
 
 
+@pytest.mark.parametrize(
+    ("status", "expected_reason"),
+    [
+        ("send_requested", "suppressed_in_progress"),
+        ("sending", "suppressed_in_progress"),
+        ("sent", "suppressed_sent"),
+        ("unknown", "suppressed_unknown"),
+    ],
+)
+def test_retry_failed_cannot_claim_non_failed_rows(
+    tmp_path: Path,
+    status: str,
+    expected_reason: str,
+) -> None:
+    store = _store(tmp_path)
+    first = _claim(store)
+    if status == "sent":
+        store.mark_sent(
+            outbound_message_id=first.acknowledgement.outbound_message_id,
+            provider_message_id="SM_SENT",
+        )
+    elif status == "unknown":
+        store.mark_unknown(
+            outbound_message_id=first.acknowledgement.outbound_message_id,
+            error_code="timeout",
+            error_message="provider response unknown",
+        )
+    elif status == "send_requested":
+        _set_status(store, first.acknowledgement.outbound_message_id, status)
+
+    retry = _claim(store, retry_failed=True)
+
+    assert retry.claimed_for_send is False
+    assert retry.reason == expected_reason
+    assert retry.acknowledgement.outbound_message_id == first.acknowledgement.outbound_message_id
+    assert retry.acknowledgement.attempt_count == 1
+
+
 def test_second_failed_retry_claim_is_suppressed_after_first_claims(tmp_path: Path) -> None:
     store = _store(tmp_path)
     first = _claim(store)

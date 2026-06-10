@@ -43,6 +43,10 @@ STATUS_LABELS = {
     "cancelled": "Cancelled",
 }
 
+RETRY_ACKNOWLEDGEMENT_CONFIRMATION_TEXT = (
+    "Send this acknowledgement again? The previous attempt failed."
+)
+
 ACTION_LABELS = {
     "in_preparation": "Start preparation",
     "ready": "Mark ready",
@@ -119,6 +123,7 @@ def _render_outbound_acknowledgement_action(
         "Send acknowledgement",
         key=f"{order.order_id}_send_acknowledgement",
     ):
+        _clear_retry_confirmation(order.order_id)
         setup.service.send_order_confirmed_acknowledgement(
             tenant_id=setup.tenant_id,
             order_id=order.order_id,
@@ -128,7 +133,43 @@ def _render_outbound_acknowledgement_action(
         )
         st.rerun()
 
+    retry_confirmation_key = _retry_confirmation_key(order.order_id)
+    if status_state.show_retry_button:
+        if st.button(
+            "Retry acknowledgement",
+            key=f"{order.order_id}_retry_acknowledgement",
+        ):
+            st.session_state[retry_confirmation_key] = True
+            st.rerun()
+
+        if st.session_state.get(retry_confirmation_key, False):
+            st.warning(RETRY_ACKNOWLEDGEMENT_CONFIRMATION_TEXT)
+            if st.button(
+                "Confirm retry acknowledgement",
+                key=f"{order.order_id}_confirm_retry_acknowledgement",
+            ):
+                st.session_state[retry_confirmation_key] = False
+                setup.service.send_order_confirmed_acknowledgement(
+                    tenant_id=setup.tenant_id,
+                    order_id=order.order_id,
+                    from_number=setup.from_number,
+                    requested_by="operator",
+                    business_name=business_name,
+                    retry_failed=True,
+                )
+                st.rerun()
+    else:
+        _clear_retry_confirmation(order.order_id)
+
     st.info(status_state.message)
+
+
+def _retry_confirmation_key(order_id: str) -> str:
+    return f"{order_id}_retry_acknowledgement_confirmation"
+
+
+def _clear_retry_confirmation(order_id: str) -> None:
+    st.session_state[_retry_confirmation_key(order_id)] = False
 
 
 def _render_order_card(
