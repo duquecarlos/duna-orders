@@ -1,6 +1,29 @@
 # Changelog
 ## Unreleased
 
+### M9.2A - Conversation advancement service design refinement
+
+Documented.
+
+#### Delivered
+
+* Added `docs/M9_2A_CONVERSATION_ADVANCEMENT_SERVICE_DESIGN.md`.
+* Chose the orphan-draft idempotency strategy: nullable `conversation_id` on
+  conversation-origin drafts plus a unique non-null order constraint.
+* Defined recovery for the crash window after draft creation but before
+  conversation marking.
+* Defined the M9.2B schema/domain/persistence slice and the M9.2C advancement
+  service slice.
+* Defined the advancement service input, output, and outcome enum.
+* Preserved parser prompt, `PROMPT_VERSION`, `StorageInterface`,
+  `OrderService` lifecycle, confirmation transaction, webhook behavior, UI, and
+  outbound/provider behavior.
+
+#### Verification
+
+* Documentation-only change.
+* No code, tests, migrations, commit, or push.
+
 ### M9.1 - Conversation store foundation
 
 Implemented in `e25634a feat(m9): add conversation state store`.

@@ -1,6 +1,7 @@
 # M9 Conversation State Architecture
 
-Status: M9.0 design locked; M9.1 store foundation implemented.
+Status: M9.0 design locked; M9.1 store foundation implemented; M9.2A
+advancement seam refined.
 
 Baseline: `6bd4c40 docs(outbound): close retry attempt limit`
 
@@ -16,6 +17,18 @@ draft -> approved -> confirmed -> atomic inventory commit -> outbound acknowledg
 Conversation state must not leak into the parser, `StorageInterface`,
 `OrderService` lifecycle, confirmation transaction, or outbound/provider
 behavior.
+
+M9.2A seam decision:
+
+* conversation-origin drafts will carry nullable `conversation_id`;
+* orders will enforce one row per non-null `conversation_id`;
+* `conversation_sessions` will gain nullable `resulting_order_id`;
+* advancement will create the draft first, then mark the conversation
+  `draft_created`;
+* if the process crashes between those writes, retry recovers by finding the
+  existing order by `conversation_id` and returns `ALREADY_HAS_DRAFT`;
+* the detailed design is in
+  `docs/M9_2A_CONVERSATION_ADVANCEMENT_SERVICE_DESIGN.md`.
 
 ## 1. Pre-flight findings
 

@@ -8,7 +8,7 @@ Detailed completed work belongs in `CHANGELOG.md`. This file only keeps mileston
 
 ## M9 - Conversation state architecture
 
-Status: M9.1 closed; M9.2 planned.
+Status: M9.2A design refined; M9.2B planned.
 
 M9 introduces conversation state as the next real WhatsApp capability. The goal
 is to support customers who order across multiple messages while preserving the
@@ -64,7 +64,43 @@ Explicitly excluded:
 * `resulting_order_id`, parse-status fields, `mark_draft_created(...)`, and
   `expire_session(...)`.
 
-### M9.2 - Conversation advancement service
+### M9.2A - Conversation advancement service design refinement
+
+Status: closed.
+
+Scope completed:
+
+* Added `docs/M9_2A_CONVERSATION_ADVANCEMENT_SERVICE_DESIGN.md`.
+* Locked the orphan-draft idempotency decision:
+  conversation-origin orders carry nullable `conversation_id`, and orders have
+  a unique non-null `conversation_id` constraint.
+* Chose a narrow Postgres-backed conversation/order lookup helper outside
+  `StorageInterface`.
+* Split M9.2 into schema/domain/persistence first, then service orchestration.
+
+### M9.2B - Conversation draft link persistence
+
+Status: planned.
+
+Scope:
+
+* Add nullable `conversation_id` to `DraftOrderRequest` and `Order`.
+* Add nullable `conversation_id` to persisted orders.
+* Add unique non-null `conversation_id` constraint/index on orders.
+* Add nullable `resulting_order_id` to `conversation_sessions`.
+* Add `mark_draft_created(tenant_id, conversation_id, order_id)`.
+* Add narrow Postgres-backed lookup by `conversation_id` outside
+  `StorageInterface`.
+
+Explicitly excluded:
+
+* Parser calls.
+* Service orchestration.
+* Webhook wiring.
+* UI.
+* Draft advancement flow.
+
+### M9.2C - Conversation advancement service
 
 Status: planned.
 
@@ -74,7 +110,10 @@ Scope:
 * Render deterministic transcript from canonical turns.
 * Call existing `ParsingService`.
 * Apply deterministic operator-reviewable draft completeness rule.
+* Recover orphan drafts by looking up existing orders by `conversation_id`.
 * Create draft through existing `OrderService.create_draft(...)`.
+* Mark conversation `draft_created`.
+* Return an observable advancement outcome.
 
 ### M9.3 - Webhook wiring
 

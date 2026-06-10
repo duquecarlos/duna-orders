@@ -1,4 +1,50 @@
 # Architectural Decisions
+## M9.2A - Orphan-draft idempotency uses conversation-linked orders
+
+Decision:
+Make conversation-origin draft creation idempotent by carrying
+`conversation_id` onto the order and enforcing one order row per non-null
+`conversation_id`.
+
+Details:
+
+* M9.2 must create a draft and then mark the conversation `draft_created`, but
+  those writes live in different persistence boundaries and do not share a
+  transaction.
+* The write order is draft first, then mark conversation. The reverse order is
+  rejected because it can leave a conversation pointing at no draft.
+* The accepted crash-window failure mode is an orphan draft with
+  `conversation_id` while the conversation remains `open`.
+* M9.2B will add nullable `conversation_id` to `DraftOrderRequest`, `Order`,
+  and persisted orders.
+* M9.2B will add a unique non-null `conversation_id` constraint/index on
+  orders. The constraint is not status-dependent because the linked draft may
+  later become approved or confirmed and is still the same order produced by
+  the conversation.
+* M9.2B will add nullable `resulting_order_id` to `conversation_sessions` and
+  `mark_draft_created(tenant_id, conversation_id, order_id)`.
+* Existing order lookup by `conversation_id` will be provided by a narrow
+  Postgres-backed helper outside `StorageInterface`.
+* `OrderService` does not own conversation lookup, and `StorageInterface` is
+  not extended.
+* M9.2C will pass `conversation_id` into the draft request before calling
+  `OrderService.create_draft(...)`.
+* On retry after a draft-before-mark crash, M9.2C finds the existing order by
+  `conversation_id`, marks the conversation `draft_created`, and returns
+  `ALREADY_HAS_DRAFT`.
+* Operator review remains the safety boundary, but it is not the
+  duplicate-prevention mechanism.
+
+Deferred:
+
+* Webhook wiring.
+* UI.
+* Bot replies.
+* Draft amendment after `draft_created`.
+* Parser prompt or `PROMPT_VERSION` changes.
+* Parse-status persistence.
+* Cross-store transaction design.
+
 ## M9.1 - Conversation store foundation is persistence-only
 
 Decision:
