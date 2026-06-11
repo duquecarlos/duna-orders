@@ -4,12 +4,19 @@ from fastapi import FastAPI, Request
 from fastapi.responses import Response
 
 from duna_orders.config import Settings, settings
+from duna_orders.domain.models import utc_now
 from duna_orders.parsing.base import ParserInterface
+from duna_orders.services.conversation_advancement import ConversationAdvancementService
+from duna_orders.services.orders import OrderService
+from duna_orders.services.parsing import ParsingService
+from duna_orders.services.tenant_scoped_reads import TenantScopedReadService
 from duna_orders.storage.base import StorageInterface
+from duna_orders.storage.conversation_orders import PostgresConversationOrderLookup
+from duna_orders.storage.conversation_state import PostgresConversationStateStore
 from duna_orders.storage.factory import build_storage
 from duna_orders.storage.processed_messages import PostgresProcessedMessageStore
 from duna_orders.storage.postgres_session import get_or_create_session_factory
-from duna_orders.web.inbound import create_draft_from_inbound_message
+from duna_orders.web.inbound import _twilio_whatsapp_sender_to_phone
 from duna_orders.web.security import validate_twilio_signature
 from duna_orders.storage.order_lifecycle import (
     OrderLifecycleStore,
@@ -24,6 +31,7 @@ def create_app(
     parser: ParserInterface | None = None,
     processed_message_store: PostgresProcessedMessageStore | None = None,
     order_lifecycle_store: OrderLifecycleStore | None = None,
+    conversation_advancement_service: ConversationAdvancementService | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Duna Orders Webhook")
     app.state.settings = app_settings
@@ -31,6 +39,7 @@ def create_app(
     app.state.parser = parser
     app.state.processed_message_store = processed_message_store
     app.state.order_lifecycle_store = order_lifecycle_store
+    app.state.conversation_advancement_service = conversation_advancement_service
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -62,14 +71,19 @@ def create_app(
         if not message_sid:
             return Response(status_code=400)
 
+        raw_sender = form_params.get("From", "")
+        customer_phone = _twilio_whatsapp_sender_to_phone(raw_sender)
+
+        if not customer_phone:
+            return Response(status_code=400)
+
         inbound_body = form_params.get("Body", "")
-        sender = form_params.get("From")
         tenant_id = app_settings.webhook_tenant_id
 
         is_new_message = _get_processed_message_store(app).try_record_message(
             message_sid=message_sid,
             tenant_id=tenant_id,
-            from_number=sender,
+            from_number=raw_sender,
             raw_body=inbound_body,
         )
 
@@ -77,19 +91,18 @@ def create_app(
             return Response(status_code=200)
 
         if inbound_body.strip():
-            order = create_draft_from_inbound_message(
-                storage=_get_storage(app),
-                parser=_get_parser(app),
+            result = _get_conversation_advancement_service(app).advance(
                 tenant_id=tenant_id,
-                sender=sender,
+                message_sid=message_sid,
+                from_number=customer_phone,
                 body=inbound_body,
-                lifecycle_store=_get_order_lifecycle_store(app),
+                received_at=utc_now(),
             )
 
-            if order is not None:
+            if result.resulting_order_id is not None:
                 _get_processed_message_store(app).mark_order_created(
                     message_sid=message_sid,
-                    order_id=order.order_id,
+                    order_id=result.resulting_order_id,
                 )
 
         return Response(status_code=200)
@@ -150,4 +163,32 @@ def _get_order_lifecycle_store(app: FastAPI) -> OrderLifecycleStore | None:
     app.state.order_lifecycle_store = store
 
     return store
+
+
+def _get_conversation_advancement_service(app: FastAPI) -> ConversationAdvancementService:
+    service = app.state.conversation_advancement_service
+
+    if service is not None:
+        return service
+
+    storage = _get_storage(app)
+
+    if not isinstance(storage, PostgresStorage):
+        raise RuntimeError(
+            "Postgres-backed storage is required for conversation advancement."
+        )
+
+    session_factory = storage._session_factory
+    service = ConversationAdvancementService(
+        conversation_state_store=PostgresConversationStateStore(session_factory),
+        conversation_order_lookup=PostgresConversationOrderLookup(session_factory),
+        scoped_reads=TenantScopedReadService(storage),
+        parsing_service=ParsingService(_get_parser(app), storage),
+        order_service=OrderService(storage, lifecycle_store=_get_order_lifecycle_store(app)),
+    )
+    app.state.conversation_advancement_service = service
+
+    return service
+
+
 app = create_app()
