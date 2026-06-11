@@ -393,6 +393,9 @@ above.
 
 ### M9.4C - Read-only conversation observation/read-model (no schema change)
 
+Status: implemented in `bc2de4a feat(m9): add conversation observation read
+model`. See section 11 for implementation notes.
+
 Scope (future):
 
 * `ConversationObservationReads` protocol and
@@ -497,3 +500,26 @@ git status --short
 * No `web/inbound.py` / `create_draft_from_inbound_message(...)` cleanup.
 * No `StorageInterface` change.
 * `live_sheets` not run.
+
+## 11. M9.4C implementation note
+
+M9.4C shipped in `bc2de4a feat(m9): add conversation observation read model`,
+matching this design with one field-naming refinement:
+
+* The `ConversationObservationItem` field sketched as `resulting_order_id` in
+  section 3.3 was implemented as `linked_order_id`, populated from
+  `ConversationSessionRow.resulting_order_id`. `has_draft` is derived as
+  `linked_order_id is not None`, as designed.
+* The tunable constants from section 3.4 were fixed at
+  `ATTENTION_TURN_THRESHOLD = 3`, `LATEST_BODY_PREVIEW_LENGTH = 160`, and
+  `DEFAULT_IDLE_THRESHOLD = timedelta(hours=4)`.
+* `latest_body_preview` distinguishes "no turns" (`None`) from "latest turn
+  has an empty body" (`""`).
+* Confirms the section 10-style non-goals for this slice: M9.4C is
+  read-only and required no schema change; it does not implement an
+  operator page/UI; it does not persist `latest_advancement_outcome` or
+  `latest_parse_error_category` (still M9.4D); and it does not implement
+  idle/session-expiry behavior - `is_idle` remains a pure read-time
+  comparison against `idle_threshold`, not a session-boundary policy.
+* Added `tests/test_conversation_observation.py` (17 local SQLite-backed
+  tests; no `live_postgres`).

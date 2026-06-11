@@ -8,8 +8,8 @@ Detailed completed work belongs in `CHANGELOG.md`. This file only keeps mileston
 
 ## M9 - Conversation state architecture
 
-Status: M9.3A closed; M9.4A closed; M9.4B closed; remaining M9.4 scope
-planned.
+Status: M9.3A closed; M9.4A closed; M9.4B closed; M9.4C closed; remaining
+M9.4 scope planned.
 
 M9 introduces conversation state as the next real WhatsApp capability. The goal
 is to support customers who order across multiple messages while preserving the
@@ -235,7 +235,7 @@ Deferred follow-up:
 
 ### M9.4 - Tests and observability hardening
 
-Status: M9.4A closed; M9.4B closed; M9.4C and M9.4D planned.
+Status: M9.4A closed; M9.4B closed; M9.4C closed; M9.4D planned.
 
 Scope:
 
@@ -282,9 +282,55 @@ Scope completed:
 * Confirmed idle-boundary visibility needs no new persisted field;
   idle-boundary policy remains a separate deferred slice.
 
+### M9.4C - Conversation observation read-model
+
+Status: closed.
+
+Scope completed:
+
+* Added `src/duna_orders/storage/conversation_observation.py` with the
+  `ConversationObservationReads` protocol and
+  `PostgresConversationObservationReads`, outside `StorageInterface`.
+* Added `ConversationObservationItem` / `ConversationObservationDiagnostics`
+  / `ConversationObservationSnapshot` frozen dataclasses, mirroring
+  `InboundDraftReviewItem` / `InboundReviewDiagnostics` /
+  `InboundReviewSnapshot`.
+* Added `get_conversation_observation_snapshot(*, tenant_id, now,
+  idle_threshold=DEFAULT_IDLE_THRESHOLD)`, a tenant-scoped snapshot read
+  built from `conversation_sessions` and `conversation_turns` via three
+  portable `select(...)` queries through `session_scope(...)` (no N+1, no
+  Postgres-only `DISTINCT ON`).
+* Computed read-time fields per item: `turn_count`, `latest_message_sid`,
+  `latest_body_preview` (truncated to 160 characters, preserving an empty
+  `""` body separately from "no turns" `None`), `linked_order_id` (from
+  `resulting_order_id`), `has_draft`, `is_idle` (`now - last_message_at >
+  idle_threshold`, default four hours), and `needs_operator_attention`
+  (`status == "open" and linked_order_id is None and (turn_count >=
+  ATTENTION_TURN_THRESHOLD or is_idle)`, with `ATTENTION_TURN_THRESHOLD = 3`).
+* Added diagnostics counts: `total_count`, `open_count`,
+  `draft_created_count`, `idle_count`, `needs_attention_count`.
+* Sessions with zero turns are included with `turn_count=0`,
+  `latest_message_sid=None`, `latest_body_preview=None`.
+* Added `tests/test_conversation_observation.py` (17 local SQLite-backed
+  tests; no `live_postgres`).
+* Implemented in `bc2de4a feat(m9): add conversation observation read
+  model`.
+
+Explicitly excluded:
+
+* No schema/migration changes.
+* No changes to `ConversationStateStore`, `ConversationAdvancementService`,
+  or `web/app.py`.
+* No UI / operator page.
+* No `latest_advancement_outcome`, `latest_parse_error_category`, or
+  `latest_parse_status` (deferred to M9.4D).
+* No idle/session-expiry behavior; `is_idle` is a read-time-only comparison,
+  not a session-boundary policy.
+* No `StorageInterface` changes.
+* `live_sheets` was not run.
+
 Remaining M9.4 scope:
 
-* M9.4C - read-only conversation observation/read-model (no schema change).
 * M9.4D - persisted observability hooks (schema + service wiring).
 * Idle-boundary behavior/design.
 

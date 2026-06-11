@@ -4,7 +4,8 @@ Status: M9.0 design locked; M9.1 store foundation implemented; M9.2A
 advancement seam refined; M9.2B draft-link persistence implemented; M9.2C-0
 latest-session lookup implemented; M9.2C advancement service implemented;
 M9.3A webhook wiring implemented; M9.4A conversation advancement hardening
-tests implemented; M9.4B observability/read-model design refined.
+tests implemented; M9.4B observability/read-model design refined; M9.4C
+read-only conversation observation/read-model implemented.
 
 Baseline: `6bd4c40 docs(outbound): close retry attempt limit`
 
@@ -574,9 +575,49 @@ Scope completed:
   visibility; idle-boundary behavior/policy remains a separate deferred
   slice.
 
+#### M9.4C - Conversation observation read-model
+
+Status: implemented in `bc2de4a feat(m9): add conversation observation read
+model`.
+
+Scope completed:
+
+* `ConversationObservationReads` protocol and
+  `PostgresConversationObservationReads` in
+  `src/duna_orders/storage/conversation_observation.py`, outside
+  `StorageInterface`;
+* `ConversationObservationItem` / `ConversationObservationDiagnostics` /
+  `ConversationObservationSnapshot` frozen dataclasses;
+* `get_conversation_observation_snapshot(*, tenant_id, now,
+  idle_threshold=DEFAULT_IDLE_THRESHOLD)`, a tenant-scoped, no-N+1 snapshot
+  read over `conversation_sessions` and `conversation_turns` via
+  `session_scope(...)`;
+* read-time fields `turn_count`, `latest_message_sid`,
+  `latest_body_preview` (truncated, with `""` vs `None` preserved),
+  `linked_order_id` (from `resulting_order_id`), `has_draft`, `is_idle`, and
+  `needs_operator_attention`;
+* diagnostics counts `total_count`, `open_count`, `draft_created_count`,
+  `idle_count`, `needs_attention_count`;
+* sessions with zero turns included with `turn_count=0` and `None`
+  latest-turn fields;
+* 17 local SQLite-backed tests in `tests/test_conversation_observation.py`
+  (no `live_postgres`).
+
+Explicitly excluded:
+
+* no schema/migration changes;
+* no changes to `ConversationStateStore`,
+  `ConversationAdvancementService`, or `web/app.py`;
+* no UI / operator page;
+* no `latest_advancement_outcome`, `latest_parse_error_category`, or
+  `latest_parse_status` (M9.4D);
+* no idle/session-expiry behavior - `is_idle` remains a read-time-only
+  comparison, not a session-boundary policy;
+* no `StorageInterface` changes;
+* `live_sheets` not run.
+
 Remaining M9.4 work:
 
-* M9.4C - read-only conversation observation/read-model (no schema change);
 * M9.4D - persisted observability hooks (schema + service wiring);
 * idle-boundary behavior/design.
 

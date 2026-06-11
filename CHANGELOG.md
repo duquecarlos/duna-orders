@@ -1,6 +1,66 @@
 # Changelog
 ## Unreleased
 
+### M9.4C - Conversation observation read-model
+
+Implemented in `bc2de4a feat(m9): add conversation observation read model`.
+
+#### Delivered
+
+* Added `src/duna_orders/storage/conversation_observation.py` with the
+  `ConversationObservationReads` protocol and
+  `PostgresConversationObservationReads`, outside `StorageInterface`.
+* Added `ConversationObservationItem` / `ConversationObservationDiagnostics`
+  / `ConversationObservationSnapshot` frozen dataclasses, mirroring
+  `InboundDraftReviewItem` / `InboundReviewDiagnostics` /
+  `InboundReviewSnapshot`.
+* Added `get_conversation_observation_snapshot(*, tenant_id, now,
+  idle_threshold=DEFAULT_IDLE_THRESHOLD)`, returning a tenant-scoped snapshot
+  built from `conversation_sessions` and `conversation_turns` using three
+  portable `select(...)` queries via `session_scope(...)` (no N+1, no
+  Postgres-only `DISTINCT ON`).
+* Computed read-time fields per item: `turn_count`, `latest_message_sid`,
+  `latest_body_preview` (truncated to `LATEST_BODY_PREVIEW_LENGTH = 160`,
+  preserving an empty `""` body separately from "no turns" `None`),
+  `linked_order_id` (from `resulting_order_id`), `has_draft`, `is_idle`
+  (`now - last_message_at > idle_threshold`, default
+  `DEFAULT_IDLE_THRESHOLD = timedelta(hours=4)`), and
+  `needs_operator_attention` (`status == "open" and linked_order_id is None
+  and (turn_count >= ATTENTION_TURN_THRESHOLD or is_idle)`, with
+  `ATTENTION_TURN_THRESHOLD = 3`).
+* Added diagnostics counts: `total_count`, `open_count`,
+  `draft_created_count`, `idle_count`, `needs_attention_count`.
+* Sessions with zero turns are included with `turn_count=0`,
+  `latest_message_sid=None`, `latest_body_preview=None`.
+* Added `tests/test_conversation_observation.py` (17 tests, local
+  SQLite-backed only).
+
+#### Excluded
+
+* No schema/migration changes.
+* No changes to `ConversationStateStore`, `ConversationAdvancementService`,
+  or `web/app.py`.
+* No UI / operator page.
+* No `latest_advancement_outcome`, `latest_parse_error_category`, or
+  `latest_parse_status` (deferred to M9.4D).
+* No idle/session-expiry behavior; `is_idle` is a read-time-only comparison,
+  not a session-boundary policy.
+* No `StorageInterface` changes.
+* `PostgresConversationObservationReads` is not added to
+  `ENFORCED_RUNTIME_READ_MODULES` or `KNOWN_STAGE1_RUNTIME_READ_MODULES`.
+* `live_sheets` was not run.
+
+#### Verification
+
+* `pytest tests/test_conversation_observation.py -q` -> 17 passed.
+* `pytest tests/test_conversation_state_store.py
+  tests/test_conversation_advancement.py -q` -> 31 passed, 5 deselected.
+* `pytest tests/test_architecture_boundaries.py -q` -> 2 passed.
+* `pytest -q` -> 585 passed, 30 deselected.
+* `ruff check src tests pages` -> all checks passed.
+* `python -m compileall src tests pages` -> passed.
+* `git diff --check` -> passed.
+
 ### M9.4B - Conversation observability/read-model design
 
 Documented.
