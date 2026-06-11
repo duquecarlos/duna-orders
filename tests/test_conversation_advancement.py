@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -118,8 +119,40 @@ class _RaceOrderService(OrderService):
         )
 
 
+class _SpyConversationStateStore:
+    """Wraps a real store, recording record_advancement_attempt calls.
+
+    All other methods delegate to the wrapped store unchanged.
+    """
+
+    def __init__(
+        self,
+        store: PostgresConversationStateStore,
+        *,
+        record_advancement_attempt_error: Exception | None = None,
+    ) -> None:
+        self._store = store
+        self._record_advancement_attempt_error = record_advancement_attempt_error
+        self.record_advancement_attempt_calls: list[dict[str, object]] = []
+
+    def __getattr__(self, name: str):
+        return getattr(self._store, name)
+
+    def record_advancement_attempt(self, **kwargs):
+        self.record_advancement_attempt_calls.append(kwargs)
+        if self._record_advancement_attempt_error is not None:
+            raise self._record_advancement_attempt_error
+        return self._store.record_advancement_attempt(**kwargs)
+
+
 class Harness:
-    def __init__(self, tmp_path: Path, parser: MockParser | None = None) -> None:
+    def __init__(
+        self,
+        tmp_path: Path,
+        parser: MockParser | None = None,
+        *,
+        record_advancement_attempt_error: Exception | None = None,
+    ) -> None:
         database_path = tmp_path / "conversation_advancement.db"
         engine = make_engine(f"sqlite:///{database_path}")
         Base.metadata.create_all(engine)
@@ -128,7 +161,10 @@ class Harness:
         self.storage = PostgresStorage(session_factory)
         self.storage.upsert_product(_make_product())
 
-        self.conversation_state_store = PostgresConversationStateStore(session_factory)
+        self.conversation_state_store = _SpyConversationStateStore(
+            PostgresConversationStateStore(session_factory),
+            record_advancement_attempt_error=record_advancement_attempt_error,
+        )
         self.conversation_order_lookup = PostgresConversationOrderLookup(session_factory)
         self.scoped_reads = _SpyTenantScopedReadService(self.storage)
         self.parser = (
@@ -481,6 +517,347 @@ def test_advance_uses_tenant_scoped_product_reads(tmp_path: Path) -> None:
     assert harness.parser.calls[0][1] == harness.storage.unscoped_list_products(
         active_only=True
     )
+
+
+def test_parse_incomplete_records_outcome_with_no_category(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, parser=MockParser(result=_incomplete_parse_result()))
+
+    result = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="hola",
+        received_at=BASE_TIME,
+    )
+
+    assert result.outcome == ConversationAdvancementOutcome.PARSE_INCOMPLETE
+
+    session = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=result.conversation_id,
+    )
+    assert session is not None
+    assert session.latest_advancement_outcome == "PARSE_INCOMPLETE"
+    assert session.latest_parse_error_category is None
+
+
+def test_turn_appended_incomplete_records_outcome_with_parser_error_category(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path, parser=MockParser(raise_error=ParserError("boom")))
+
+    result = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="???",
+        received_at=BASE_TIME,
+    )
+
+    assert result.outcome == ConversationAdvancementOutcome.TURN_APPENDED_INCOMPLETE
+
+    session = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=result.conversation_id,
+    )
+    assert session is not None
+    assert session.latest_advancement_outcome == "TURN_APPENDED_INCOMPLETE"
+    assert session.latest_parse_error_category == "PARSER_ERROR"
+
+
+def test_draft_created_records_outcome_with_no_category(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, parser=MockParser(result=_complete_parse_result()))
+
+    result = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas",
+        received_at=BASE_TIME,
+    )
+
+    assert result.outcome == ConversationAdvancementOutcome.DRAFT_CREATED
+
+    session = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=result.conversation_id,
+    )
+    assert session is not None
+    assert session.latest_advancement_outcome == "DRAFT_CREATED"
+    assert session.latest_parse_error_category is None
+    assert harness.conversation_state_store.record_advancement_attempt_calls == [
+        {
+            "tenant_id": TENANT_ID,
+            "conversation_id": result.conversation_id,
+            "outcome": "DRAFT_CREATED",
+            "parse_error_category": None,
+        }
+    ]
+
+
+def test_already_has_draft_records_outcome_with_no_category(tmp_path: Path) -> None:
+    parser = MockParser(result=_complete_parse_result())
+    harness = Harness(tmp_path, parser=parser)
+
+    first = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas",
+        received_at=BASE_TIME,
+    )
+    assert first.outcome == ConversationAdvancementOutcome.DRAFT_CREATED
+
+    harness.conversation_state_store.record_advancement_attempt_calls.clear()
+
+    second = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM2",
+        from_number=FROM_NUMBER,
+        body="algo mas?",
+        received_at=BASE_TIME + timedelta(minutes=1),
+    )
+    assert second.outcome == ConversationAdvancementOutcome.ALREADY_HAS_DRAFT
+
+    session = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=second.conversation_id,
+    )
+    assert session is not None
+    assert session.latest_advancement_outcome == "ALREADY_HAS_DRAFT"
+    assert session.latest_parse_error_category is None
+    assert harness.conversation_state_store.record_advancement_attempt_calls == [
+        {
+            "tenant_id": TENANT_ID,
+            "conversation_id": second.conversation_id,
+            "outcome": "ALREADY_HAS_DRAFT",
+            "parse_error_category": None,
+        }
+    ]
+
+
+def test_orphan_draft_recovery_records_already_has_draft(tmp_path: Path) -> None:
+    parser = MockParser(result=_complete_parse_result())
+    harness = Harness(tmp_path, parser=parser)
+
+    session = harness.conversation_state_store.get_or_create_open_session(
+        tenant_id=TENANT_ID,
+        customer_phone=FROM_NUMBER,
+        received_at=BASE_TIME,
+    )
+    harness.conversation_state_store.append_turn_if_new(
+        tenant_id=TENANT_ID,
+        conversation_id=session.conversation_id,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas",
+        received_at=BASE_TIME,
+    )
+    orphan_order = harness.order_service.create_draft(
+        DraftOrderRequest(
+            tenant_id=TENANT_ID,
+            raw_message="quiero 2 empanadas",
+            customer_name="Cliente Test",
+            customer_phone=session.customer_phone,
+            conversation_id=session.conversation_id,
+            items=[
+                DraftItemRequest(
+                    tenant_id=TENANT_ID,
+                    product_id=PRODUCT_ID,
+                    quantity=Decimal("2"),
+                ),
+            ],
+        )
+    )
+
+    result = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM2",
+        from_number=FROM_NUMBER,
+        body="algo mas?",
+        received_at=BASE_TIME + timedelta(minutes=1),
+    )
+
+    assert result.outcome == ConversationAdvancementOutcome.ALREADY_HAS_DRAFT
+    assert result.resulting_order_id == orphan_order.order_id
+
+    recovered_session = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=session.conversation_id,
+    )
+    assert recovered_session is not None
+    assert recovered_session.latest_advancement_outcome == "ALREADY_HAS_DRAFT"
+    assert recovered_session.latest_parse_error_category is None
+    assert harness.conversation_state_store.record_advancement_attempt_calls == [
+        {
+            "tenant_id": TENANT_ID,
+            "conversation_id": session.conversation_id,
+            "outcome": "ALREADY_HAS_DRAFT",
+            "parse_error_category": None,
+        }
+    ]
+
+
+def test_create_draft_integrity_error_recovery_records_already_has_draft(
+    tmp_path: Path,
+) -> None:
+    parser = MockParser(result=_complete_parse_result())
+    harness = Harness(tmp_path, parser=parser)
+
+    race_order_service = _RaceOrderService(harness.storage)
+    harness.service = ConversationAdvancementService(
+        conversation_state_store=harness.conversation_state_store,
+        conversation_order_lookup=harness.conversation_order_lookup,
+        scoped_reads=harness.scoped_reads,
+        parsing_service=harness.parsing_service,
+        order_service=race_order_service,
+    )
+
+    result = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas",
+        received_at=BASE_TIME,
+    )
+
+    assert result.outcome == ConversationAdvancementOutcome.ALREADY_HAS_DRAFT
+
+    session = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=result.conversation_id,
+    )
+    assert session is not None
+    assert session.latest_advancement_outcome == "ALREADY_HAS_DRAFT"
+    assert session.latest_parse_error_category is None
+    assert harness.conversation_state_store.record_advancement_attempt_calls == [
+        {
+            "tenant_id": TENANT_ID,
+            "conversation_id": result.conversation_id,
+            "outcome": "ALREADY_HAS_DRAFT",
+            "parse_error_category": None,
+        }
+    ]
+
+
+def test_duplicate_message_sid_does_not_record(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, parser=MockParser(result=_incomplete_parse_result()))
+
+    first = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="hola",
+        received_at=BASE_TIME,
+    )
+    assert first.outcome == ConversationAdvancementOutcome.PARSE_INCOMPLETE
+
+    session_after_first = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=first.conversation_id,
+    )
+    assert session_after_first is not None
+
+    harness.conversation_state_store.record_advancement_attempt_calls.clear()
+
+    second = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="hola",
+        received_at=BASE_TIME + timedelta(seconds=1),
+    )
+
+    assert second.outcome == ConversationAdvancementOutcome.DUPLICATE_MESSAGE
+    assert harness.conversation_state_store.record_advancement_attempt_calls == []
+
+    session_after_second = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=first.conversation_id,
+    )
+    assert session_after_second is not None
+    assert (
+        session_after_second.latest_advancement_outcome
+        == session_after_first.latest_advancement_outcome
+    )
+    assert session_after_second.version == session_after_first.version
+
+
+def test_recording_failure_is_non_fatal(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    harness = Harness(
+        tmp_path,
+        parser=MockParser(result=_complete_parse_result()),
+        record_advancement_attempt_error=RuntimeError("boom: recording failed"),
+    )
+
+    with caplog.at_level(
+        logging.WARNING, logger="duna_orders.services.conversation_advancement"
+    ):
+        result = harness.service.advance(
+            tenant_id=TENANT_ID,
+            message_sid="SM1",
+            from_number=FROM_NUMBER,
+            body="quiero 2 empanadas",
+            received_at=BASE_TIME,
+        )
+
+    assert result.outcome == ConversationAdvancementOutcome.DRAFT_CREATED
+    assert result.draft_created is True
+    assert result.resulting_order_id is not None
+
+    orders = harness.storage.list_orders()
+    assert len(orders) == 1
+    assert orders[0].order_id == result.resulting_order_id
+
+    assert any(record.levelname == "WARNING" for record in caplog.records)
+
+
+def test_parse_error_category_is_cleared_after_subsequent_draft_created(
+    tmp_path: Path,
+) -> None:
+    parser = MockParser(raise_error=ParserError("boom"))
+    harness = Harness(tmp_path, parser=parser)
+
+    first = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="???",
+        received_at=BASE_TIME,
+    )
+    assert first.outcome == ConversationAdvancementOutcome.TURN_APPENDED_INCOMPLETE
+
+    after_first = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=first.conversation_id,
+    )
+    assert after_first is not None
+    assert after_first.latest_advancement_outcome == "TURN_APPENDED_INCOMPLETE"
+    assert after_first.latest_parse_error_category == "PARSER_ERROR"
+
+    parser._raise_error = None
+    parser._result = _complete_parse_result()
+
+    second = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM2",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas",
+        received_at=BASE_TIME + timedelta(minutes=1),
+    )
+    assert second.outcome == ConversationAdvancementOutcome.DRAFT_CREATED
+    assert second.conversation_id == first.conversation_id
+
+    after_second = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=second.conversation_id,
+    )
+    assert after_second is not None
+    assert after_second.latest_advancement_outcome == "DRAFT_CREATED"
+    assert after_second.latest_parse_error_category is None
 
 
 @pytest.mark.live_postgres

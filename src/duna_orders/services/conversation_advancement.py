@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -17,6 +18,9 @@ from duna_orders.storage.conversation_state import (
     ConversationStateStore,
     ConversationTurn,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 REACHABLE_SESSION_STATUSES = ("open", "draft_created")
@@ -90,32 +94,70 @@ class ConversationAdvancementService:
                 if turn_appended
                 else ConversationAdvancementOutcome.DUPLICATE_MESSAGE
             )
-            return ConversationAdvancementResult(
+            result = ConversationAdvancementResult(
                 outcome=outcome,
                 conversation_id=session.conversation_id,
                 turn_appended=turn_appended,
                 draft_created=False,
                 resulting_order_id=session.resulting_order_id,
             )
+        else:
+            orphan_recovery = self._recover_orphan_draft(
+                tenant_id=tenant_id,
+                session=session,
+                turn_appended=turn_appended,
+            )
+            if orphan_recovery is not None:
+                result = orphan_recovery
+            elif not turn_appended:
+                result = ConversationAdvancementResult(
+                    outcome=ConversationAdvancementOutcome.DUPLICATE_MESSAGE,
+                    conversation_id=session.conversation_id,
+                    turn_appended=False,
+                    draft_created=False,
+                    resulting_order_id=None,
+                )
+            else:
+                result = self._advance_open_session(tenant_id=tenant_id, session=session)
 
-        orphan_recovery = self._recover_orphan_draft(
-            tenant_id=tenant_id,
-            session=session,
-            turn_appended=turn_appended,
+        if result.outcome == ConversationAdvancementOutcome.DUPLICATE_MESSAGE:
+            return result
+
+        parse_error_category = (
+            "PARSER_ERROR"
+            if result.outcome == ConversationAdvancementOutcome.TURN_APPENDED_INCOMPLETE
+            else None
         )
-        if orphan_recovery is not None:
-            return orphan_recovery
+        return self._record_outcome(
+            tenant_id=tenant_id,
+            result=result,
+            parse_error_category=parse_error_category,
+        )
 
-        if not turn_appended:
-            return ConversationAdvancementResult(
-                outcome=ConversationAdvancementOutcome.DUPLICATE_MESSAGE,
-                conversation_id=session.conversation_id,
-                turn_appended=False,
-                draft_created=False,
-                resulting_order_id=None,
+    def _record_outcome(
+        self,
+        *,
+        tenant_id: str,
+        result: ConversationAdvancementResult,
+        parse_error_category: str | None = None,
+    ) -> ConversationAdvancementResult:
+        try:
+            self._conversation_state_store.record_advancement_attempt(
+                tenant_id=tenant_id,
+                conversation_id=result.conversation_id,
+                outcome=result.outcome.value,
+                parse_error_category=parse_error_category,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to record conversation advancement outcome for "
+                "conversation_id=%s outcome=%s",
+                result.conversation_id,
+                result.outcome.value,
+                exc_info=True,
             )
 
-        return self._advance_open_session(tenant_id=tenant_id, session=session)
+        return result
 
     def _route_session(
         self,
