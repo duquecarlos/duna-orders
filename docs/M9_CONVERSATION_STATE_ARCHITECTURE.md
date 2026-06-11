@@ -4,7 +4,7 @@ Status: M9.0 design locked; M9.1 store foundation implemented; M9.2A
 advancement seam refined; M9.2B draft-link persistence implemented; M9.2C-0
 latest-session lookup implemented; M9.2C advancement service implemented;
 M9.3A webhook wiring implemented; M9.4A conversation advancement hardening
-tests implemented.
+tests implemented; M9.4B observability/read-model design refined.
 
 Baseline: `6bd4c40 docs(outbound): close retry attempt limit`
 
@@ -555,9 +555,29 @@ Scope completed:
 * `src/duna_orders/web/app.py` is covered by the broad-read architecture
   guard.
 
+#### M9.4B - Conversation observability/read-model design
+
+Status: design refined in
+`docs/M9_4B_CONVERSATION_OBSERVABILITY_READ_MODEL_DESIGN.md`.
+
+Scope completed:
+
+* documented existing conversation observability (session and turn fields,
+  `ConversationOrderLookup`) available today with no schema change;
+* split remaining observability work into M9.4C (read-only
+  `ConversationObservationReads`/`PostgresConversationObservationReads`
+  snapshot read-model, no schema change, outside `StorageInterface`) and
+  M9.4D (persisted `latest_advancement_outcome` /
+  `latest_parse_error_category` hooks via `record_advancement_attempt(...)`,
+  requires migration and a safe-category policy for parse errors);
+* confirmed `opened_at`/`last_message_at` already support read-time idle
+  visibility; idle-boundary behavior/policy remains a separate deferred
+  slice.
+
 Remaining M9.4 work:
 
-* observability/read-model hooks;
+* M9.4C - read-only conversation observation/read-model (no schema change);
+* M9.4D - persisted observability hooks (schema + service wiring);
 * idle-boundary behavior/design.
 
 ## 12. What M9 will and will not touch

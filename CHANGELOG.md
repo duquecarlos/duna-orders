@@ -1,6 +1,30 @@
 # Changelog
 ## Unreleased
 
+### M9.4B - Conversation observability/read-model design
+
+Documented.
+
+#### Delivered
+
+* Added `docs/M9_4B_CONVERSATION_OBSERVABILITY_READ_MODEL_DESIGN.md`.
+* Documented existing conversation observability (session and turn fields,
+  `ConversationOrderLookup`) available today with no schema change.
+* Split remaining M9.4 observability scope into M9.4C (read-only
+  `ConversationObservationReads`/`PostgresConversationObservationReads`
+  snapshot read-model, no schema change, outside `StorageInterface`) and
+  M9.4D (persisted `latest_advancement_outcome` /
+  `latest_parse_error_category` hooks via `record_advancement_attempt(...)`,
+  requires migration and a safe-category policy for parse errors).
+* Confirmed `opened_at`/`last_message_at` already support read-time idle
+  visibility; idle-boundary behavior/policy remains a separate deferred
+  slice.
+
+#### Verification
+
+* Documentation-only change.
+* No code, tests, or migrations.
+
 ### M9.4A - Conversation advancement hardening tests
 
 Implemented in `b5f38fe test(m9): harden conversation advancement wiring`.

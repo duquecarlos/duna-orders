@@ -8,7 +8,8 @@ Detailed completed work belongs in `CHANGELOG.md`. This file only keeps mileston
 
 ## M9 - Conversation state architecture
 
-Status: M9.3A closed; M9.4A closed; remaining M9.4 scope planned.
+Status: M9.3A closed; M9.4A closed; M9.4B closed; remaining M9.4 scope
+planned.
 
 M9 introduces conversation state as the next real WhatsApp capability. The goal
 is to support customers who order across multiple messages while preserving the
@@ -234,7 +235,7 @@ Deferred follow-up:
 
 ### M9.4 - Tests and observability hardening
 
-Status: M9.4A closed; remaining scope planned.
+Status: M9.4A closed; M9.4B closed; M9.4C and M9.4D planned.
 
 Scope:
 
@@ -264,9 +265,27 @@ Scope completed:
 
 Implemented in `b5f38fe test(m9): harden conversation advancement wiring`.
 
+### M9.4B - Conversation observability/read-model design
+
+Status: closed.
+
+Scope completed:
+
+* Added `docs/M9_4B_CONVERSATION_OBSERVABILITY_READ_MODEL_DESIGN.md`.
+* Documented existing conversation observability available today with no
+  schema change.
+* Split remaining observability work into M9.4C (read-only
+  `ConversationObservationReads`/`PostgresConversationObservationReads`
+  read-model, no schema change) and M9.4D (persisted
+  `latest_advancement_outcome`/`latest_parse_error_category` hooks via
+  `record_advancement_attempt(...)`, requires migration).
+* Confirmed idle-boundary visibility needs no new persisted field;
+  idle-boundary policy remains a separate deferred slice.
+
 Remaining M9.4 scope:
 
-* Observability/read-model hooks for a later operator conversation view.
+* M9.4C - read-only conversation observation/read-model (no schema change).
+* M9.4D - persisted observability hooks (schema + service wiring).
 * Idle-boundary behavior/design.
 
 ## M8 - WhatsApp conversational ordering and Postgres runtime foundation
