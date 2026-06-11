@@ -23,6 +23,7 @@ from duna_orders.services.conversation_advancement import (
     ConversationAdvancementResult,
 )
 from duna_orders.storage.base import StorageInterface
+from duna_orders.storage.conversation_state import PostgresConversationStateStore
 from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.storage.postgres import PostgresStorage
 from duna_orders.storage.postgres_base import Base
@@ -225,6 +226,17 @@ def _parse_result_for_product(product: Product, raw_message: str) -> ParseResult
     )
 
 
+def _order_snapshot(order: Order) -> tuple[object, ...]:
+    return (
+        order.order_id,
+        order.status,
+        order.raw_message,
+        order.conversation_id,
+        order.total,
+        tuple((item.product_id, item.quantity) for item in order.items),
+    )
+
+
 def test_health_check_returns_ok() -> None:
     app = create_app(
         app_settings=_settings(),
@@ -292,6 +304,41 @@ def test_twilio_webhook_rejects_invalid_signature_before_processing() -> None:
     assert fake_service.calls == []
 
 
+def test_twilio_webhook_invalid_signature_does_not_record_processed_message(
+    tmp_path: Path,
+) -> None:
+    storage = InMemoryStorage()
+    parser = MockParser()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    app = create_app(
+        app_settings=_settings(),
+        storage=storage,
+        parser=parser,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+    )
+    client = TestClient(app)
+
+    params = {
+        "MessageSid": "SM_INVALID_SIGNATURE",
+        "From": "whatsapp:+573001112233",
+        "Body": "Buenas, una bandeja paisa",
+    }
+
+    response = client.post(
+        WEBHOOK_PATH,
+        data=params,
+        headers={"X-Twilio-Signature": "invalid"},
+    )
+
+    assert response.status_code == 403
+    assert processed_store.get_message("SM_INVALID_SIGNATURE") is None
+    assert parser.calls == []
+    assert storage.list_orders() == []
+    assert fake_service.calls == []
+
+
 def test_twilio_webhook_rejects_missing_message_sid() -> None:
     storage = InMemoryStorage()
     fake_service = FakeConversationAdvancementService()
@@ -317,12 +364,14 @@ def test_twilio_webhook_rejects_missing_message_sid() -> None:
     assert fake_service.calls == []
 
 
-def test_twilio_webhook_rejects_missing_from_field() -> None:
+def test_twilio_webhook_rejects_missing_from_field(tmp_path: Path) -> None:
     storage = InMemoryStorage()
     fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
     app = create_app(
         app_settings=_settings(),
         storage=storage,
+        processed_message_store=processed_store,
         conversation_advancement_service=fake_service,
     )
     client = TestClient(app)
@@ -340,6 +389,7 @@ def test_twilio_webhook_rejects_missing_from_field() -> None:
 
     assert response.status_code == 400
     assert fake_service.calls == []
+    assert processed_store.get_message("SM_MISSING_FROM") is None
 
 
 def test_twilio_webhook_validates_against_configured_public_url(
@@ -654,6 +704,11 @@ def test_twilio_webhook_followup_message_after_draft_created_links_existing_orde
         data=first_params,
         headers=_signed_headers(first_params),
     )
+
+    orders_after_first = storage.list_orders()
+    assert len(orders_after_first) == 1
+    draft_snapshot = _order_snapshot(orders_after_first[0])
+
     second = client.post(
         WEBHOOK_PATH,
         data=second_params,
@@ -672,6 +727,108 @@ def test_twilio_webhook_followup_message_after_draft_created_links_existing_orde
     assert second_record is not None
     assert first_record.resulting_order_id == orders[0].order_id
     assert second_record.resulting_order_id == orders[0].order_id
+
+    # The follow-up message must not mutate the existing draft order.
+    assert _order_snapshot(orders[0]) == draft_snapshot
+
+    # Replaying the follow-up MessageSid after draft_created must not reprocess.
+    duplicate = client.post(
+        WEBHOOK_PATH,
+        data=second_params,
+        headers=_signed_headers(second_params),
+    )
+
+    orders_after_duplicate = storage.list_orders()
+
+    assert duplicate.status_code == 200
+    assert len(orders_after_duplicate) == 1
+    assert len(parser.calls) == 1
+    assert _order_snapshot(orders_after_duplicate[0]) == draft_snapshot
+
+
+def test_twilio_webhook_tenant_isolation_same_customer_creates_separate_conversations_and_drafts(
+    tmp_path: Path,
+) -> None:
+    storage = _postgres_storage(tmp_path)
+    product_a = _seed_product(storage)
+    product_b = _seed_other_tenant_product(storage)
+    processed_store = _processed_message_store(tmp_path)
+
+    raw_message_a = "Buenas, una bandeja paisa"
+    raw_message_b = "Quiero el producto del otro tenant"
+
+    parser_a = MockParser(result=_parse_result_for_product(product_a, raw_message_a))
+    parser_b = MockParser(result=_parse_result_for_product(product_b, raw_message_b))
+
+    app_a = create_app(
+        app_settings=_settings(),
+        storage=storage,
+        parser=parser_a,
+        processed_message_store=processed_store,
+    )
+    app_b = create_app(
+        app_settings=_settings().model_copy(update={"webhook_tenant_id": "other-tenant"}),
+        storage=storage,
+        parser=parser_b,
+        processed_message_store=processed_store,
+    )
+    client_a = TestClient(app_a)
+    client_b = TestClient(app_b)
+
+    customer_from = "whatsapp:+573001112233"
+    customer_phone = "+573001112233"
+
+    params_a = {
+        "MessageSid": "SM_TENANT_A",
+        "From": customer_from,
+        "Body": raw_message_a,
+    }
+    params_b = {
+        "MessageSid": "SM_TENANT_B",
+        "From": customer_from,
+        "Body": raw_message_b,
+    }
+
+    response_a = client_a.post(
+        WEBHOOK_PATH,
+        data=params_a,
+        headers=_signed_headers(params_a),
+    )
+    response_b = client_b.post(
+        WEBHOOK_PATH,
+        data=params_b,
+        headers=_signed_headers(params_b),
+    )
+
+    assert response_a.status_code == 200
+    assert response_b.status_code == 200
+
+    orders = storage.list_orders()
+    assert len(orders) == 2
+    assert {order.tenant_id for order in orders} == {
+        DEFAULT_TEST_TENANT_ID,
+        "other-tenant",
+    }
+    assert len({order.conversation_id for order in orders}) == 2
+
+    order_a = next(order for order in orders if order.tenant_id == DEFAULT_TEST_TENANT_ID)
+    order_b = next(order for order in orders if order.tenant_id == "other-tenant")
+    assert [item.product_id for item in order_a.items] == [product_a.product_id]
+    assert [item.product_id for item in order_b.items] == [product_b.product_id]
+
+    conversation_state_store = PostgresConversationStateStore(storage._session_factory)
+    latest_a = conversation_state_store.get_latest_session_for_customer(
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        customer_phone=customer_phone,
+    )
+    latest_b = conversation_state_store.get_latest_session_for_customer(
+        tenant_id="other-tenant",
+        customer_phone=customer_phone,
+    )
+    assert latest_a is not None
+    assert latest_a.conversation_id == order_a.conversation_id
+    assert latest_b is not None
+    assert latest_b.conversation_id == order_b.conversation_id
 
 
 def test_twilio_webhook_empty_body_retry_records_sid_once_and_creates_no_order(

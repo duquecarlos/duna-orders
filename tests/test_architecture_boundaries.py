@@ -14,6 +14,7 @@ ENFORCED_RUNTIME_READ_MODULES = frozenset(
         Path("src/duna_orders/services/dashboard_read_scenario.py"),
         Path("src/duna_orders/services/conversation_advancement.py"),
         Path("src/duna_orders/web/inbound.py"),
+        Path("src/duna_orders/web/app.py"),
     }
 )
 

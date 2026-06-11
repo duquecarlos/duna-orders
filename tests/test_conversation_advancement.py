@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from uuid import uuid4
 
+import pytest
+from alembic.command import upgrade
+from alembic.config import Config
 from sqlalchemy.exc import IntegrityError
 
+from duna_orders.config import settings
 from duna_orders.domain.models import DraftItemRequest, DraftOrderRequest, ParseResult, Product
 from duna_orders.parsing.exceptions import ParserError
 from duna_orders.services.conversation_advancement import (
@@ -22,6 +28,7 @@ from duna_orders.storage.postgres_base import Base
 from duna_orders.storage.postgres_session import make_engine, make_session_factory
 from tests._fakes import MockParser
 from tests.conftest import DEFAULT_TEST_TENANT_ID
+from tests.test_conversation_state_store import _cleanup_tenant
 
 
 TENANT_ID = DEFAULT_TEST_TENANT_ID
@@ -474,3 +481,76 @@ def test_advance_uses_tenant_scoped_product_reads(tmp_path: Path) -> None:
     assert harness.parser.calls[0][1] == harness.storage.unscoped_list_products(
         active_only=True
     )
+
+
+@pytest.mark.live_postgres
+def test_live_postgres_concurrent_advance_for_same_customer_creates_one_draft() -> None:
+    if not settings.database_url:
+        pytest.skip("DATABASE_URL is required for live_postgres tests")
+
+    upgrade(Config("alembic.ini"), "head")
+    engine = make_engine(settings.database_url)
+    session_factory = make_session_factory(engine)
+    tenant_id = f"tenant_live_advance_{uuid4().hex}"
+    customer_phone = f"whatsapp:+57{uuid4().hex[:10]}"
+
+    try:
+        _cleanup_tenant(engine, tenant_id)
+
+        storage = PostgresStorage(session_factory)
+        storage.upsert_product(
+            Product(
+                tenant_id=tenant_id,
+                product_id=PRODUCT_ID,
+                product_name="Empanada",
+                unit_price=Decimal("3000"),
+                current_stock=Decimal("100"),
+                active=True,
+            )
+        )
+
+        conversation_state_store = PostgresConversationStateStore(session_factory)
+        conversation_order_lookup = PostgresConversationOrderLookup(session_factory)
+        scoped_reads = TenantScopedReadService(storage)
+        parsing_service = ParsingService(
+            MockParser(result=_complete_parse_result()), storage
+        )
+        order_service = OrderService(storage)
+
+        service = ConversationAdvancementService(
+            conversation_state_store=conversation_state_store,
+            conversation_order_lookup=conversation_order_lookup,
+            scoped_reads=scoped_reads,
+            parsing_service=parsing_service,
+            order_service=order_service,
+        )
+
+        def advance(message_sid: str):
+            return service.advance(
+                tenant_id=tenant_id,
+                message_sid=message_sid,
+                from_number=customer_phone,
+                body="quiero 2 empanadas",
+                received_at=BASE_TIME,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(advance, ["SM_RACE_1", "SM_RACE_2"]))
+
+        outcomes = {result.outcome for result in results}
+        assert outcomes <= {
+            ConversationAdvancementOutcome.DRAFT_CREATED,
+            ConversationAdvancementOutcome.ALREADY_HAS_DRAFT,
+        }
+        assert ConversationAdvancementOutcome.DRAFT_CREATED in outcomes
+
+        # Both calls must resolve to the same single draft order. The shared
+        # live database holds orders for many tenants, so this is checked via
+        # the conversation-scoped resulting_order_id rather than
+        # storage.list_orders().
+        resulting_order_ids = {result.resulting_order_id for result in results}
+        assert None not in resulting_order_ids
+        assert len(resulting_order_ids) == 1
+    finally:
+        _cleanup_tenant(engine, tenant_id)
+        engine.dispose()
