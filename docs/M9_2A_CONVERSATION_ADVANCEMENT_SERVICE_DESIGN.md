@@ -252,6 +252,15 @@ Deferred follow-up: `create_draft_from_inbound_message(...)` and
 `web/inbound.py` are now dead/unreferenced and left in place for a later
 cleanup slice.
 
+### M9.4A - Conversation advancement hardening tests
+
+Status: implemented in `b5f38fe test(m9): harden conversation advancement
+wiring`.
+
+Tests-only hardening of the M9.2C/M9.3A advancement and webhook wiring; see
+`docs/M9_CONVERSATION_STATE_ARCHITECTURE.md` (M9.4A) and `CHANGELOG.md`
+(M9.4A) for the full scope-completed list.
+
 ## 5. Service contract
 
 Input:

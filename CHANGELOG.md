@@ -1,6 +1,60 @@
 # Changelog
 ## Unreleased
 
+### M9.4A - Conversation advancement hardening tests
+
+Implemented in `b5f38fe test(m9): harden conversation advancement wiring`.
+
+#### Delivered
+
+* Added `test_twilio_webhook_invalid_signature_does_not_record_processed_message`
+  to `tests/test_web_twilio_webhook.py`, proving an invalid
+  `X-Twilio-Signature` returns `403` without recording a `processed_messages`
+  row or calling `ConversationAdvancementService.advance(...)`.
+* Extended `test_twilio_webhook_rejects_missing_from_field` to assert a
+  missing `From` does not record a `processed_messages` row for the rejected
+  `MessageSid`.
+* Extended
+  `test_twilio_webhook_followup_message_after_draft_created_links_existing_order`
+  to snapshot the existing draft order before and after a follow-up message
+  and assert no mutation, and to replay the follow-up `MessageSid` (not the
+  draft-creating `MessageSid`) and assert it remains idempotent with no
+  reprocessing.
+* Added
+  `test_twilio_webhook_tenant_isolation_same_customer_creates_separate_conversations_and_drafts`,
+  proving the same customer phone number across two `webhook_tenant_id`
+  values produces separate conversations and separate draft orders through
+  the webhook path.
+* Added `test_live_postgres_concurrent_advance_for_same_customer_creates_one_draft`
+  (`@pytest.mark.live_postgres`) to `tests/test_conversation_advancement.py`,
+  proving concurrent `advance(...)` calls for the same tenant/customer
+  converge to a single `resulting_order_id`.
+* Added `src/duna_orders/web/app.py` to
+  `tests/test_architecture_boundaries.py`'s `ENFORCED_RUNTIME_READ_MODULES`,
+  so the webhook module is covered by the broad-read AST guard.
+
+#### Safety conclusions
+
+* Tests-only slice; no production code changed.
+* No parser prompt or `PROMPT_VERSION` change.
+* No `StorageInterface` or schema/migration changes.
+* No outbound replies, UI, auto-confirmation, payment gate, or media handling.
+
+#### Deferred
+
+* Observability/read-model hooks for a later operator conversation view.
+* Session idle-boundary behavior/design.
+* `create_draft_from_inbound_message(...)` and `web/inbound.py` cleanup
+  (carried over from M9.3A).
+
+#### Verification
+
+* `pytest tests/test_web_twilio_webhook.py -q` passed.
+* `pytest tests/test_conversation_advancement.py
+  tests/test_conversation_state_store.py
+  tests/test_architecture_boundaries.py -q` passed.
+* `git diff --check` passed with LF-to-CRLF warnings only.
+
 ### M9.3A - Webhook wiring to conversation advancement
 
 Implemented in `1cf5b6a feat(m9): wire webhook to conversation advancement`.

@@ -3,7 +3,8 @@
 Status: M9.0 design locked; M9.1 store foundation implemented; M9.2A
 advancement seam refined; M9.2B draft-link persistence implemented; M9.2C-0
 latest-session lookup implemented; M9.2C advancement service implemented;
-M9.3A webhook wiring implemented.
+M9.3A webhook wiring implemented; M9.4A conversation advancement hardening
+tests implemented.
 
 Baseline: `6bd4c40 docs(outbound): close retry attempt limit`
 
@@ -532,6 +533,32 @@ Scope:
 * observability/read-model coverage for later operator UI.
 
 No UI build.
+
+#### M9.4A - Conversation advancement hardening tests
+
+Status: implemented in `b5f38fe test(m9): harden conversation advancement
+wiring`.
+
+Scope completed:
+
+* invalid signature does not record `processed_messages` or call
+  `ConversationAdvancementService.advance(...)`;
+* missing `From` does not record `processed_messages`;
+* a post-`draft_created` follow-up message does not mutate the existing
+  draft;
+* a duplicate follow-up `MessageSid` after `draft_created` remains
+  idempotent;
+* the same customer phone number across tenants remains isolated through the
+  webhook path;
+* `live_postgres` same-customer concurrent advancement converges to one
+  `resulting_order_id`;
+* `src/duna_orders/web/app.py` is covered by the broad-read architecture
+  guard.
+
+Remaining M9.4 work:
+
+* observability/read-model hooks;
+* idle-boundary behavior/design.
 
 ## 12. What M9 will and will not touch
 

@@ -8,7 +8,7 @@ Detailed completed work belongs in `CHANGELOG.md`. This file only keeps mileston
 
 ## M9 - Conversation state architecture
 
-Status: M9.3A closed; M9.4 planned.
+Status: M9.3A closed; M9.4A closed; remaining M9.4 scope planned.
 
 M9 introduces conversation state as the next real WhatsApp capability. The goal
 is to support customers who order across multiple messages while preserving the
@@ -234,13 +234,40 @@ Deferred follow-up:
 
 ### M9.4 - Tests and observability hardening
 
-Status: planned.
+Status: M9.4A closed; remaining scope planned.
 
 Scope:
 
 * Prove duplicate and racing turns do not create duplicate drafts.
 * Prove tenant isolation and idle-boundary behavior.
 * Add observability hooks for a later operator conversation view.
+
+### M9.4A - Conversation advancement hardening tests
+
+Status: closed.
+
+Scope completed:
+
+* Invalid Twilio signature does not record a `processed_messages` row or call
+  the advancement service.
+* Missing `From` does not record a `processed_messages` row.
+* A post-`draft_created` follow-up message does not mutate the existing draft
+  order.
+* A duplicate follow-up `MessageSid` after `draft_created` remains idempotent
+  (no reprocessing).
+* The same customer phone number across two tenants remains isolated
+  (separate conversations and separate drafts) through the webhook path.
+* `live_postgres` concurrent advancement for the same customer converges to
+  one `resulting_order_id`.
+* `src/duna_orders/web/app.py` is added to the broad-read architecture guard
+  (`ENFORCED_RUNTIME_READ_MODULES`).
+
+Implemented in `b5f38fe test(m9): harden conversation advancement wiring`.
+
+Remaining M9.4 scope:
+
+* Observability/read-model hooks for a later operator conversation view.
+* Idle-boundary behavior/design.
 
 ## M8 - WhatsApp conversational ordering and Postgres runtime foundation
 
