@@ -230,7 +230,10 @@ Scope:
 * mark conversation `draft_created`;
 * return observable advancement outcome.
 
-### M9.3 - Webhook wiring
+### M9.3A - Webhook wiring
+
+Status: implemented in `1cf5b6a feat(m9): wire webhook to conversation
+advancement`.
 
 Scope:
 
@@ -239,6 +242,15 @@ Scope:
 * preserve Twilio signature validation;
 * preserve `processed_messages` first-gate idempotency;
 * preserve tenant-scoped product reads.
+
+Delivered: see `docs/M9_CONVERSATION_STATE_ARCHITECTURE.md` (M9.3A) and
+`CHANGELOG.md` (M9.3A) for the full scope-completed list, including the
+`From` field validation and `processed_messages.resulting_order_id`
+linkage.
+
+Deferred follow-up: `create_draft_from_inbound_message(...)` and
+`web/inbound.py` are now dead/unreferenced and left in place for a later
+cleanup slice.
 
 ## 5. Service contract
 

@@ -1,6 +1,80 @@
 # Changelog
 ## Unreleased
 
+### M9.3A - Webhook wiring to conversation advancement
+
+Implemented in `1cf5b6a feat(m9): wire webhook to conversation advancement`.
+
+#### Delivered
+
+* `POST /webhooks/twilio/whatsapp` now calls
+  `ConversationAdvancementService.advance(tenant_id=..., message_sid=...,
+  from_number=..., body=..., received_at=utc_now())` instead of calling
+  `create_draft_from_inbound_message(...)` directly.
+* Signature validation remains the first gate and runs before any side
+  effects; an invalid `X-Twilio-Signature` returns `403` without recording a
+  processed message or calling the advancement service.
+* `processed_messages.try_record_message(...)` (keyed by `MessageSid`) remains
+  the first business/persistence gate. A duplicate `MessageSid` returns `200`
+  without calling the advancement service or the parser.
+* A new `MessageSid` calls `advance(...)` exactly once, after the idempotency
+  pass succeeds.
+* Added required-field validation for `From`: an empty/missing `From` now
+  returns `400`, mirroring the existing `MessageSid` empty-field check, before
+  `try_record_message(...)` runs. The raw Twilio `From` value is still passed
+  to `processed_messages` (`from_number`); the normalized `+57...` phone is
+  passed to `advance(from_number=...)`.
+* All five `ConversationAdvancementOutcome` values
+  (`TURN_APPENDED_INCOMPLETE`, `PARSE_INCOMPLETE`, `DRAFT_CREATED`,
+  `ALREADY_HAS_DRAFT`, `DUPLICATE_MESSAGE`) map to the same `200` response with
+  no outbound reply.
+* When `result.resulting_order_id` is set (`DRAFT_CREATED` or
+  `ALREADY_HAS_DRAFT`), `processed_messages.mark_order_created(...)` links the
+  triggering `MessageSid` to that order, preserving the existing
+  `processed_messages.resulting_order_id` linking behavior.
+* Added `_get_conversation_advancement_service(app)`, which lazily builds
+  `ConversationAdvancementService` from `PostgresStorage`'s session factory
+  (`PostgresConversationStateStore`, `PostgresConversationOrderLookup`,
+  `TenantScopedReadService`, `ParsingService`, `OrderService` with the existing
+  lifecycle store), or accepts an injected service for tests.
+* Rewrote `tests/test_web_twilio_webhook.py` (23 tests) covering: invalid
+  signature does not call the service; duplicate `MessageSid` does not call
+  the service; a new message calls `advance(...)` exactly once with the
+  expected arguments; all five outcomes return `200` with no outbound and the
+  expected `processed_messages.resulting_order_id` linkage; and end-to-end
+  draft creation/follow-up linking against real `PostgresStorage` +
+  `ConversationAdvancementService`.
+
+#### Safety conclusions
+
+* No parser prompt or `PROMPT_VERSION` change.
+* No outbound replies, UI, auto-confirmation, payment gate, or media handling.
+* No queue/worker.
+* No session-expiry or draft-amendment behavior.
+* No `StorageInterface` or schema/migration changes.
+* `live_sheets` was not run.
+
+#### Deferred
+
+* `create_draft_from_inbound_message(...)` and `web/inbound.py` are now
+  dead/unreferenced (only `_twilio_whatsapp_sender_to_phone` is still used).
+  Left in place intentionally for a later cleanup slice, since
+  `tests/test_architecture_boundaries.py` references `web/inbound.py` in its
+  guard sets.
+* Session-boundary / idle-expiry policy for genuinely new second orders.
+* Draft amendment after `draft_created`.
+* UI/status visibility for conversation state.
+
+#### Verification
+
+* `pytest tests/test_web_twilio_webhook.py -q` passed: `23 passed`.
+* `pytest tests/test_conversation_advancement.py
+  tests/test_architecture_boundaries.py -q` passed: `11 passed`.
+* `pytest -q` passed: `566 passed, 29 deselected`.
+* `ruff check src tests pages` passed.
+* `python -m compileall src tests pages` passed.
+* `git diff --check` passed with LF-to-CRLF warnings only.
+
 ### M9.2C - Conversation Advancement Service
 
 Implemented in `87dcd7f feat(m9): add conversation advancement service`.

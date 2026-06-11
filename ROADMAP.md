@@ -8,7 +8,7 @@ Detailed completed work belongs in `CHANGELOG.md`. This file only keeps mileston
 
 ## M9 - Conversation state architecture
 
-Status: M9.2C closed; M9.3 planned.
+Status: M9.3A closed; M9.4 planned.
 
 M9 introduces conversation state as the next real WhatsApp capability. The goal
 is to support customers who order across multiple messages while preserving the
@@ -188,16 +188,49 @@ Explicitly excluded:
 * Queue/worker/callbacks, payment gate, and inbound media.
 * `live_sheets` was not run.
 
-### M9.3 - Webhook wiring
+### M9.3A - Webhook wiring
 
-Status: planned.
+Status: closed.
 
-Scope:
+Scope completed:
 
-* Replace direct one-message draft creation with conversation advancement.
-* Preserve Twilio signature validation.
-* Preserve `processed_messages` first-gate idempotency.
-* Preserve tenant-scoped product reads.
+* `POST /webhooks/twilio/whatsapp` calls
+  `ConversationAdvancementService.advance(...)` instead of
+  `create_draft_from_inbound_message(...)`.
+* Twilio signature validation remains the first gate, before any side
+  effects; an invalid signature returns `403` without calling the
+  advancement service or creating conversation state.
+* `processed_messages` `MessageSid` idempotency remains the first
+  business/persistence gate; a duplicate `MessageSid` returns `200` without
+  calling the advancement service or the parser.
+* A new `MessageSid` calls `advance(...)` exactly once, after the idempotency
+  pass.
+* All five outcomes (`TURN_APPENDED_INCOMPLETE`, `PARSE_INCOMPLETE`,
+  `DRAFT_CREATED`, `ALREADY_HAS_DRAFT`, `DUPLICATE_MESSAGE`) return `200` with
+  no outbound reply.
+* `processed_messages.resulting_order_id` linking is preserved via
+  `mark_order_created(...)` when `advance(...)` returns a
+  `resulting_order_id`.
+* Added required-field validation for `From` (`400` on empty/missing),
+  mirroring the existing `MessageSid` check.
+* Rewrote `tests/test_web_twilio_webhook.py` (23 tests).
+* Implemented in `1cf5b6a feat(m9): wire webhook to conversation
+  advancement`.
+
+Explicitly excluded:
+
+* Queue/worker.
+* Outbound conversational replies.
+* New provider behavior.
+* UI, auto-confirmation, payment gate, and inbound media.
+* Session expiry / draft amendment.
+* `StorageInterface` and schema/migration changes.
+* `live_sheets` was not run.
+
+Deferred follow-up:
+
+* `create_draft_from_inbound_message(...)` and `web/inbound.py` are now
+  dead/unreferenced and left in place for a later cleanup slice.
 
 ### M9.4 - Tests and observability hardening
 

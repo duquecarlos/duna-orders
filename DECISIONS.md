@@ -1,4 +1,76 @@
 # Architectural Decisions
+## M9.3A - Webhook wiring to conversation advancement is implemented
+
+Decision:
+Close M9.3A as the webhook-wiring implementation of M9.3, replacing the
+direct `create_draft_from_inbound_message(...)` call in
+`POST /webhooks/twilio/whatsapp` with
+`ConversationAdvancementService.advance(...)`.
+
+Details:
+
+* `POST /webhooks/twilio/whatsapp` (`src/duna_orders/web/app.py`) now calls
+  `_get_conversation_advancement_service(app).advance(tenant_id=...,
+  message_sid=..., from_number=..., body=..., received_at=utc_now())` for any
+  non-empty inbound body, after the existing `processed_messages`
+  insert-first idempotency check reports a new message.
+* Twilio signature validation is unchanged and remains the first gate: an
+  invalid signature returns `403` before `processed_messages` is touched and
+  before the advancement service is constructed or called.
+* A duplicate `MessageSid` (`try_record_message(...)` returning `False`)
+  returns `200` without calling the advancement service or the parser,
+  matching the pre-M9.3A duplicate-`MessageSid` behavior.
+* Added required-field validation for `From`: an empty/missing `From` now
+  returns `400` before `try_record_message(...)` runs, mirroring the existing
+  `MessageSid` empty-field check. Without this, `advance(...)`'s internal
+  `_require_text` would raise on an empty `from_number` and surface as an
+  uncaught `500`.
+* `processed_messages.try_record_message(...)` continues to receive the raw
+  Twilio `From` header value as `from_number` (preserving
+  `record.from_number == "whatsapp:+57..."`); `advance(from_number=...)`
+  receives the value normalized through
+  `_twilio_whatsapp_sender_to_phone(...)` (preserving
+  `Order.customer_phone_snapshot == "+57..."`).
+* All five `ConversationAdvancementOutcome` values
+  (`TURN_APPENDED_INCOMPLETE`, `PARSE_INCOMPLETE`, `DRAFT_CREATED`,
+  `ALREADY_HAS_DRAFT`, `DUPLICATE_MESSAGE`) map to the existing `200`,
+  no-outbound-reply webhook response.
+* When `result.resulting_order_id` is set,
+  `mark_order_created(message_sid=..., order_id=result.resulting_order_id)`
+  links the triggering `MessageSid` to the order, preserving the pre-M9.3A
+  `processed_messages.resulting_order_id` linking behavior.
+* `_get_conversation_advancement_service(app)` requires `PostgresStorage` (the
+  same Postgres-only requirement as `ConversationStateStore` and
+  `ConversationOrderLookup`) and raises `RuntimeError` otherwise; an injected
+  service (constructor parameter / `app.state`) bypasses this for tests.
+* `tests/test_web_twilio_webhook.py` is rewritten (23 tests) to cover invalid
+  signatures, duplicate `MessageSid`, the single `advance(...)` call for a new
+  message, all five outcomes returning `200` with no outbound and the
+  expected `processed_messages.resulting_order_id` linkage, and end-to-end
+  draft creation/follow-up against real `PostgresStorage` +
+  `ConversationAdvancementService`.
+
+Rationale:
+
+* This composes the already-landed M9.1-M9.2C foundations into the live
+  webhook path without changing the parser, `StorageInterface`, `OrderService`
+  lifecycle, confirmation transaction, or outbound/provider behavior.
+* Validating `From` alongside the existing `MessageSid` check keeps required
+  inbound-field validation in one place, before any persistence gate, and
+  avoids a new uncaught-`500` failure mode introduced solely by wiring in
+  `advance(...)`.
+
+Deferred:
+
+* `create_draft_from_inbound_message(...)` and `web/inbound.py` are now
+  dead/unreferenced (only `_twilio_whatsapp_sender_to_phone` is still used).
+  Left in place for a later cleanup slice because
+  `tests/test_architecture_boundaries.py` references `web/inbound.py` in its
+  guard sets.
+* Session-boundary / idle-expiry policy for genuinely new second orders.
+* Draft amendment after `draft_created`.
+* UI/status visibility for conversation state, if needed later.
+
 ## M9.2C - Conversation Advancement Service is implemented
 
 Decision:

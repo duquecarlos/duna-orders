@@ -2,7 +2,8 @@
 
 Status: M9.0 design locked; M9.1 store foundation implemented; M9.2A
 advancement seam refined; M9.2B draft-link persistence implemented; M9.2C-0
-latest-session lookup implemented; M9.2C advancement service implemented.
+latest-session lookup implemented; M9.2C advancement service implemented;
+M9.3A webhook wiring implemented.
 
 Baseline: `6bd4c40 docs(outbound): close retry attempt limit`
 
@@ -484,22 +485,40 @@ Explicitly excluded:
 * outbound replies;
 * UI.
 
-### M9.3 - Webhook wiring
+### M9.3A - Webhook wiring
 
-Scope:
+Status: implemented in `1cf5b6a feat(m9): wire webhook to conversation
+advancement`.
 
-* replace direct `create_draft_from_inbound_message(...)` call with
-  conversation advancement;
-* preserve Twilio signature validation;
-* preserve `processed_messages` first-gate idempotency;
-* preserve webhook `200` response behavior;
-* preserve tenant-scoped product reads.
+Scope completed:
+
+* replaced the direct `create_draft_from_inbound_message(...)` call with
+  `ConversationAdvancementService.advance(...)`;
+* preserved Twilio signature validation as the first gate, before any side
+  effects;
+* preserved `processed_messages` first-gate `MessageSid` idempotency;
+* preserved webhook `200` response behavior for all five advancement
+  outcomes, with no outbound reply;
+* preserved tenant-scoped product reads (via `ParsingService` /
+  `TenantScopedReadService` inside the advancement service);
+* preserved `processed_messages.resulting_order_id` linking via
+  `mark_order_created(...)`;
+* added required-field validation for `From` (`400` on empty/missing),
+  mirroring the existing `MessageSid` check.
 
 Explicitly excluded:
 
 * queue/worker;
 * outbound conversational replies;
-* new provider behavior.
+* new provider behavior;
+* UI, auto-confirmation, payment gate, inbound media;
+* session expiry / draft amendment;
+* `StorageInterface` and schema/migration changes.
+
+Deferred follow-up:
+
+* `create_draft_from_inbound_message(...)` and `web/inbound.py` are now
+  dead/unreferenced and left in place for a later cleanup slice.
 
 ### M9.4 - Tests and observability hardening
 
