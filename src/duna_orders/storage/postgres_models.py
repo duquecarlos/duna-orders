@@ -366,6 +366,8 @@ class ConversationSessionRow(Base):
         nullable=False,
         default=utc_now,
     )
+    latest_advancement_outcome: Mapped[str | None] = mapped_column(String(STATUS_LENGTH))
+    latest_parse_error_category: Mapped[str | None] = mapped_column(String(STATUS_LENGTH))
 
     turns: Mapped[list[ConversationTurnRow]] = relationship(
         back_populates="session",

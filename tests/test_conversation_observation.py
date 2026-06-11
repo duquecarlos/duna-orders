@@ -278,6 +278,41 @@ def test_has_draft_and_linked_order_id_reflect_mark_draft_created(tmp_path: Path
     assert without_draft_item.linked_order_id is None
 
 
+def test_snapshot_exposes_latest_advancement_outcome_and_parse_error_category(
+    tmp_path: Path,
+) -> None:
+    store, reads = _stores(tmp_path)
+
+    untouched = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone="whatsapp:+573000000005",
+        received_at=BASE_TIME,
+    )
+
+    recorded = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone="whatsapp:+573000000006",
+        received_at=BASE_TIME,
+    )
+    store.record_advancement_attempt(
+        tenant_id=TENANT_A,
+        conversation_id=recorded.conversation_id,
+        outcome="TURN_APPENDED_INCOMPLETE",
+        parse_error_category="PARSER_ERROR",
+    )
+
+    snapshot = reads.get_conversation_observation_snapshot(tenant_id=TENANT_A, now=BASE_TIME)
+    items_by_id = {item.conversation_id: item for item in snapshot.items}
+
+    untouched_item = items_by_id[untouched.conversation_id]
+    recorded_item = items_by_id[recorded.conversation_id]
+
+    assert untouched_item.latest_advancement_outcome is None
+    assert untouched_item.latest_parse_error_category is None
+    assert recorded_item.latest_advancement_outcome == "TURN_APPENDED_INCOMPLETE"
+    assert recorded_item.latest_parse_error_category == "PARSER_ERROR"
+
+
 def test_is_idle_based_on_now_and_idle_threshold(tmp_path: Path) -> None:
     store, reads = _stores(tmp_path)
     store.get_or_create_open_session(

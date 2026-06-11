@@ -35,6 +35,8 @@ class ConversationObservationItem:
     has_draft: bool
     is_idle: bool
     needs_operator_attention: bool
+    latest_advancement_outcome: str | None
+    latest_parse_error_category: str | None
 
 
 @dataclass(frozen=True)
@@ -180,6 +182,8 @@ def _item_from_row(
             and linked_order_id is None
             and (turn_count >= ATTENTION_TURN_THRESHOLD or is_idle)
         ),
+        latest_advancement_outcome=row.latest_advancement_outcome,
+        latest_parse_error_category=row.latest_parse_error_category,
     )
 
 

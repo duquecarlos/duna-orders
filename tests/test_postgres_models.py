@@ -294,6 +294,8 @@ def test_conversation_sessions_table_is_postgres_only() -> None:
         "resulting_order_id",
         "created_at",
         "updated_at",
+        "latest_advancement_outcome",
+        "latest_parse_error_category",
     ]
     assert CONVERSATION_SESSIONS_TAB not in TABS
     assert table.c.conversation_id.primary_key is True
@@ -301,9 +303,13 @@ def test_conversation_sessions_table_is_postgres_only() -> None:
     assert table.c.customer_phone.nullable is False
     assert table.c.status.nullable is False
     assert table.c.resulting_order_id.nullable is True
+    assert table.c.latest_advancement_outcome.nullable is True
+    assert table.c.latest_parse_error_category.nullable is True
     assert isinstance(table.c.version.type, Integer)
     assert isinstance(table.c.opened_at.type, DateTime)
     assert isinstance(table.c.last_message_at.type, DateTime)
+    # M9.4D persists only coarse, safe outcome/category labels by design —
+    # raw parse text or detailed parser error fields are intentionally excluded.
     assert "latest_parse_status" not in table.c
     assert "latest_parse_error" not in table.c
     assert "accumulated_text" not in table.c

@@ -17,6 +17,18 @@ from duna_orders.storage.postgres_session import session_scope
 
 ConversationSessionStatus = Literal["open", "draft_created", "expired", "failed"]
 
+ADVANCEMENT_OUTCOME_VALUES = frozenset(
+    {
+        "TURN_APPENDED_INCOMPLETE",
+        "PARSE_INCOMPLETE",
+        "DRAFT_CREATED",
+        "ALREADY_HAS_DRAFT",
+        "DUPLICATE_MESSAGE",
+    }
+)
+
+PARSE_ERROR_CATEGORY_VALUES = frozenset({"PARSER_ERROR"})
+
 
 @dataclass(frozen=True)
 class ConversationSession:
@@ -30,6 +42,8 @@ class ConversationSession:
     resulting_order_id: str | None
     created_at: datetime
     updated_at: datetime
+    latest_advancement_outcome: str | None
+    latest_parse_error_category: str | None
 
 
 @dataclass(frozen=True)
@@ -103,6 +117,16 @@ class ConversationStateStore(Protocol):
         tenant_id: str,
         conversation_id: str,
         order_id: str,
+    ) -> ConversationSession:
+        ...
+
+    def record_advancement_attempt(
+        self,
+        *,
+        tenant_id: str,
+        conversation_id: str,
+        outcome: str,
+        parse_error_category: str | None = None,
     ) -> ConversationSession:
         ...
 
@@ -281,6 +305,45 @@ class PostgresConversationStateStore:
 
             return _session_from_row(row)
 
+    def record_advancement_attempt(
+        self,
+        *,
+        tenant_id: str,
+        conversation_id: str,
+        outcome: str,
+        parse_error_category: str | None = None,
+    ) -> ConversationSession:
+        _require_text(tenant_id, "tenant_id")
+        _require_text(conversation_id, "conversation_id")
+
+        if outcome not in ADVANCEMENT_OUTCOME_VALUES:
+            raise ValueError(f"Unknown advancement outcome: {outcome}")
+
+        if (
+            parse_error_category is not None
+            and parse_error_category not in PARSE_ERROR_CATEGORY_VALUES
+        ):
+            raise ValueError(f"Unknown parse error category: {parse_error_category}")
+
+        with session_scope(self._session_factory) as session:
+            row = session.scalar(
+                select(ConversationSessionRow)
+                .where(ConversationSessionRow.tenant_id == tenant_id)
+                .where(ConversationSessionRow.conversation_id == conversation_id)
+                .with_for_update()
+            )
+
+            if row is None:
+                raise ValueError(f"Conversation session not found: {conversation_id}")
+
+            row.latest_advancement_outcome = outcome
+            row.latest_parse_error_category = parse_error_category
+            row.version += 1
+            row.updated_at = utc_now()
+            session.flush()
+
+            return _session_from_row(row)
+
     def _get_open_session(
         self,
         *,
@@ -412,6 +475,8 @@ def _session_from_row(row: ConversationSessionRow) -> ConversationSession:
         resulting_order_id=row.resulting_order_id,
         created_at=_utc_aware(row.created_at),
         updated_at=_utc_aware(row.updated_at),
+        latest_advancement_outcome=row.latest_advancement_outcome,
+        latest_parse_error_category=row.latest_parse_error_category,
     )
 
 

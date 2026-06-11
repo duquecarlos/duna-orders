@@ -336,6 +336,142 @@ def test_mark_draft_created_requires_tenant_scoped_session(
         )
 
 
+def test_record_advancement_attempt_sets_outcome_and_increments_version(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    recorded = store.record_advancement_attempt(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        outcome="DRAFT_CREATED",
+    )
+
+    assert recorded.latest_advancement_outcome == "DRAFT_CREATED"
+    assert recorded.latest_parse_error_category is None
+    assert recorded.version == session.version + 1
+
+
+def test_record_advancement_attempt_sets_parser_error_category(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    recorded = store.record_advancement_attempt(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        outcome="TURN_APPENDED_INCOMPLETE",
+        parse_error_category="PARSER_ERROR",
+    )
+
+    assert recorded.latest_advancement_outcome == "TURN_APPENDED_INCOMPLETE"
+    assert recorded.latest_parse_error_category == "PARSER_ERROR"
+
+
+def test_record_advancement_attempt_clears_category_on_subsequent_call(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    store.record_advancement_attempt(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        outcome="TURN_APPENDED_INCOMPLETE",
+        parse_error_category="PARSER_ERROR",
+    )
+
+    recorded = store.record_advancement_attempt(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        outcome="DRAFT_CREATED",
+    )
+
+    assert recorded.latest_advancement_outcome == "DRAFT_CREATED"
+    assert recorded.latest_parse_error_category is None
+
+
+def test_record_advancement_attempt_rejects_unknown_outcome(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    with pytest.raises(ValueError, match="outcome"):
+        store.record_advancement_attempt(
+            tenant_id=TENANT_A,
+            conversation_id=session.conversation_id,
+            outcome="NOT_A_REAL_OUTCOME",
+        )
+
+
+def test_record_advancement_attempt_rejects_unknown_parse_error_category(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    with pytest.raises(ValueError, match="category"):
+        store.record_advancement_attempt(
+            tenant_id=TENANT_A,
+            conversation_id=session.conversation_id,
+            outcome="DRAFT_CREATED",
+            parse_error_category="NOT_A_REAL_CATEGORY",
+        )
+
+
+def test_record_advancement_attempt_requires_existing_session(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+
+    with pytest.raises(ValueError, match="not found"):
+        store.record_advancement_attempt(
+            tenant_id=TENANT_A,
+            conversation_id="conv_does_not_exist",
+            outcome="DRAFT_CREATED",
+        )
+
+
+def test_record_advancement_attempt_requires_tenant_scoped_session(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    with pytest.raises(ValueError, match="not found"):
+        store.record_advancement_attempt(
+            tenant_id=TENANT_B,
+            conversation_id=session.conversation_id,
+            outcome="DRAFT_CREATED",
+        )
+
+
 def test_get_latest_session_for_customer_returns_none_when_no_session_exists(
     tmp_path: Path,
 ) -> None:
