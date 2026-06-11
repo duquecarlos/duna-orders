@@ -1,4 +1,83 @@
 # Architectural Decisions
+## M9.2C - Conversation Advancement Service is implemented
+
+Decision:
+Close M9.2C as the service-orchestration implementation of the M9.2A
+orphan-draft idempotency design, using the M9.2C-0 latest-session lookup for
+routing.
+
+Details:
+
+* `ConversationAdvancementService.advance(*, tenant_id, message_sid,
+  from_number, body, received_at) -> ConversationAdvancementResult` is added
+  in `src/duna_orders/services/conversation_advancement.py`.
+* `ConversationAdvancementOutcome` is `TURN_APPENDED_INCOMPLETE`,
+  `PARSE_INCOMPLETE`, `DRAFT_CREATED`, `ALREADY_HAS_DRAFT`, or
+  `DUPLICATE_MESSAGE`.
+* Routing calls `get_latest_session_for_customer(tenant_id, from_number)`
+  first. If no latest session exists, it calls
+  `get_or_create_open_session(...)`. An `open` latest session is reused
+  directly. A `draft_created` latest session is reused so post-draft
+  messages attach to it instead of opening a new session or creating a
+  second draft. Any other session status raises `NotImplementedError` rather
+  than inventing routing policy; this branch is currently unreachable because
+  `get_latest_session_for_customer` only returns `open` or `draft_created`
+  sessions today.
+* For `open` sessions, the orphan-draft guard
+  (`session.resulting_order_id` set, or
+  `ConversationOrderLookup.get_order_by_conversation_id(...)` finds an
+  existing order) runs before the duplicate-`message_sid` early return. This
+  lets a retried `message_sid` recover an orphan draft via
+  `mark_draft_created(...)` and return `ALREADY_HAS_DRAFT`, even though the
+  same retry would otherwise be a duplicate turn.
+* The parser boundary renders a deterministic transcript from canonical
+  conversation turns (`Customer message N:\n<body>` blocks) and calls
+  existing `ParsingService.parse(tenant_id=..., raw_message=transcript,
+  products=...)`, with products from
+  `TenantScopedReadService.list_products(tenant_id=..., active_only=True)`.
+  `ParserInterface`, the parser prompt, and `PROMPT_VERSION` are unchanged. A
+  `ParserError` returns `TURN_APPENDED_INCOMPLETE`.
+* The completeness rule requires at least one item, each item has
+  `product_id` and `quantity > 0`, and each `product_id` exists in the
+  tenant-scoped active product list, ensuring
+  `OrderService.create_draft(...)` cannot raise `EmptyDraftError`,
+  `ProductNotFoundError`, or `InactiveProductError`. A successful parse that
+  fails this rule returns `PARSE_INCOMPLETE`.
+* Draft creation sets `request.conversation_id = session.conversation_id`
+  (and, following the `web/inbound.py` precedent, overrides `tenant_id`,
+  `raw_message`, `customer_phone`, and per-item `tenant_id`), calls
+  `OrderService.create_draft(...)`, then `mark_draft_created(...)`, and
+  returns `DRAFT_CREATED`.
+* If `OrderService.create_draft(...)` raises `IntegrityError` on the unique
+  non-null `conversation_id` constraint (a concurrent create-draft race), the
+  service looks up the existing order by `tenant_id` + `conversation_id`,
+  calls `mark_draft_created(...)`, and returns `ALREADY_HAS_DRAFT` instead of
+  re-raising or creating a duplicate draft.
+* `tests/test_conversation_advancement.py` adds 9 tests using `MockParser`
+  fixtures, with no LLM dependency.
+* `src/duna_orders/services/conversation_advancement.py` is added to the
+  architecture boundary guard's enforced runtime-read modules.
+
+Rationale:
+
+* The service composes the already-landed M9.1 store, M9.2B draft-link, and
+  M9.2C-0 latest-session lookup foundations into one orchestration seam
+  without changing the parser, `StorageInterface`, `OrderService` lifecycle,
+  confirmation transaction, or outbound/provider behavior.
+* Running the orphan-draft guard before the duplicate-message check for
+  `open` sessions is required for the M9.2A crash-window recovery guarantee:
+  a retried `message_sid` must still be able to mark an orphan draft
+  `draft_created`, not get stuck returning `DUPLICATE_MESSAGE` forever.
+
+Deferred:
+
+* M9.3 webhook wiring to call `ConversationAdvancementService`.
+* Session-boundary / idle-expiry policy for genuinely new second orders.
+* Draft amendment after `draft_created`.
+* Parser prompt tuning, if real multi-turn transcript quality later requires
+  it.
+* UI/status visibility for conversation state, if needed later.
+
 ## M9.2C-0 - Latest customer conversation lookup is implemented
 
 Decision:

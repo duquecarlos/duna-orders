@@ -1,6 +1,96 @@
 # Changelog
 ## Unreleased
 
+### M9.2C - Conversation Advancement Service
+
+Implemented in `87dcd7f feat(m9): add conversation advancement service`.
+
+#### Delivered
+
+* Added `src/duna_orders/services/conversation_advancement.py` with
+  `ConversationAdvancementService.advance(...)`,
+  `ConversationAdvancementOutcome` (`TURN_APPENDED_INCOMPLETE`,
+  `PARSE_INCOMPLETE`, `DRAFT_CREATED`, `ALREADY_HAS_DRAFT`,
+  `DUPLICATE_MESSAGE`), and `ConversationAdvancementResult`.
+* Routing requires explicit `tenant_id` and uses
+  `get_latest_session_for_customer(tenant_id, from_number)` before
+  `get_or_create_open_session(...)`. If no latest session exists, it
+  creates/gets an open session. If the latest session is `open`, it is
+  reused. If the latest session is `draft_created`, the inbound message
+  appends to that existing session and the service returns
+  `ALREADY_HAS_DRAFT` instead of opening a new session or creating a second
+  draft. Any other future session status raises `NotImplementedError` rather
+  than inventing routing policy.
+* Renders a deterministic transcript from canonical conversation turns and
+  calls existing `ParsingService.parse(tenant_id=..., raw_message=transcript,
+  products=...)`. Fetches products through
+  `TenantScopedReadService.list_products(tenant_id=..., active_only=True)`.
+  Does not change `ParserInterface`, the parser prompt, or `PROMPT_VERSION`.
+* Completeness rule: draft creation proceeds only when the parsed request has
+  at least one item, each item has `product_id`, each item has
+  `quantity > 0`, and each `product_id` exists in the tenant-scoped active
+  product list. A `ParserError` returns `TURN_APPENDED_INCOMPLETE`. A
+  successful parse that fails the completeness rule returns
+  `PARSE_INCOMPLETE`.
+* Idempotency: `append_turn_if_new(...)` provides `message_sid` idempotency.
+  For `open` sessions, the orphan-draft guard runs before the
+  duplicate-`message_sid` early return: if `session.resulting_order_id` is
+  already set, or `ConversationOrderLookup.get_order_by_conversation_id(...)`
+  finds an existing order for the conversation, the service calls
+  `mark_draft_created(...)` and returns `ALREADY_HAS_DRAFT`, even on a
+  retried `message_sid`. Only if no orphan draft is found and the
+  `message_sid` is a duplicate does the service return `DUPLICATE_MESSAGE`
+  (no parser call, no draft creation).
+* Draft creation sets `request.conversation_id`, calls
+  `OrderService.create_draft(...)`, then calls `mark_draft_created(...)`, and
+  returns `DRAFT_CREATED`.
+* `IntegrityError` race recovery: if `create_draft(...)` raises
+  `IntegrityError` on the unique non-null `conversation_id` constraint, the
+  service looks up the existing order by `tenant_id` + `conversation_id`,
+  calls `mark_draft_created(...)`, and returns `ALREADY_HAS_DRAFT` instead of
+  re-raising or creating a duplicate draft.
+* Post-`draft_created` behavior: a new `message_sid` appends a turn to the
+  existing `draft_created` session and returns `ALREADY_HAS_DRAFT` without
+  calling the parser, calling `OrderService.create_draft`, opening a new
+  session, or creating a second draft. A duplicate `message_sid` on a
+  `draft_created` session returns `DUPLICATE_MESSAGE`.
+* Added `tests/test_conversation_advancement.py` (9 tests) using `MockParser`
+  fixtures; no LLM dependency.
+* Added `src/duna_orders/services/conversation_advancement.py` to the
+  architecture boundary guard's enforced runtime-read modules.
+
+#### Safety conclusions
+
+* No webhook wiring, UI, bot replies, or outbound changes.
+* No `ParserInterface`, parser prompt, or `PROMPT_VERSION` changes.
+* No `StorageInterface` signature changes.
+* No `OrderService` lifecycle/state transition or confirmation transaction
+  changes.
+* No draft amendment.
+* No session expiry / new-order boundary policy.
+* No queue/worker/callbacks, payment gate, or inbound media.
+* `live_sheets` was not run.
+
+#### Deferred
+
+* M9.3 webhook wiring to call `ConversationAdvancementService`.
+* Session-boundary / idle-expiry policy for genuinely new second orders.
+* Draft amendment after `draft_created`.
+* Parser prompt tuning, if real multi-turn transcript quality later requires
+  it.
+* UI/status visibility for conversation state, if needed later.
+
+#### Verification
+
+* `pytest tests/test_conversation_advancement.py -q` passed: `9 passed`.
+* `pytest tests/test_conversation_advancement.py
+  tests/test_conversation_state_store.py tests/test_architecture_boundaries.py
+  -q` passed: `33 passed, 4 deselected`.
+* `pytest -q` passed: `557 passed, 29 deselected`.
+* `ruff check src tests pages` passed.
+* `python -m compileall src tests pages` passed.
+* `git diff --check` passed with LF-to-CRLF warnings only.
+
 ### M9.2C-0 - Latest customer conversation lookup
 
 Implemented in `981604a feat(m9): add latest conversation session lookup`.

@@ -8,7 +8,7 @@ Detailed completed work belongs in `CHANGELOG.md`. This file only keeps mileston
 
 ## M9 - Conversation state architecture
 
-Status: M9.2C-0 closed; M9.2C planned.
+Status: M9.2C closed; M9.3 planned.
 
 M9 introduces conversation state as the next real WhatsApp capability. The goal
 is to support customers who order across multiple messages while preserving the
@@ -143,18 +143,50 @@ Explicitly excluded:
 
 ### M9.2C - Conversation advancement service
 
-Status: planned.
+Status: closed.
 
-Scope:
+Scope completed:
 
-* Append inbound turn.
-* Render deterministic transcript from canonical turns.
-* Call existing `ParsingService`.
-* Apply deterministic operator-reviewable draft completeness rule.
-* Recover orphan drafts by looking up existing orders by `conversation_id`.
-* Create draft through existing `OrderService.create_draft(...)`.
-* Mark conversation `draft_created`.
-* Return an observable advancement outcome.
+* Added `src/duna_orders/services/conversation_advancement.py` with
+  `ConversationAdvancementService.advance(...)`, the
+  `ConversationAdvancementOutcome` enum (`TURN_APPENDED_INCOMPLETE`,
+  `PARSE_INCOMPLETE`, `DRAFT_CREATED`, `ALREADY_HAS_DRAFT`,
+  `DUPLICATE_MESSAGE`), and `ConversationAdvancementResult`.
+* Routing uses `get_latest_session_for_customer(tenant_id, from_number)`
+  before `get_or_create_open_session(...)`. An `open` latest session is
+  reused; a `draft_created` latest session is reused so post-draft messages
+  attach to it and return `ALREADY_HAS_DRAFT` instead of opening a new
+  session or creating a second draft. Any other future session status raises
+  `NotImplementedError`.
+* Renders a deterministic transcript from canonical conversation turns and
+  calls existing `ParsingService` with it as `raw_message`.
+* Fetches products through `TenantScopedReadService.list_products(tenant_id=...,
+  active_only=True)`.
+* Applies the deterministic completeness rule (at least one item, each item
+  has `product_id` and positive quantity, each `product_id` exists in the
+  tenant-scoped active product list) before draft creation.
+* Recovers orphan drafts via
+  `ConversationOrderLookup.get_order_by_conversation_id(...)` and
+  `mark_draft_created(...)`, including recovery from an `IntegrityError` on
+  the unique non-null `conversation_id` constraint during
+  `OrderService.create_draft(...)`.
+* Creates drafts through existing `OrderService.create_draft(...)` with
+  `request.conversation_id` set, then marks the conversation
+  `draft_created`.
+* Added `tests/test_conversation_advancement.py` (9 tests) and added the new
+  module to the architecture boundary guard.
+
+Explicitly excluded:
+
+* Webhook wiring, UI, bot replies, and outbound changes.
+* `ParserInterface`, parser prompt, and `PROMPT_VERSION` changes.
+* `StorageInterface` signature changes.
+* `OrderService` lifecycle/state transition and confirmation transaction
+  changes.
+* Draft amendment after `draft_created`.
+* Session expiry / new-order boundary policy.
+* Queue/worker/callbacks, payment gate, and inbound media.
+* `live_sheets` was not run.
 
 ### M9.3 - Webhook wiring
 

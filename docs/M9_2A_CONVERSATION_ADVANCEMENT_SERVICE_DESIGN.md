@@ -216,6 +216,9 @@ Explicitly excluded:
 
 ### M9.2C - Advancement service
 
+Status: implemented in `87dcd7f feat(m9): add conversation advancement
+service`.
+
 Scope:
 
 * append inbound turn;
@@ -308,6 +311,17 @@ Draft creation flow:
 9. Create draft with `conversation_id`.
 10. Mark conversation `draft_created`.
 11. Return `DRAFT_CREATED`.
+
+M9.2C implementation note: for `open` sessions, the implemented service runs
+steps 4-6 (the orphan-draft guard) before step 3 (the duplicate-`message_sid`
+check), regardless of whether `append_turn_if_new(...)` reports the inbound
+`message_sid` as new or duplicate. Only if no orphan draft is found (steps 4-6
+do not match) and the `message_sid` was a duplicate does the service return
+`DUPLICATE_MESSAGE`. This ordering is required for the "Acceptable failure
+mode" below: a retried `message_sid` during the crash window (orphan draft
+exists, conversation still `open`) must still be recoverable via
+`mark_draft_created(...)` -> `ALREADY_HAS_DRAFT`, not return
+`DUPLICATE_MESSAGE` indefinitely.
 
 No cross-store transaction is used.
 
