@@ -8,8 +8,8 @@ Detailed completed work belongs in `CHANGELOG.md`. This file only keeps mileston
 
 ## M9 - Conversation state architecture
 
-Status: M9.3A closed; M9.4A closed; M9.4B closed; M9.4C closed; remaining
-M9.4 scope planned.
+Status: M9.3A closed; M9.4A closed; M9.4B closed; M9.4C closed; M9.4D closed;
+remaining M9.4 scope (idle-boundary behavior/design) planned.
 
 M9 introduces conversation state as the next real WhatsApp capability. The goal
 is to support customers who order across multiple messages while preserving the
@@ -235,7 +235,8 @@ Deferred follow-up:
 
 ### M9.4 - Tests and observability hardening
 
-Status: M9.4A closed; M9.4B closed; M9.4C closed; M9.4D planned.
+Status: M9.4A closed; M9.4B closed; M9.4C closed; M9.4D closed; remaining
+M9.4 scope (idle-boundary behavior/design) planned.
 
 Scope:
 
@@ -329,9 +330,70 @@ Explicitly excluded:
 * No `StorageInterface` changes.
 * `live_sheets` was not run.
 
+### M9.4D - Persisted conversation advancement observability
+
+Status: closed.
+
+Scope completed:
+
+* Added migration `11605e30520d`, adding nullable `conversation_sessions`
+  columns `latest_advancement_outcome` and `latest_parse_error_category`.
+* Updated `ConversationSessionRow`, `ConversationSession`, and
+  `_session_from_row` for the two new fields.
+* `ConversationObservationItem` now exposes both fields.
+* Added `record_advancement_attempt(*, tenant_id, conversation_id, outcome,
+  parse_error_category=None) -> ConversationSession` to
+  `ConversationStateStore`/`PostgresConversationStateStore`, outside
+  `StorageInterface`.
+* `record_advancement_attempt(...)` validates `outcome` against
+  `ADVANCEMENT_OUTCOME_VALUES` and `parse_error_category` against
+  `PARSE_ERROR_CATEGORY_VALUES = frozenset({"PARSER_ERROR"})`, uses a
+  tenant-scoped `SELECT ... FOR UPDATE`, increments `version`, updates
+  `updated_at`, and returns the updated `ConversationSession`.
+* `ConversationAdvancementService.advance(...)` now records best-effort
+  observability via the new `_record_outcome(...)` helper after the outcome
+  is decided.
+* `TURN_APPENDED_INCOMPLETE` records `latest_parse_error_category =
+  "PARSER_ERROR"`. `PARSE_INCOMPLETE`, `DRAFT_CREATED`, and
+  `ALREADY_HAS_DRAFT` are recorded with `latest_parse_error_category = None`,
+  clearing any previously recorded category.
+* `DUPLICATE_MESSAGE` is intentionally not recorded; `advance(...)` returns
+  immediately with no call to `record_advancement_attempt(...)` and no
+  session mutation.
+* Implemented in `1b33d8a feat(m9): add conversation advancement
+  observability storage` and `eb4c235 feat(m9): record conversation
+  advancement observability`.
+
+Safety conclusions:
+
+* Observability recording is best-effort telemetry; it never changes the
+  caller-visible `ConversationAdvancementResult`.
+* If `record_advancement_attempt(...)` raises, `_record_outcome(...)` logs
+  `logger.warning(..., exc_info=True)` and returns the original result
+  unchanged; recording failures never raise out of `advance(...)`.
+* `DUPLICATE_MESSAGE` intentionally does not record or mutate session
+  observability.
+* `ALREADY_HAS_DRAFT` is recorded for legitimate new post-draft/recovery
+  paths (orphan-draft recovery, post-`draft_created` follow-up, and
+  create-draft-conflict recovery).
+* Raw parser/LLM error text is never persisted; only the safe `PARSER_ERROR`
+  category is stored.
+* `latest_parse_status` was intentionally not added; only
+  `latest_advancement_outcome` and `latest_parse_error_category` exist.
+
+Explicitly excluded:
+
+* No UI.
+* No outbound replies.
+* No idle/session-expiry behavior.
+* No draft amendment.
+* No `web/inbound.py` cleanup.
+* No parser prompt or `PROMPT_VERSION` changes.
+* No `StorageInterface` changes.
+* `live_sheets` was not run.
+
 Remaining M9.4 scope:
 
-* M9.4D - persisted observability hooks (schema + service wiring).
 * Idle-boundary behavior/design.
 
 ## M8 - WhatsApp conversational ordering and Postgres runtime foundation

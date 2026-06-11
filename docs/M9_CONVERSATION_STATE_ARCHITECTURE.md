@@ -5,7 +5,8 @@ advancement seam refined; M9.2B draft-link persistence implemented; M9.2C-0
 latest-session lookup implemented; M9.2C advancement service implemented;
 M9.3A webhook wiring implemented; M9.4A conversation advancement hardening
 tests implemented; M9.4B observability/read-model design refined; M9.4C
-read-only conversation observation/read-model implemented.
+read-only conversation observation/read-model implemented; M9.4D persisted
+conversation advancement observability implemented.
 
 Baseline: `6bd4c40 docs(outbound): close retry attempt limit`
 
@@ -616,9 +617,67 @@ Explicitly excluded:
 * no `StorageInterface` changes;
 * `live_sheets` not run.
 
+#### M9.4D - Persisted conversation advancement observability
+
+Status: implemented in `1b33d8a feat(m9): add conversation advancement
+observability storage` and `eb4c235 feat(m9): record conversation
+advancement observability`.
+
+Scope completed:
+
+* migration `11605e30520d` adds nullable `conversation_sessions` columns
+  `latest_advancement_outcome` and `latest_parse_error_category`;
+* `ConversationSessionRow`, `ConversationSession`, and `_session_from_row`
+  updated for both fields; `ConversationObservationItem` exposes both;
+* `ADVANCEMENT_OUTCOME_VALUES` and `PARSE_ERROR_CATEGORY_VALUES =
+  frozenset({"PARSER_ERROR"})` defined module-level in
+  `conversation_state.py`, independent of
+  `ConversationAdvancementOutcome`;
+* `record_advancement_attempt(*, tenant_id, conversation_id, outcome,
+  parse_error_category=None) -> ConversationSession` added to
+  `ConversationStateStore` / `PostgresConversationStateStore`, outside
+  `StorageInterface`; uses a tenant-scoped `SELECT ... FOR UPDATE`,
+  validates outcome/category, sets both fields, increments `version`,
+  updates `updated_at`, and returns the refreshed `ConversationSession`;
+* `ConversationAdvancementService.advance(...)` restructured to a single
+  return boundary; `_record_outcome(...)` records best-effort
+  observability via `record_advancement_attempt` for every non-duplicate
+  outcome;
+* outcome -> category mapping: `TURN_APPENDED_INCOMPLETE ->
+  "PARSER_ERROR"`; `PARSE_INCOMPLETE`, `DRAFT_CREATED`, `ALREADY_HAS_DRAFT`
+  -> `None` (category cleared);
+* `ALEMBIC_HEAD_REVISION = "11605e30520d"` updated in
+  `tests/test_smoke_preflight.py`.
+
+Safety conclusions:
+
+* observability is best-effort telemetry: `_record_outcome` never changes
+  the caller-visible `ConversationAdvancementResult`;
+* recording failures are caught, logged via `logger.warning(...,
+  exc_info=True)`, and the original result is returned unchanged;
+* `DUPLICATE_MESSAGE` intentionally is not recorded and does not mutate
+  session observability, preserving the "no session mutation" guarantee
+  from `docs/M9_2A_CONVERSATION_ADVANCEMENT_SERVICE_DESIGN.md` section 6;
+* `ALREADY_HAS_DRAFT` is recorded for orphan-draft recovery,
+  post-`DRAFT_CREATED` follow-up, and create-draft-conflict recovery
+  paths;
+* raw parser/LLM error text is never persisted - only the safe
+  `PARSER_ERROR` category;
+* `latest_parse_status` was intentionally not added.
+
+Explicitly excluded:
+
+* no UI / operator page;
+* no outbound replies;
+* no idle/session-expiry behavior;
+* no draft amendment;
+* no `web/inbound.py` cleanup;
+* no parser prompt or `PROMPT_VERSION` changes;
+* no `StorageInterface` changes;
+* `live_sheets` not run.
+
 Remaining M9.4 work:
 
-* M9.4D - persisted observability hooks (schema + service wiring);
 * idle-boundary behavior/design.
 
 ## 12. What M9 will and will not touch

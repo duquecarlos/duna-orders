@@ -1,6 +1,108 @@
 # Changelog
 ## Unreleased
 
+### M9.4D - Persisted conversation advancement observability
+
+Implemented in `1b33d8a feat(m9): add conversation advancement observability
+storage` and `eb4c235 feat(m9): record conversation advancement
+observability`.
+
+#### Delivered
+
+* Added migration `11605e30520d`, adding nullable `conversation_sessions`
+  columns `latest_advancement_outcome` and `latest_parse_error_category`.
+* Updated `ConversationSessionRow`, `ConversationSession`, and
+  `_session_from_row` for the two new fields.
+* `ConversationObservationItem` (and `_item_from_row`) now expose both
+  fields.
+* Added `record_advancement_attempt(*, tenant_id, conversation_id, outcome,
+  parse_error_category=None) -> ConversationSession` to
+  `ConversationStateStore` and `PostgresConversationStateStore`, outside
+  `StorageInterface`.
+* `record_advancement_attempt(...)` validates `outcome` against
+  `ADVANCEMENT_OUTCOME_VALUES` (the five `ConversationAdvancementOutcome`
+  values, defined independently in `conversation_state.py`) and
+  `parse_error_category` against `PARSE_ERROR_CATEGORY_VALUES =
+  frozenset({"PARSER_ERROR"})`, raising `ValueError` for an unknown
+  outcome/category or an unknown/wrong-tenant `conversation_id`.
+* `record_advancement_attempt(...)` re-selects the session row with a
+  tenant-scoped `SELECT ... FOR UPDATE`, sets both fields, increments
+  `version`, sets `updated_at = utc_now()`, flushes, and returns the updated
+  `ConversationSession`.
+* `ConversationAdvancementService.advance(...)` was restructured to a single
+  return boundary: every branch assigns to a local `result`; if
+  `result.outcome == DUPLICATE_MESSAGE`, `advance(...)` returns immediately
+  without recording; otherwise it computes `parse_error_category =
+  "PARSER_ERROR" if result.outcome == TURN_APPENDED_INCOMPLETE else None` and
+  calls the new `_record_outcome(...)` exactly once.
+* `_record_outcome(...)` wraps `record_advancement_attempt(...)` in
+  try/except, logs `logger.warning(..., exc_info=True)` on any exception, and
+  always returns `result` unchanged.
+* Outcome -> recorded category mapping: `TURN_APPENDED_INCOMPLETE` ->
+  `latest_parse_error_category = "PARSER_ERROR"`; `PARSE_INCOMPLETE`,
+  `DRAFT_CREATED`, `ALREADY_HAS_DRAFT` -> `latest_parse_error_category =
+  None` (clearing any previously recorded category); `DUPLICATE_MESSAGE` ->
+  not recorded at all, with no `version`/`updated_at` mutation.
+* Added 7 tests to `tests/test_conversation_state_store.py` for
+  `record_advancement_attempt(...)`.
+* Added `test_snapshot_exposes_latest_advancement_outcome_and_parse_error_category`
+  to `tests/test_conversation_observation.py`.
+* Updated `test_conversation_sessions_table_is_postgres_only` in
+  `tests/test_postgres_models.py` for the two new columns.
+* Added `_SpyConversationStateStore` and 9 new tests to
+  `tests/test_conversation_advancement.py`, covering: each outcome records
+  the expected `latest_advancement_outcome`/`latest_parse_error_category`;
+  `DUPLICATE_MESSAGE` records nothing; and a `record_advancement_attempt(...)`
+  failure logs a warning and leaves the returned
+  `ConversationAdvancementResult` unchanged.
+* Updated `ALEMBIC_HEAD_REVISION = "11605e30520d"` in
+  `tests/test_smoke_preflight.py`.
+
+#### Safety conclusions
+
+* Observability recording is best-effort telemetry: it runs after the
+  advancement outcome is already decided and never changes the
+  caller-visible `ConversationAdvancementResult`.
+* If `record_advancement_attempt(...)` raises for any reason,
+  `_record_outcome(...)` logs a warning with `exc_info=True` and returns the
+  original result unchanged; `advance(...)` does not raise and does not
+  change its outcome because of a recording failure.
+* `DUPLICATE_MESSAGE` intentionally does not call
+  `record_advancement_attempt(...)` and does not mutate session
+  observability, `version`, or `updated_at`, preserving the "no session
+  mutation" guarantee from
+  `docs/M9_2A_CONVERSATION_ADVANCEMENT_SERVICE_DESIGN.md`.
+* `ALREADY_HAS_DRAFT` is recorded for legitimate new post-draft/recovery
+  paths (orphan-draft recovery, post-`draft_created` follow-up, and
+  create-draft-conflict recovery), all reached through the single return
+  boundary in `advance(...)`.
+* Raw parser/LLM error text is never persisted; only the safe
+  `PARSER_ERROR` category from `PARSE_ERROR_CATEGORY_VALUES` is stored.
+* `latest_parse_status` was intentionally not added; only
+  `latest_advancement_outcome` and `latest_parse_error_category` exist on
+  `conversation_sessions`.
+
+#### Excluded
+
+* No UI.
+* No outbound replies.
+* No idle/session-expiry behavior.
+* No draft amendment.
+* No `web/inbound.py` cleanup.
+* No parser prompt or `PROMPT_VERSION` changes.
+* No `StorageInterface` changes.
+* `live_sheets` was not run.
+
+#### Verification
+
+* `alembic heads` -> `11605e30520d (head)`.
+* `alembic upgrade head` succeeded.
+* `pytest -q` -> `602 passed, 30 deselected`.
+* `ruff check src tests pages` -> all checks passed.
+* `python -m compileall src tests pages` -> passed.
+* `git diff --check` -> passed.
+* `git status --short` -> clean.
+
 ### M9.4C - Conversation observation read-model
 
 Implemented in `bc2de4a feat(m9): add conversation observation read model`.
