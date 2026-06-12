@@ -18,6 +18,9 @@ from duna_orders.services.inbound_draft_review import InboundDraftReviewService
 from duna_orders.services.parsing import ParsingService
 from duna_orders.services.tenant_scoped_reads import TenantScopedReadService
 from duna_orders.storage.base import StorageInterface
+from duna_orders.storage.conversation_observation import (
+    PostgresConversationObservationReads,
+)
 from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.storage.sheets import GoogleSheetsStorage
 from duna_orders.storage.outbound_messages import (
@@ -65,6 +68,15 @@ def get_inbound_draft_review_service(
         storage=storage,
         processed_message_store=PostgresProcessedMessageStore(storage._session_factory),
     )
+
+
+def get_conversation_observation_reads(
+    storage: StorageInterface,
+) -> PostgresConversationObservationReads | None:
+    if not isinstance(storage, PostgresStorage):
+        return None
+
+    return PostgresConversationObservationReads(storage._session_factory)
 
 
 def get_outbound_acknowledgement_service(

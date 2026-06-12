@@ -8,6 +8,9 @@ from duna_orders.services.outbound_acknowledgement import (
 from duna_orders.services.orders import OrderService
 from duna_orders.services.parsing import ParsingService
 from duna_orders.storage.base import StorageInterface
+from duna_orders.storage.conversation_observation import (
+    PostgresConversationObservationReads,
+)
 from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.ui import setup
 import pytest
@@ -156,6 +159,28 @@ def test_get_order_service_injects_lifecycle_store_for_postgres_storage(
     assert isinstance(storage, PostgresStorage)
     assert service._storage is storage
     assert isinstance(service._lifecycle_store, PostgresOrderLifecycleStore)
+
+
+def test_get_conversation_observation_reads_returns_none_for_non_postgres_storage() -> None:
+    reads = setup.get_conversation_observation_reads(InMemoryStorage())
+
+    assert reads is None
+
+
+def test_get_conversation_observation_reads_returns_reads_for_postgres_storage(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(setup.settings, "duna_storage_backend", "postgres")
+    monkeypatch.setattr(
+        setup.settings, "database_url", "sqlite:///ui-conversation-observation-test.db"
+    )
+
+    storage = setup.get_storage()
+    reads = setup.get_conversation_observation_reads(storage)
+
+    assert isinstance(storage, PostgresStorage)
+    assert isinstance(reads, PostgresConversationObservationReads)
+    assert reads._session_factory is storage._session_factory
 
 
 def test_get_outbound_acknowledgement_service_returns_unavailable_when_disabled(

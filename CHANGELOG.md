@@ -1,6 +1,59 @@
 # Changelog
 ## Unreleased
 
+### M9.5A - Operator conversation visibility (read-only session list)
+
+Implemented.
+
+#### Delivered
+
+* Added a read-only Streamlit operator page, `pages/6_Conversations.py`,
+  listing recent conversation sessions for the active tenant.
+* The page is pure presentation: it uses the existing tenant-scoped
+  `PostgresConversationObservationReads.get_conversation_observation_snapshot(...)`
+  read model. No `StorageInterface` change, no new storage method, and no
+  migration.
+* Added `get_conversation_observation_reads(storage)` to
+  `src/duna_orders/ui/setup.py`, returning
+  `PostgresConversationObservationReads | None` and mirroring the
+  Postgres-only pattern used by `get_inbound_draft_review_service`.
+* Added `src/duna_orders/ui/conversations.py`: NULL-safe row rendering,
+  status labeling, and filters for status, customer phone, latest
+  advancement outcome, latest parse-error category, and recent activity
+  (time window).
+* A session with `status="open"` and `is_idle=True` renders with a distinct
+  "Open - observed idle (not expired)" label plus explanatory copy that
+  idle is an observed, read-time signal, not a persisted expiry - consistent
+  with M9.4E (runtime idle expiry remains deferred and runtime never writes
+  `status="expired"`).
+
+#### Guards
+
+* Added `pages/6_Conversations.py` to `ENFORCED_RUNTIME_READ_MODULES` in
+  `tests/test_architecture_boundaries.py`.
+* Added `READ_ONLY_RUNTIME_PAGES` and
+  `test_read_only_runtime_pages_do_not_use_mutation_apis`, an AST guard
+  ensuring the page does not import or call mutation APIs
+  (`mark_draft_created`, `record_advancement_attempt`,
+  `review_inbound_draft`, `create_draft`, `append_turn_if_new`,
+  `get_or_create_open_session`, order-status mutators, `list_turns`, etc.).
+
+#### Excluded
+
+* No session detail view and no per-turn rendering / `list_turns`.
+* No draft amendment, approve/reject changes, outbound WhatsApp replies,
+  Twilio callbacks, queue/worker, or payment logic.
+* No runtime idle-expiry behavior change (remains deferred from M9.4E).
+
+#### Verification
+
+* `pytest -q` -> 623 passed, 30 deselected, 1 xfailed.
+* `ruff check src tests pages` -> all checks passed.
+* `python -m compileall src tests pages` -> passed.
+* `alembic heads` -> `11605e30520d (head)`; `git diff -- alembic/versions`
+  -> empty; no migration added.
+* `git diff --check` -> passed.
+
 ### M9.4E - Idle-boundary design and deferral
 
 Documented. Runtime idle-boundary expiry is deferred.

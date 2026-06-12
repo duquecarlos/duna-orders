@@ -452,6 +452,52 @@ conversation advancement"):
 
 Remaining M9.4 scope: none. M9.4 is closed.
 
+## M9.5 - Operator conversation visibility
+
+Status: M9.5A closed (read-only session list). M9.5B (session detail / turn
+view) not yet planned in detail.
+
+M9.5 adds operator-facing visibility into conversation sessions, building on
+the M9.4C/M9.4D observation read model. M9.4E's idle-boundary deferral still
+applies: runtime never writes `status="expired"`, so `status="open"` with
+observed idle activity is a real, presentable state rather than a lifecycle
+state.
+
+### M9.5A - Operator conversation visibility (read-only session list)
+
+Status: closed.
+
+Scope completed:
+
+* Added a read-only Streamlit page, `pages/6_Conversations.py`, listing
+  recent conversation sessions for the active tenant via the existing
+  tenant-scoped
+  `PostgresConversationObservationReads.get_conversation_observation_snapshot(...)`
+  read model. Pure presentation: no `StorageInterface` change, no new
+  storage method, no migration.
+* Postgres-only guarded, via `get_conversation_observation_reads(storage)`
+  mirroring the `get_inbound_draft_review_service` pattern.
+* Filters: status, customer phone/search, latest advancement outcome,
+  latest parse-error category, and recent activity (time window).
+* `status="open"` with `is_idle=True` is rendered as "Open - observed idle
+  (not expired)", distinct from plain "Open", with explanatory copy that
+  idle is an observed read-time signal and not a persisted expiry -
+  consistent with M9.4E's deferral.
+* Added an AST read-only guard (`READ_ONLY_RUNTIME_PAGES` and
+  `test_read_only_runtime_pages_do_not_use_mutation_apis`) so the page
+  cannot import or call mutation APIs.
+
+Explicitly excluded:
+
+* No session detail view and no ordered turn rendering / `list_turns`.
+* No draft amendment, approve/reject changes, outbound WhatsApp replies,
+  Twilio callbacks, queue/worker, or payment logic.
+* No runtime idle-expiry behavior (remains deferred from M9.4E).
+
+Deferred to M9.5B:
+
+* Session detail view / per-turn (ordered transcript) rendering.
+
 ## M8 - WhatsApp conversational ordering and Postgres runtime foundation
 
 Status: in progress.
