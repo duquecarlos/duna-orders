@@ -536,6 +536,48 @@ Explicitly excluded:
   approve/reject, outbound, payment, queue/worker, or Twilio callbacks.
 * No runtime idle-expiry behavior (remains deferred from M9.4E).
 
+## M9.6 - Lifecycle-spanning per-customer unit of work for conversation advancement
+
+Status: M9.6A closed (design only).
+
+M9.6 delivers the prerequisite identified in
+`docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` section 4: a lifecycle-spanning,
+per-customer unit of work for `ConversationAdvancementService.advance(...)`,
+needed before any mutating conversation feature (runtime idle expiry, draft
+amendment, outbound replies, payment/confirmation) can be designed safely.
+
+### M9.6A - Conversation advancement unit-of-work design
+
+Status: closed (design only).
+
+Scope completed:
+
+* Added `docs/M9_6_CONVERSATION_UOW_DESIGN.md`, documenting current runtime
+  facts (one `Session`/transaction per store method via `session_scope`, no
+  shared-session seam, no unit-of-work abstraction, `advance(...)` spans many
+  independent transactions, parser/LLM call already outside any transaction),
+  the serialization key concept `conversation_customer_key(tenant_id,
+  customer_phone)`, required invariants, and four strategies considered.
+* Recommended strategy: a durable per-customer claim/lock row with lease
+  semantics, short DB transactions for each lifecycle step, and a post-parse
+  short critical section with revalidation as a defense-in-depth final step
+  before committing draft/session outcomes.
+* Documented a future `advance(...)` integration sequence (duplicate
+  `MessageSid` gate first and outside the claim; claim acquisition before
+  routing; parser outside any DB transaction but inside the logical claim;
+  revalidation after parsing; commit; record outcome; release claim), a
+  future `conversation_customer_claims`-style schema concept (no migration),
+  how runtime idle expiry becomes the first consumer and closes the M9.4E
+  xfail, retry/error/lease semantics, an M9.7 conformance checklist, and
+  future acceptance tests.
+
+Explicitly excluded:
+
+* No runtime implementation, no migration, no `StorageInterface` change, no
+  advisory-lock validation spike, no tests added.
+* No draft amendment, outbound replies, payment flow, or parser prompt
+  change.
+
 ## M8 - WhatsApp conversational ordering and Postgres runtime foundation
 
 Status: in progress.

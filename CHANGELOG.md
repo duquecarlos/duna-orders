@@ -1,6 +1,60 @@
 # Changelog
 ## Unreleased
 
+### M9.6A - Conversation advancement unit-of-work design
+
+Documented. Design only; no runtime/migration/StorageInterface changes.
+
+#### Delivered
+
+* Added `docs/M9_6_CONVERSATION_UOW_DESIGN.md`, the design for a
+  lifecycle-spanning, per-customer unit of work for
+  `ConversationAdvancementService.advance(...)`, addressing the future
+  prerequisite identified in `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` section 4.
+* Documented the current runtime facts confirmed by the M9.6 pre-flight:
+  `session_scope(...)` opens/commits/closes one `Session` per store method
+  call, no shared-session seam or unit-of-work abstraction exists,
+  `advance(...)` spans many independent transactions, and the parser/LLM
+  call already sits outside any DB transaction.
+* Defined the primary serialization key,
+  `conversation_customer_key(tenant_id, customer_phone)` (concept only, no
+  helper added), and documented why `conversation_id` is the wrong key (it
+  is the contested resource, not the lock), why `tenant_id + customer_id`
+  is the future cleaner key, and the phone-normalization risk between
+  `conversation_sessions.customer_phone` (raw `from_number`) and
+  `OrderService.create_draft`'s `normalize_customer_phone(...)`.
+* Compared four strategies (shared session/session-scoped advisory lock,
+  transaction-scoped advisory lock per store method, post-parse
+  revalidation, durable per-customer claim/lock row with lease semantics)
+  and recommended the durable claim-row strategy with post-parse
+  revalidation as a defense-in-depth final step.
+* Documented a future `advance(...)` integration sequence, a future
+  `conversation_customer_claims`-style schema concept (no migration), how
+  runtime idle expiry becomes the first consumer and closes the M9.4E
+  xfail, retry/error/lease semantics, a conformance checklist for M9.7,
+  and future acceptance tests.
+
+#### Excluded
+
+* No runtime implementation, no advisory-lock validation spike.
+* No migration; no `conversation_customer_claims`/`conversation_customer_locks`
+  table added.
+* No `StorageInterface` change.
+* No draft amendment, outbound replies, payment flow, or parser prompt
+  change.
+* No tests added.
+* `live_sheets` was not run.
+
+#### Verification
+
+* `git diff --stat` -> `CHANGELOG.md`, `ROADMAP.md`, and
+  `docs/M9_6_CONVERSATION_UOW_DESIGN.md` only.
+* `git diff --check` -> passed (only benign LF/CRLF warnings).
+* `python -m compileall src tests pages` -> passed.
+* `pytest tests/test_conversation_state_store.py -q` -> 29 passed,
+  4 deselected, 1 xfailed.
+* `alembic heads` -> `11605e30520d (head)`; no migration added.
+
 ### M9.5B - Operator conversation session detail (read-only ordered turns)
 
 Implemented.
