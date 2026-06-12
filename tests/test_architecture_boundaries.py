@@ -87,6 +87,25 @@ BROAD_STORAGE_RECEIVERS = frozenset(
     }
 )
 
+CLAIM_STORE_MODULE = "duna_orders.storage.conversation_customer_claims"
+
+FORBIDDEN_CLAIM_STORE_IMPORT_NAMES = frozenset(
+    {
+        "PostgresConversationCustomerClaimStore",
+        "ConversationCustomerClaimStore",
+        "normalize_customer_claim_key",
+    }
+)
+
+CLAIM_STORE_SCAN_ROOTS = frozenset(
+    {
+        Path("src/duna_orders/services"),
+        Path("src/duna_orders/web"),
+        Path("src/duna_orders/ui"),
+        Path("pages"),
+    }
+)
+
 
 def test_stage1_runtime_read_modules_are_all_guarded() -> None:
     assert KNOWN_STAGE1_RUNTIME_READ_MODULES <= ENFORCED_RUNTIME_READ_MODULES
@@ -160,5 +179,42 @@ def test_read_only_runtime_pages_do_not_use_mutation_apis() -> None:
                         violations.append(
                             f"{relative_path}:{node.lineno} imports {alias.name}"
                         )
+
+    assert violations == []
+
+
+def test_no_runtime_module_imports_conversation_customer_claim_store() -> None:
+    """M9.6C's customer-claim store is unwired - only its own tests may import it."""
+    violations: list[str] = []
+
+    for root in sorted(CLAIM_STORE_SCAN_ROOTS):
+        root_path = REPO_ROOT / root
+
+        if not root_path.exists():
+            continue
+
+        for module_path in sorted(root_path.rglob("*.py")):
+            relative_path = module_path.relative_to(REPO_ROOT)
+            tree = ast.parse(module_path.read_text(encoding="utf-8"))
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    if node.module == CLAIM_STORE_MODULE:
+                        violations.append(
+                            f"{relative_path}:{node.lineno} imports from {CLAIM_STORE_MODULE}"
+                        )
+
+                    for alias in node.names:
+                        if alias.name in FORBIDDEN_CLAIM_STORE_IMPORT_NAMES:
+                            violations.append(
+                                f"{relative_path}:{node.lineno} imports {alias.name}"
+                            )
+
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == CLAIM_STORE_MODULE:
+                            violations.append(
+                                f"{relative_path}:{node.lineno} imports {CLAIM_STORE_MODULE}"
+                            )
 
     assert violations == []

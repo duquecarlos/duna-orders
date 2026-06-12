@@ -538,7 +538,9 @@ Explicitly excluded:
 
 ## M9.6 - Lifecycle-spanning per-customer unit of work for conversation advancement
 
-Status: M9.6A closed (design only); M9.6B closed (validation spike only).
+Status: M9.6A closed (design only); M9.6B closed (validation spike only);
+M9.6C closed (production store foundation, unwired). M9.6D (runtime wiring)
+deferred.
 
 M9.6 delivers the prerequisite identified in
 `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` section 4: a lifecycle-spanning,
@@ -617,6 +619,68 @@ Explicitly excluded:
 * No wiring into `ConversationAdvancementService.advance(...)`.
 * No webhook, draft amendment, idle expiry, outbound, payment, or parser
   changes.
+
+### M9.6C - Production customer-claim store foundation
+
+Status: closed (production store foundation, unwired).
+
+Scope completed:
+
+* Added migration `5eb2de4cca12` (`down_revision = 11605e30520d`) creating
+  `conversation_customer_claims` (`tenant_id`, `customer_key`, `holder_id`,
+  `acquired_at`, `lease_expires_at`, `updated_at`, composite primary key
+  `(tenant_id, customer_key)`); added `ConversationCustomerClaimRow` to
+  `postgres_models.py` and `CONVERSATION_CUSTOMER_CLAIMS_TAB` to
+  `schema.py`. `ALEMBIC_HEAD_REVISION` in `tests/test_smoke_preflight.py`
+  updated to `5eb2de4cca12`.
+* Added `src/duna_orders/storage/conversation_customer_claims.py`: Protocol
+  `ConversationCustomerClaimStore`, `PostgresConversationCustomerClaimStore`
+  (narrow store outside `StorageInterface`, `session_factory`-constructed,
+  same pattern as `ConversationOrderLookup`/`OutboundAcknowledgementStore`),
+  pure helper `normalize_customer_claim_key(tenant_id, customer_phone)`
+  (delegates to `normalize_customer_phone`, does not embed `tenant_id` in
+  the result), and `DEFAULT_CLAIM_LEASE_DURATION = timedelta(seconds=60)`.
+* `try_acquire`/`renew` use a single atomic SQL statement each
+  (`INSERT ... ON CONFLICT (tenant_id, customer_key) DO UPDATE ... WHERE
+  lease_expires_at <= now() RETURNING holder_id` and
+  `UPDATE ... SET lease_expires_at = now() + :lease_duration, updated_at =
+  now() WHERE ... AND holder_id = :holder_id RETURNING holder_id`,
+  respectively), both using the DB clock (`now()`), not app time.
+  `release` is `DELETE ... WHERE ... AND holder_id = :holder_id RETURNING
+  holder_id`. No select-then-update.
+* Added `tests/test_conversation_customer_claim_store.py`: pure
+  `normalize_customer_claim_key` tests plus `live_postgres` tests against
+  the real `conversation_customer_claims` table covering acquire-when-
+  missing, acquire-blocked-by-live-lease, expired-lease takeover,
+  release/renew holder-mismatch rejection, renew-extends-lease,
+  same-customer serialization (`threading.Event`-coordinated) and
+  different-customer independence, and no-held-connection during a
+  simulated parser delay.
+* Added an architecture-guard test
+  (`test_no_runtime_module_imports_conversation_customer_claim_store` in
+  `tests/test_architecture_boundaries.py`) asserting no module under
+  `src/duna_orders/services/`, `src/duna_orders/web/`, `src/duna_orders/ui/`,
+  or `pages/` imports the claim store module or its exported names.
+* Documented the production store in `docs/M9_6_CONVERSATION_UOW_DESIGN.md`
+  section 15.
+
+Explicitly excluded:
+
+* No `StorageInterface` change; no `storage/factory.py`,
+  `web/app.py`, or `ui/setup.py` change.
+* No wiring into `ConversationAdvancementService.advance(...)`.
+* No webhook, UI, parser, idle expiry, draft amendment, outbound, or payment
+  changes.
+
+### M9.6D - Runtime wiring (deferred)
+
+Status: not started.
+
+M9.6D will wire `try_acquire`/`renew`/`release` into
+`ConversationAdvancementService.advance(...)` per the sequence sketched in
+`docs/M9_6_CONVERSATION_UOW_DESIGN.md` section 8, and is the point at which
+`DEFAULT_CLAIM_LEASE_DURATION` should be revisited against real pilot
+parse-latency data.
 
 ## M8 - WhatsApp conversational ordering and Postgres runtime foundation
 

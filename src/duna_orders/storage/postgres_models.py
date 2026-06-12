@@ -31,6 +31,7 @@ from duna_orders.storage.schema import (
     PROCESSED_MESSAGES_TAB,
     CONVERSATION_SESSIONS_TAB,
     CONVERSATION_TURNS_TAB,
+    CONVERSATION_CUSTOMER_CLAIMS_TAB,
 )
 
 
@@ -432,3 +433,14 @@ class ConversationTurnRow(Base):
             "sequence_number",
         ),
     )
+
+
+class ConversationCustomerClaimRow(Base):
+    __tablename__ = CONVERSATION_CUSTOMER_CLAIMS_TAB
+
+    tenant_id: Mapped[str] = mapped_column(String(TENANT_ID_LENGTH), primary_key=True)
+    customer_key: Mapped[str] = mapped_column(String(PHONE_LENGTH), primary_key=True)
+    holder_id: Mapped[str] = mapped_column(String(ID_LENGTH), nullable=False)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

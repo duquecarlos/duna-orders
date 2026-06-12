@@ -831,3 +831,70 @@ live_postgres`. This validates the primitive recommended in sections 6 and
 7 against real Postgres behavior; it does not implement, migrate, or wire
 the primitive into `advance(...)` - that remains M9.7+ scope per section
 11's conformance checklist.
+
+## 15. M9.6C production store foundation
+
+M9.6C adds the production persistence and narrow Postgres store for the
+primitive validated in M9.6B, following the same Protocol +
+`Postgres*` pattern as `ConversationStateStore` /
+`ConversationOrderLookup` / `OutboundAcknowledgementStore`. Like those
+stores, it lives outside `StorageInterface` and is constructed directly
+from a `session_factory` - it is **not** built by `factory.build_storage`.
+
+* **Table**: `conversation_customer_claims` (Alembic-managed, part of
+  `Base.metadata`, migration `5eb2de4cca12`, `down_revision =
+  11605e30520d`). Columns: `tenant_id`, `customer_key`, `holder_id`,
+  `acquired_at`, `lease_expires_at`, `updated_at` - the same shape sketched
+  in section 7, minus the optional `last_error`/`metadata` columns (not
+  needed at this stage).
+* **Composite primary key**: `(tenant_id, customer_key)`, matching the
+  `UNIQUE (tenant_id, customer_key)` constraint described in section 7 - a
+  separate unique constraint is unnecessary because the primary key already
+  enforces it.
+* **Key derivation**: `customer_key` is the value of
+  `normalize_customer_claim_key(tenant_id, customer_phone)`
+  (`src/duna_orders/storage/conversation_customer_claims.py`), which
+  delegates to the existing `normalize_customer_phone(...)` helper
+  (`src/duna_orders/domain/phone.py`). `tenant_id` remains a separate claim-
+  row column and is accepted by the helper only as a future migration seam
+  (e.g. if the key needs to become tenant-aware later); it is never embedded
+  in the returned `customer_key`.
+* **DB clock for lease correctness**: `try_acquire` and `renew` use
+  Postgres `now()` for `acquired_at`, `lease_expires_at`,
+  `updated_at`, and the expiry comparison - not app-provided time. This
+  avoids relying on multiple app-server clocks agreeing for a cross-process
+  lease primitive (a deviation from this milestone's spike, which used
+  app-provided `now` for convenience in a single-process test).
+* **`try_acquire`**: a single atomic
+  `INSERT ... ON CONFLICT (tenant_id, customer_key) DO UPDATE ... WHERE
+  conversation_customer_claims.lease_expires_at <= now() RETURNING
+  holder_id` statement, same shape as the M9.6B spike's `acquire_claim(...)`
+  with `:now` replaced by `now()` and `lease_expires_at` computed as
+  `now() + :lease_duration` (an `INTERVAL` bound from a Python `timedelta`).
+  Never select-then-update.
+* **`release`/`renew`**: both require `holder_id` to match the current row
+  (`DELETE ... WHERE ... AND holder_id = :holder_id RETURNING holder_id` and
+  `UPDATE ... SET lease_expires_at = now() + :lease_duration, updated_at =
+  now() WHERE ... AND holder_id = :holder_id RETURNING holder_id`,
+  respectively); a holder mismatch returns `False` without touching the row.
+  `renew` does not check expiry - the current holder may renew even with a
+  near-expired lease, but if the lease already expired *and* another holder
+  reclaimed it via `try_acquire`, the original holder's `renew` now mismatches
+  and returns `False`.
+* **Default lease duration**: `DEFAULT_CLAIM_LEASE_DURATION = timedelta(seconds=60)`
+  in `conversation_customer_claims.py`. 60 seconds is a conservative
+  starting point intended to comfortably cover one parser/LLM call plus the
+  surrounding `advance()` work under normal conditions; it is **tunable
+  pending pilot parse-latency data** once M9.6D wires real acquire/renew
+  calls into `advance(...)`.
+* **Intentionally unwired**: no change to `StorageInterface`,
+  `storage/factory.py`, `web/app.py`, or `ui/setup.py`. An architecture-guard
+  test (`tests/test_architecture_boundaries.py`) asserts that no module under
+  `src/duna_orders/services/`, `src/duna_orders/web/`, `src/duna_orders/ui/`,
+  or `pages/` imports `duna_orders.storage.conversation_customer_claims` or
+  its exported names - only the store's own tests
+  (`tests/test_conversation_customer_claim_store.py`) may import it.
+* **M9.6D (future)**: wire `try_acquire`/`renew`/`release` into
+  `advance(...)` per the sequence sketched in section 8 (acquire the
+  customer claim before opening/appending the session, hold it across the
+  parser call without an open DB transaction, release on every exit path).

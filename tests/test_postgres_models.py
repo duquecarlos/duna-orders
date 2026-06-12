@@ -23,6 +23,7 @@ POSTGRES_ONLY_TABLES = {
     "outbound_messages",
     "conversation_sessions",
     "conversation_turns",
+    "conversation_customer_claims",
 }
 PRIMARY_ID_COLUMNS = {
     PRODUCTS_TAB: "product_id",

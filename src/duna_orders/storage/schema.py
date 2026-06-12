@@ -9,6 +9,7 @@ ORDER_STATUS_TRANSITIONS_TAB = "order_status_transitions"
 OUTBOUND_MESSAGES_TAB = "outbound_messages"
 CONVERSATION_SESSIONS_TAB = "conversation_sessions"
 CONVERSATION_TURNS_TAB = "conversation_turns"
+CONVERSATION_CUSTOMER_CLAIMS_TAB = "conversation_customer_claims"
 
 ORDER_STATUSES = (
     "draft",

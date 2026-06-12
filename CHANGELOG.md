@@ -1,6 +1,92 @@
 # Changelog
 ## Unreleased
 
+### M9.6C - Production customer-claim store foundation
+
+Closed. Foundation only; unwired from runtime.
+
+#### Delivered
+
+* Added `CONVERSATION_CUSTOMER_CLAIMS_TAB = "conversation_customer_claims"` to
+  `src/duna_orders/storage/schema.py` and a corresponding
+  `ConversationCustomerClaimRow` ORM model to
+  `src/duna_orders/storage/postgres_models.py` (`tenant_id`, `customer_key`
+  composite primary key; `holder_id`, `acquired_at`, `lease_expires_at`,
+  `updated_at`).
+* Added migration `5eb2de4cca12_add_conversation_customer_claims.py`
+  (`down_revision = 11605e30520d`, new Alembic head) creating
+  `conversation_customer_claims` with composite primary key
+  `(tenant_id, customer_key)`; `downgrade()` drops the table. Updated
+  `ALEMBIC_HEAD_REVISION` in `tests/test_smoke_preflight.py` to
+  `5eb2de4cca12`.
+* Added `src/duna_orders/storage/conversation_customer_claims.py`: pure
+  helper `normalize_customer_claim_key(tenant_id, customer_phone) -> str`
+  (delegates to `normalize_customer_phone`; `tenant_id` validated but not
+  embedded in the result - a future migration seam), module constant
+  `DEFAULT_CLAIM_LEASE_DURATION = timedelta(seconds=60)`, Protocol
+  `ConversationCustomerClaimStore`, and
+  `PostgresConversationCustomerClaimStore(session_factory)` (narrow store
+  outside `StorageInterface`, same construction pattern as
+  `ConversationOrderLookup`/`OutboundAcknowledgementStore`).
+* `try_acquire`/`release`/`renew` are each a single atomic SQL statement
+  executed via `session_scope(...)`, using the database clock (`now()`),
+  not app time: `try_acquire` is
+  `INSERT ... ON CONFLICT (tenant_id, customer_key) DO UPDATE ... WHERE
+  conversation_customer_claims.lease_expires_at <= now() RETURNING
+  holder_id`; `release` is `DELETE ... WHERE tenant_id = :tenant_id AND
+  customer_key = :customer_key AND holder_id = :holder_id RETURNING
+  holder_id`; `renew` is `UPDATE ... SET lease_expires_at = now() +
+  :lease_duration, updated_at = now() WHERE ... AND holder_id =
+  :holder_id RETURNING holder_id`. No select-then-update.
+* Added `tests/test_conversation_customer_claim_store.py`: 4 pure tests for
+  `normalize_customer_claim_key` (deterministic, equivalent phone formats
+  collapse to the same key, different phones differ, `tenant_id` not
+  embedded) and 9 `live_postgres` tests against the real
+  `conversation_customer_claims` table covering: acquire when no claim
+  exists, acquire blocked by a live lease, expired-lease takeover (and the
+  stale holder's subsequent `renew` returning `False`), `release` succeeding
+  only for the matching holder and returning `False` on mismatch, `renew`
+  extending the lease for the matching holder and returning `False` on
+  mismatch, same-customer concurrency serializing deterministically via
+  `threading.Event`, different customers not blocking each other, and no
+  held DB connection across a simulated parser delay.
+* Added `test_no_runtime_module_imports_conversation_customer_claim_store` to
+  `tests/test_architecture_boundaries.py`: an AST-walk guard over
+  `src/duna_orders/services/`, `src/duna_orders/web/`,
+  `src/duna_orders/ui/`, and `pages/` that fails if any of those modules
+  imports `duna_orders.storage.conversation_customer_claims` or its
+  `PostgresConversationCustomerClaimStore` / `ConversationCustomerClaimStore`
+  / `normalize_customer_claim_key` symbols.
+* Updated `tests/test_postgres_models.py`'s `POSTGRES_ONLY_TABLES` to include
+  `conversation_customer_claims` (Alembic-managed, not part of the
+  Google-Sheets-era `TABS`).
+* Documented the production store foundation in
+  `docs/M9_6_CONVERSATION_UOW_DESIGN.md` section 15.
+
+#### Excluded
+
+* No wiring into `ConversationAdvancementService.advance(...)`.
+* No webhook, UI, parser, idle expiry, draft amendment, outbound, or payment
+  changes.
+* No `StorageInterface` change; no `storage/factory.py`, `web/app.py`, or
+  `ui/setup.py` change. The store is constructed directly via
+  `PostgresConversationCustomerClaimStore(session_factory)`.
+* `conversation_customer_claims` is not imported by any runtime module
+  (enforced by the new architecture guard) - only its own tests use it.
+
+#### Verification
+
+* `pytest tests/test_conversation_customer_claim_store.py -q -m
+  live_postgres` -> `9 passed, 4 deselected`.
+* `pytest -q` -> `650 passed, 43 deselected, 1 xfailed`.
+* `ruff check src tests pages` -> all checks passed.
+* `python -m compileall src tests pages` -> passed.
+* `git diff --check` -> passed.
+* `alembic heads` -> `5eb2de4cca12 (head)`.
+* Migration round trip: `alembic upgrade head` -> `alembic downgrade -1`
+  (drops `conversation_customer_claims`) -> `alembic upgrade head`
+  (recreates it) - clean, no errors.
+
 ### M9.6B - Customer-claim validation spike
 
 Validated. Spike only; no runtime/migration/StorageInterface changes.
