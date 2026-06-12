@@ -454,8 +454,8 @@ Remaining M9.4 scope: none. M9.4 is closed.
 
 ## M9.5 - Operator conversation visibility
 
-Status: M9.5A closed (read-only session list). M9.5B (session detail / turn
-view) not yet planned in detail.
+Status: M9.5A closed (read-only session list). M9.5B closed (read-only
+session detail / ordered turns drill-down).
 
 M9.5 adds operator-facing visibility into conversation sessions, building on
 the M9.4C/M9.4D observation read model. M9.4E's idle-boundary deferral still
@@ -494,9 +494,47 @@ Explicitly excluded:
   Twilio callbacks, queue/worker, or payment logic.
 * No runtime idle-expiry behavior (remains deferred from M9.4E).
 
-Deferred to M9.5B:
+Delivered in M9.5B:
 
-* Session detail view / per-turn (ordered transcript) rendering.
+* Session detail view / ordered per-turn (transcript) rendering - see
+  M9.5B below.
+
+### M9.5B - Operator conversation session detail (read-only ordered turns)
+
+Status: closed.
+
+Scope completed:
+
+* Added a tenant-scoped observation detail read,
+  `PostgresConversationObservationReads.get_conversation_observation_detail(
+  *, tenant_id, conversation_id, now, idle_threshold)`, plus
+  `ConversationTurnObservationItem` and `ConversationObservationDetail`
+  DTOs, sibling to `get_conversation_observation_snapshot`. Scoped by
+  `tenant_id` AND `conversation_id`; a wrong-tenant or unknown
+  `conversation_id` returns `None` and never exposes turns. No
+  `StorageInterface` change, no migration.
+* Extended `pages/6_Conversations.py` with a read-only "Session detail"
+  view: a session selector, session metadata, and ordered turn previews
+  (body preview only, capped via `LATEST_BODY_PREVIEW_LENGTH`). The page
+  consumes `get_conversation_observation_detail` only - no `list_turns`,
+  no raw query, no storage shortcut.
+* `status="open"` with `is_idle=True` keeps the M9.5A distinct "Open -
+  observed idle (not expired)" label, consistent with M9.4E's deferral.
+* Missing `message_sid`/`from_number`, NULL session metadata, and
+  zero-turn sessions all render gracefully; a `None` detail read (e.g.
+  wrong tenant) renders a safe "session not found" message.
+* Added an AST guard
+  (`test_conversation_detail_pages_use_observation_detail_read_not_list_turns`)
+  asserting the page calls `get_conversation_observation_detail` and never
+  `list_turns`.
+
+Explicitly excluded:
+
+* No full customer message body rendering (preview only), no turn
+  annotation/notes.
+* No re-parse, re-run advancement, expire action, draft amendment,
+  approve/reject, outbound, payment, queue/worker, or Twilio callbacks.
+* No runtime idle-expiry behavior (remains deferred from M9.4E).
 
 ## M8 - WhatsApp conversational ordering and Postgres runtime foundation
 

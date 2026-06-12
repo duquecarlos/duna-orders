@@ -5,6 +5,7 @@ from pathlib import Path
 
 from duna_orders.storage.conversation_observation import (
     ConversationObservationItem,
+    ConversationTurnObservationItem,
     PostgresConversationObservationReads,
 )
 from duna_orders.storage.conversation_state import PostgresConversationStateStore
@@ -17,11 +18,15 @@ from duna_orders.ui.conversations import (
     STATUS_FILTER_ALL,
     STATUS_LABELS,
     advancement_outcome_filter_options,
+    conversation_detail_metadata_row,
+    conversation_option_label,
     conversation_row,
     conversation_status_label,
     matches_filters,
     parse_error_category_filter_options,
     status_filter_options,
+    turn_preview_row,
+    turn_preview_rows,
 )
 
 
@@ -66,6 +71,25 @@ def _item(
         needs_operator_attention=needs_operator_attention,
         latest_advancement_outcome=latest_advancement_outcome,
         latest_parse_error_category=latest_parse_error_category,
+    )
+
+
+def _turn_item(
+    *,
+    turn_id: str = "turn-1",
+    sequence_number: int = 1,
+    received_at: datetime = BASE_TIME,
+    from_number: str | None = "whatsapp:+573000000001",
+    message_sid: str | None = "SM_TEST",
+    body_preview: str | None = "hola",
+) -> ConversationTurnObservationItem:
+    return ConversationTurnObservationItem(
+        turn_id=turn_id,
+        sequence_number=sequence_number,
+        received_at=received_at,
+        from_number=from_number,
+        message_sid=message_sid,
+        body_preview=body_preview,
     )
 
 
@@ -258,3 +282,101 @@ def test_conversation_list_read_is_tenant_scoped_for_operator_page(tmp_path: Pat
     assert all(item.tenant_id == TENANT_A for item in snapshot_a.items)
     assert not any(row["Conversation ID"] == session_b.conversation_id for row in rows_a)
     assert not any(row["Customer phone"] == "whatsapp:+573002220000" for row in rows_a)
+
+
+# Session detail metadata (M9.5B)
+
+
+def test_conversation_detail_metadata_row_handles_null_fields_gracefully() -> None:
+    item = _item(
+        latest_advancement_outcome=None,
+        latest_parse_error_category=None,
+        linked_order_id=None,
+    )
+
+    row = conversation_detail_metadata_row(item)
+
+    assert row["Latest advancement outcome"] == "Not set"
+    assert row["Latest parse error category"] == "Not set"
+    assert row["Linked order ID"] == "Not set"
+
+
+def test_conversation_detail_metadata_row_marks_open_idle_distinctly() -> None:
+    row = conversation_detail_metadata_row(_item(status="open", is_idle=True))
+
+    assert row["Status"] == OPEN_IDLE_LABEL
+    assert row["Status"] != STATUS_LABELS["open"]
+
+
+def test_conversation_detail_metadata_row_fresh_open_renders_plain_open() -> None:
+    row = conversation_detail_metadata_row(_item(status="open", is_idle=False))
+
+    assert row["Status"] == STATUS_LABELS["open"]
+
+
+def test_conversation_detail_metadata_row_includes_required_fields() -> None:
+    item = _item(
+        conversation_id="conv-detail",
+        turn_count=5,
+        version=3,
+        needs_operator_attention=True,
+        has_draft=True,
+        linked_order_id="ord-1",
+    )
+
+    row = conversation_detail_metadata_row(item)
+
+    assert row["Conversation ID"] == "conv-detail"
+    assert row["Customer phone"] == item.customer_phone
+    assert row["Last message at"] == item.last_message_at.isoformat()
+    assert row["Version"] == 3
+    assert row["Turns"] == 5
+    assert row["Linked order ID"] == "ord-1"
+    assert row["Has draft"] is True
+    assert row["Observed idle"] == item.is_idle
+    assert row["Needs operator attention"] is True
+
+
+def test_conversation_option_label_includes_phone_status_and_conversation_id() -> None:
+    item = _item(
+        conversation_id="conv-option",
+        customer_phone="whatsapp:+573009990000",
+        status="open",
+        is_idle=True,
+    )
+
+    label = conversation_option_label(item)
+
+    assert "whatsapp:+573009990000" in label
+    assert OPEN_IDLE_LABEL in label
+    assert "conv-option" in label
+
+
+# Turn preview rendering (M9.5B)
+
+
+def test_turn_preview_row_handles_missing_message_sid_and_from_number_gracefully() -> None:
+    turn = _turn_item(message_sid=None, from_number=None, body_preview=None)
+
+    row = turn_preview_row(turn)
+
+    assert row["Message SID"] == "Not set"
+    assert row["From number"] == "Not set"
+    assert row["Body preview"] == "Not set"
+
+
+def test_turn_preview_rows_renders_in_order() -> None:
+    turns = [
+        _turn_item(turn_id="turn-1", sequence_number=1, message_sid="SM_1"),
+        _turn_item(turn_id="turn-2", sequence_number=2, message_sid="SM_2"),
+        _turn_item(turn_id="turn-3", sequence_number=3, message_sid="SM_3"),
+    ]
+
+    rows = turn_preview_rows(turns)
+
+    assert [row["Message SID"] for row in rows] == ["SM_1", "SM_2", "SM_3"]
+    assert [row["Sequence"] for row in rows] == [1, 2, 3]
+
+
+def test_turn_preview_rows_handles_zero_turns() -> None:
+    assert turn_preview_rows([]) == []

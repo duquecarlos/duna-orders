@@ -1,6 +1,81 @@
 # Changelog
 ## Unreleased
 
+### M9.5B - Operator conversation session detail (read-only ordered turns)
+
+Implemented.
+
+#### Delivered
+
+* Added a tenant-scoped observation detail read,
+  `PostgresConversationObservationReads.get_conversation_observation_detail(
+  *, tenant_id, conversation_id, now, idle_threshold=DEFAULT_IDLE_THRESHOLD)
+  -> ConversationObservationDetail | None`, sibling to
+  `get_conversation_observation_snapshot`. Scoped by `tenant_id` AND
+  `conversation_id` in the query; returns `None` for an unknown
+  `conversation_id` or a wrong-tenant lookup, and never exposes turns in
+  that case.
+* Added `ConversationTurnObservationItem` (per-turn preview: `turn_id`,
+  `sequence_number`, `received_at`, `from_number`, `message_sid`,
+  `body_preview`) and `ConversationObservationDetail` (`session` plus
+  ordered `turns`) DTOs in
+  `src/duna_orders/storage/conversation_observation.py`. No
+  `StorageInterface` change, no new storage method, no migration.
+* Extended `pages/6_Conversations.py` with a "Session detail" section: a
+  session selector over the filtered session list, session metadata
+  (`conversation_id`, `customer_phone`, status, `last_message_at`,
+  `version`, `turn_count`, `linked_order_id`, `has_draft`, `is_idle`,
+  `latest_advancement_outcome`, `latest_parse_error_category`,
+  `needs_operator_attention`), and ordered turn previews (sequence number,
+  received-at, from-number, message SID, body preview - capped via the
+  existing `LATEST_BODY_PREVIEW_LENGTH` convention, never the full body).
+* The page consumes `get_conversation_observation_detail` only - no direct
+  `list_turns` call, no raw query, no storage shortcut.
+* `status="open"` with `is_idle=True` renders with the same distinct "Open
+  - observed idle (not expired)" label as M9.5A, not plain "Open" and not
+  a persisted "expired" state.
+* Missing `message_sid`/`from_number`, NULL session metadata, and
+  zero-turn sessions all render as "Not set" / an informational message
+  without error.
+* If the detail read returns `None` (e.g. wrong-tenant or a
+  since-removed session), the page shows a safe "Session not found for
+  this tenant" message.
+
+#### Guards
+
+* Added `ConversationObservationDetail` /
+  `get_conversation_observation_detail` to the `ConversationObservationReads`
+  Protocol.
+* Added `REQUIRED_OBSERVATION_DETAIL_READ_PAGES` and
+  `test_conversation_detail_pages_use_observation_detail_read_not_list_turns`
+  in `tests/test_architecture_boundaries.py`, an AST guard asserting the
+  page calls `get_conversation_observation_detail` and never `list_turns`.
+* `pages/6_Conversations.py` remains in `ENFORCED_RUNTIME_READ_MODULES` and
+  `READ_ONLY_RUNTIME_PAGES`; `test_read_only_runtime_pages_do_not_use_mutation_apis`
+  continues to cover the page (no mutation / re-parse / expire / amend /
+  approve-reject imports or calls).
+* Direct unit tests for the detail read, including the headline
+  cross-tenant acceptance test (Tenant B requesting Tenant A's
+  `conversation_id` returns `None` and never exposes Tenant A's turns),
+  ordered turns, zero/single-turn sessions, and NULL metadata fields.
+
+#### Excluded
+
+* No full customer message body rendering (preview only).
+* No turn annotation/notes, no re-parse, no re-run advancement, no expire
+  action, no draft amendment, no approve/reject, no outbound, no payment,
+  no queue/worker, no Twilio callbacks, no `live_sheets`.
+* No runtime idle-expiry behavior change (remains deferred from M9.4E).
+
+#### Verification
+
+* `pytest -q` -> 645 passed, 30 deselected, 1 xfailed.
+* `ruff check src tests pages` -> all checks passed.
+* `python -m compileall src tests pages` -> passed.
+* `alembic heads` -> `11605e30520d (head)`; no migration added; no
+  `StorageInterface` change.
+* `git diff --check` -> passed (only benign LF/CRLF warnings).
+
 ### M9.5A - Operator conversation visibility (read-only session list)
 
 Implemented.

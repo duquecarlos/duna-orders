@@ -7,6 +7,7 @@ from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.conversation_observation import (
     ATTENTION_TURN_THRESHOLD,
     LATEST_BODY_PREVIEW_LENGTH,
+    ConversationTurnObservationItem,
     PostgresConversationObservationReads,
 )
 from duna_orders.storage.conversation_state import PostgresConversationStateStore
@@ -558,3 +559,232 @@ def test_conversation_observation_reads_stays_outside_storage_interface() -> Non
 
     assert "get_conversation_observation_snapshot" not in storage_methods
     assert "StorageInterface" not in source
+
+
+# Detail read (M9.5B)
+
+
+def test_detail_returns_none_for_unknown_conversation_id(tmp_path: Path) -> None:
+    _, reads = _stores(tmp_path)
+
+    detail = reads.get_conversation_observation_detail(
+        tenant_id=TENANT_A,
+        conversation_id="conv_does_not_exist",
+        now=BASE_TIME,
+    )
+
+    assert detail is None
+
+
+def test_detail_cross_tenant_lookup_returns_none(tmp_path: Path) -> None:
+    store, reads = _stores(tmp_path)
+
+    session_a = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    store.append_turn_if_new(
+        tenant_id=TENANT_A,
+        conversation_id=session_a.conversation_id,
+        message_sid="SM_CROSS_TENANT",
+        from_number=FROM_NUMBER,
+        body="secreto del tenant A",
+        received_at=BASE_TIME,
+    )
+
+    detail = reads.get_conversation_observation_detail(
+        tenant_id=TENANT_B,
+        conversation_id=session_a.conversation_id,
+        now=BASE_TIME,
+    )
+
+    assert detail is None
+
+
+def test_detail_returns_session_metadata_and_ordered_turns(tmp_path: Path) -> None:
+    store, reads = _stores(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    for index in range(3):
+        store.append_turn_if_new(
+            tenant_id=TENANT_A,
+            conversation_id=session.conversation_id,
+            message_sid=f"SM_DETAIL_ORDER_{index}",
+            from_number=FROM_NUMBER,
+            body=f"mensaje {index}",
+            received_at=BASE_TIME + timedelta(minutes=index),
+        )
+
+    detail = reads.get_conversation_observation_detail(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        now=BASE_TIME,
+    )
+
+    assert detail is not None
+    assert detail.session.conversation_id == session.conversation_id
+    assert detail.session.tenant_id == TENANT_A
+    assert detail.session.turn_count == 3
+    assert [turn.message_sid for turn in detail.turns] == [
+        "SM_DETAIL_ORDER_0",
+        "SM_DETAIL_ORDER_1",
+        "SM_DETAIL_ORDER_2",
+    ]
+    assert [turn.sequence_number for turn in detail.turns] == sorted(
+        turn.sequence_number for turn in detail.turns
+    )
+
+
+def test_detail_zero_turn_session_returns_empty_turns_list(tmp_path: Path) -> None:
+    store, reads = _stores(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    detail = reads.get_conversation_observation_detail(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        now=BASE_TIME,
+    )
+
+    assert detail is not None
+    assert detail.turns == []
+    assert detail.session.turn_count == 0
+    assert detail.session.latest_message_sid is None
+    assert detail.session.latest_body_preview is None
+
+
+def test_detail_single_turn_session_works(tmp_path: Path) -> None:
+    store, reads = _stores(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    store.append_turn_if_new(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        message_sid="SM_DETAIL_SINGLE",
+        from_number=FROM_NUMBER,
+        body="hola",
+        received_at=BASE_TIME,
+    )
+
+    detail = reads.get_conversation_observation_detail(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        now=BASE_TIME,
+    )
+
+    assert detail is not None
+    assert len(detail.turns) == 1
+
+    turn = detail.turns[0]
+    assert turn.message_sid == "SM_DETAIL_SINGLE"
+    assert turn.from_number == FROM_NUMBER
+    assert turn.body_preview == "hola"
+    assert turn.received_at == BASE_TIME
+    assert detail.session.turn_count == 1
+    assert detail.session.latest_message_sid == "SM_DETAIL_SINGLE"
+
+
+def test_detail_turn_body_preview_truncates_long_body(tmp_path: Path) -> None:
+    store, reads = _stores(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    long_body = "x" * (LATEST_BODY_PREVIEW_LENGTH + 50)
+    store.append_turn_if_new(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        message_sid="SM_DETAIL_LONG_BODY",
+        from_number=FROM_NUMBER,
+        body=long_body,
+        received_at=BASE_TIME,
+    )
+
+    detail = reads.get_conversation_observation_detail(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        now=BASE_TIME,
+    )
+
+    assert detail is not None
+    preview = detail.turns[0].body_preview
+    assert preview == long_body[:LATEST_BODY_PREVIEW_LENGTH]
+    assert len(preview) == LATEST_BODY_PREVIEW_LENGTH
+
+
+def test_detail_session_metadata_handles_null_advancement_and_parse_fields(
+    tmp_path: Path,
+) -> None:
+    store, reads = _stores(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    detail = reads.get_conversation_observation_detail(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        now=BASE_TIME,
+    )
+
+    assert detail is not None
+    assert detail.session.latest_advancement_outcome is None
+    assert detail.session.latest_parse_error_category is None
+    assert detail.session.linked_order_id is None
+    assert detail.session.has_draft is False
+
+
+def test_detail_is_idle_reflects_now_and_idle_threshold(tmp_path: Path) -> None:
+    store, reads = _stores(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    fresh_detail = reads.get_conversation_observation_detail(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        now=BASE_TIME + timedelta(hours=2),
+        idle_threshold=timedelta(hours=4),
+    )
+    idle_detail = reads.get_conversation_observation_detail(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        now=BASE_TIME + timedelta(hours=5),
+        idle_threshold=timedelta(hours=4),
+    )
+
+    assert fresh_detail is not None
+    assert idle_detail is not None
+    assert fresh_detail.session.status == "open"
+    assert fresh_detail.session.is_idle is False
+    assert idle_detail.session.status == "open"
+    assert idle_detail.session.is_idle is True
+
+
+def test_turn_observation_item_supports_missing_message_sid() -> None:
+    item = ConversationTurnObservationItem(
+        turn_id="turn_missing_sid",
+        sequence_number=1,
+        received_at=BASE_TIME,
+        from_number=None,
+        message_sid=None,
+        body_preview="hola",
+    )
+
+    assert item.message_sid is None
+    assert item.from_number is None

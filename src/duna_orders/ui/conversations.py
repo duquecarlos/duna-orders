@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from duna_orders.storage.conversation_observation import ConversationObservationItem
+from duna_orders.storage.conversation_observation import (
+    ConversationObservationItem,
+    ConversationTurnObservationItem,
+)
 
 
 POSTGRES_ONLY_MESSAGE = (
@@ -33,6 +36,13 @@ OPEN_IDLE_HELP_MESSAGE = (
     "not a persisted session state: the session remains status=\"open\" in "
     "storage and the runtime does not mark sessions as expired."
 )
+
+SESSION_DETAIL_SELECT_LABEL = "Select a session for details"
+SESSION_NOT_FOUND_MESSAGE = (
+    "Session not found for this tenant. It may have been removed since the "
+    "list was loaded."
+)
+NO_TURNS_MESSAGE = "No turns recorded for this session yet."
 
 RECENT_ACTIVITY_ANY_LABEL = "Any time"
 RECENT_ACTIVITY_OPTIONS: dict[str, timedelta | None] = {
@@ -156,3 +166,40 @@ def conversation_row(item: ConversationObservationItem) -> dict[str, object]:
         "Latest parse error category": display_value(item.latest_parse_error_category),
         "Needs operator attention": item.needs_operator_attention,
     }
+
+
+def conversation_option_label(item: ConversationObservationItem) -> str:
+    return f"{item.customer_phone} | {conversation_status_label(item)} | {item.conversation_id}"
+
+
+def conversation_detail_metadata_row(item: ConversationObservationItem) -> dict[str, object]:
+    return {
+        "Conversation ID": item.conversation_id,
+        "Customer phone": item.customer_phone,
+        "Status": conversation_status_label(item),
+        "Last message at": item.last_message_at.isoformat(),
+        "Version": item.version,
+        "Turns": item.turn_count,
+        "Linked order ID": display_value(item.linked_order_id),
+        "Has draft": item.has_draft,
+        "Observed idle": item.is_idle,
+        "Latest advancement outcome": display_value(item.latest_advancement_outcome),
+        "Latest parse error category": display_value(item.latest_parse_error_category),
+        "Needs operator attention": item.needs_operator_attention,
+    }
+
+
+def turn_preview_row(turn: ConversationTurnObservationItem) -> dict[str, object]:
+    return {
+        "Sequence": turn.sequence_number,
+        "Received at": turn.received_at.isoformat(),
+        "From number": display_value(turn.from_number),
+        "Message SID": display_value(turn.message_sid),
+        "Body preview": display_value(turn.body_preview),
+    }
+
+
+def turn_preview_rows(
+    turns: list[ConversationTurnObservationItem],
+) -> list[dict[str, object]]:
+    return [turn_preview_row(turn) for turn in turns]

@@ -25,6 +25,12 @@ READ_ONLY_RUNTIME_PAGES = frozenset(
     }
 )
 
+REQUIRED_OBSERVATION_DETAIL_READ_PAGES = frozenset(
+    {
+        Path("pages/6_Conversations.py"),
+    }
+)
+
 FORBIDDEN_MUTATION_CALL_NAMES = frozenset(
     {
         "mark_draft_created",
@@ -111,6 +117,21 @@ def test_stage1_runtime_read_modules_do_not_call_broad_storage_reads() -> None:
                 )
 
     assert violations == []
+
+
+def test_conversation_detail_pages_use_observation_detail_read_not_list_turns() -> None:
+    for relative_path in sorted(REQUIRED_OBSERVATION_DETAIL_READ_PAGES):
+        module_path = REPO_ROOT / relative_path
+        tree = ast.parse(module_path.read_text(encoding="utf-8"))
+
+        call_names = {
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
+
+        assert "get_conversation_observation_detail" in call_names, relative_path
+        assert "list_turns" not in call_names, relative_path
 
 
 def test_read_only_runtime_pages_do_not_use_mutation_apis() -> None:

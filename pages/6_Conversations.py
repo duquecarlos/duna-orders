@@ -9,15 +9,21 @@ from duna_orders.storage.base import StorageInterface
 from duna_orders.storage.conversation_observation import PostgresConversationObservationReads
 from duna_orders.storage.read_context import sheets_request_context
 from duna_orders.ui.conversations import (
+    NO_TURNS_MESSAGE,
     OPEN_IDLE_HELP_MESSAGE,
     POSTGRES_ONLY_MESSAGE,
     RECENT_ACTIVITY_OPTIONS,
+    SESSION_DETAIL_SELECT_LABEL,
+    SESSION_NOT_FOUND_MESSAGE,
     advancement_outcome_filter_options,
+    conversation_detail_metadata_row,
+    conversation_option_label,
     conversation_row,
     matches_filters,
     operator_list_load_error_message,
     parse_error_category_filter_options,
     status_filter_options,
+    turn_preview_rows,
 )
 from duna_orders.ui.setup import (
     get_conversation_observation_reads,
@@ -131,3 +137,44 @@ with sheets_request_context(storage):
             use_container_width=True,
             hide_index=True,
         )
+
+        st.subheader("Session detail")
+
+        items_by_conversation_id = {item.conversation_id: item for item in filtered_items}
+
+        selected_conversation_id = st.selectbox(
+            SESSION_DETAIL_SELECT_LABEL,
+            list(items_by_conversation_id),
+            format_func=lambda conversation_id: conversation_option_label(
+                items_by_conversation_id[conversation_id]
+            ),
+            key="conversation_detail_select",
+        )
+
+        try:
+            detail = reads.get_conversation_observation_detail(
+                tenant_id=tenant_id,
+                conversation_id=selected_conversation_id,
+                now=now,
+            )
+        except Exception as error:
+            st.error(operator_list_load_error_message(error))
+            st.stop()
+
+        if detail is None:
+            st.warning(SESSION_NOT_FOUND_MESSAGE)
+        else:
+            st.dataframe(
+                [conversation_detail_metadata_row(detail.session)],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            if detail.turns:
+                st.dataframe(
+                    turn_preview_rows(detail.turns),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info(NO_TURNS_MESSAGE)

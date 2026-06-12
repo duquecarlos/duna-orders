@@ -40,6 +40,16 @@ class ConversationObservationItem:
 
 
 @dataclass(frozen=True)
+class ConversationTurnObservationItem:
+    turn_id: str
+    sequence_number: int
+    received_at: datetime
+    from_number: str | None
+    message_sid: str | None
+    body_preview: str | None
+
+
+@dataclass(frozen=True)
 class ConversationObservationDiagnostics:
     total_count: int
     open_count: int
@@ -54,6 +64,12 @@ class ConversationObservationSnapshot:
     diagnostics: ConversationObservationDiagnostics
 
 
+@dataclass(frozen=True)
+class ConversationObservationDetail:
+    session: ConversationObservationItem
+    turns: list[ConversationTurnObservationItem]
+
+
 class ConversationObservationReads(Protocol):
     def get_conversation_observation_snapshot(
         self,
@@ -62,6 +78,16 @@ class ConversationObservationReads(Protocol):
         now: datetime,
         idle_threshold: timedelta = DEFAULT_IDLE_THRESHOLD,
     ) -> ConversationObservationSnapshot:
+        ...
+
+    def get_conversation_observation_detail(
+        self,
+        *,
+        tenant_id: str,
+        conversation_id: str,
+        now: datetime,
+        idle_threshold: timedelta = DEFAULT_IDLE_THRESHOLD,
+    ) -> ConversationObservationDetail | None:
         ...
 
 
@@ -142,6 +168,53 @@ class PostgresConversationObservationReads:
                 diagnostics=_diagnostics_from_items(items),
             )
 
+    def get_conversation_observation_detail(
+        self,
+        *,
+        tenant_id: str,
+        conversation_id: str,
+        now: datetime,
+        idle_threshold: timedelta = DEFAULT_IDLE_THRESHOLD,
+    ) -> ConversationObservationDetail | None:
+        _require_text(tenant_id, "tenant_id")
+        _require_text(conversation_id, "conversation_id")
+
+        with session_scope(self._session_factory) as session:
+            row = session.scalar(
+                select(ConversationSessionRow)
+                .where(ConversationSessionRow.tenant_id == tenant_id)
+                .where(ConversationSessionRow.conversation_id == conversation_id)
+            )
+
+            if row is None:
+                return None
+
+            turn_rows = session.scalars(
+                select(ConversationTurnRow)
+                .where(ConversationTurnRow.tenant_id == tenant_id)
+                .where(ConversationTurnRow.conversation_id == conversation_id)
+                .order_by(
+                    ConversationTurnRow.sequence_number,
+                    ConversationTurnRow.created_at,
+                    ConversationTurnRow.turn_id,
+                )
+            ).all()
+
+            latest_turn = turn_rows[-1] if turn_rows else None
+
+            session_item = _item_from_row(
+                row,
+                turn_count=len(turn_rows),
+                latest_turn=latest_turn,
+                now=now,
+                idle_threshold=idle_threshold,
+            )
+
+            return ConversationObservationDetail(
+                session=session_item,
+                turns=[_turn_item_from_row(turn_row) for turn_row in turn_rows],
+            )
+
 
 def _item_from_row(
     row: ConversationSessionRow,
@@ -184,6 +257,17 @@ def _item_from_row(
         ),
         latest_advancement_outcome=row.latest_advancement_outcome,
         latest_parse_error_category=row.latest_parse_error_category,
+    )
+
+
+def _turn_item_from_row(row: ConversationTurnRow) -> ConversationTurnObservationItem:
+    return ConversationTurnObservationItem(
+        turn_id=row.turn_id,
+        sequence_number=row.sequence_number,
+        received_at=_utc_aware(row.received_at),
+        from_number=row.from_number,
+        message_sid=row.message_sid,
+        body_preview=row.body[:LATEST_BODY_PREVIEW_LENGTH],
     )
 
 
