@@ -1,6 +1,54 @@
 # Changelog
 ## Unreleased
 
+### M9.6D-fix-impl A - deferred_inbound migration + store foundation
+
+Implementation slice. Adds the durable persistence foundation for the
+accept-and-defer design; no webhook/runtime behavior changed yet.
+
+#### Delivered
+
+* Added migration `d60b084798e0` (`down_revision = "5eb2de4cca12"`) creating
+  `deferred_inbound` (`message_sid` primary key, `tenant_id`, `customer_key`,
+  `from_number`, `raw_body`, `received_at`, `deferred_at`, `processed_at`,
+  `processing_started_at`, `attempt_count`) and the partial index
+  `ix_deferred_inbound_pending_by_customer` on `(tenant_id, customer_key,
+  received_at, deferred_at, message_sid) WHERE processed_at IS NULL`.
+  `downgrade()` drops the index and table. `ALEMBIC_HEAD_REVISION` in
+  `tests/test_smoke_preflight.py` updated to `d60b084798e0`.
+* Added `DeferredInboundRow` to `postgres_models.py` and
+  `DEFERRED_INBOUND_TAB` to `schema.py`.
+* Added `src/duna_orders/storage/deferred_inbound.py`: `DeferredInboundRecord`
+  dataclass, `DeferredInboundStore` Protocol, and
+  `PostgresDeferredInboundStore` (narrow store outside `StorageInterface`,
+  `session_factory`-constructed, same pattern as `processed_messages` /
+  `conversation_customer_claims`) with `defer_message` (idempotent
+  `INSERT ... ON CONFLICT (message_sid) DO NOTHING`), `has_pending`,
+  `list_pending_for_customer` (ordered `received_at ASC, deferred_at ASC,
+  message_sid ASC`), `mark_processing_started`, and `mark_processed`.
+* Added `tests/test_deferred_inbound.py`: unit tests (sqlite) covering
+  insert, duplicate idempotency, `has_pending` before/after processed,
+  tenant/customer filtering, exclusion of processed rows, ordering, attempt
+  counting, and tenant isolation, plus a `live_postgres` lifecycle test.
+* Extended `tests/test_postgres_models.py` to cover `deferred_inbound`
+  table/column/index metadata.
+
+#### Excluded
+
+* No webhook/`web/app.py` behavior change: no defer-write call, no `202`
+  response.
+* No drain-on-release, no `BackgroundTask`, no sweep script
+  (`scripts/drain_deferred_inbound.py`).
+* No change to `StorageInterface`.
+* No parser, order service, conversation advancement, idle expiry, UI,
+  outbound, payment, or queue/worker changes. The M9.4E `strict=True` xfail
+  remains unchanged.
+* M9.6E remains blocked/not started.
+
+M9.6D-fix-impl B (not started) wires the defer-write/`202` response,
+drain-on-release, and the sweep-script backstop into the webhook per
+`docs/M9_6D_ACCEPT_AND_DEFER_CLAIM_BUSY_DESIGN.md`.
+
 ### M9.6D-fix - Accept-and-defer design for claim-busy (design only)
 
 Documented. Design only; no runtime/migration/StorageInterface changes.

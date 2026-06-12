@@ -15,6 +15,7 @@ from duna_orders.storage.schema import (
     PROCESSED_MESSAGES_TAB,
     CONVERSATION_SESSIONS_TAB,
     CONVERSATION_TURNS_TAB,
+    DEFERRED_INBOUND_TAB,
 )
 
 POSTGRES_ONLY_TABLES = {
@@ -24,6 +25,7 @@ POSTGRES_ONLY_TABLES = {
     "conversation_sessions",
     "conversation_turns",
     "conversation_customer_claims",
+    "deferred_inbound",
 }
 PRIMARY_ID_COLUMNS = {
     PRODUCTS_TAB: "product_id",
@@ -36,6 +38,7 @@ PRIMARY_ID_COLUMNS = {
     OUTBOUND_MESSAGES_TAB: "outbound_message_id",
     CONVERSATION_SESSIONS_TAB: "conversation_id",
     CONVERSATION_TURNS_TAB: "turn_id",
+    DEFERRED_INBOUND_TAB: "message_sid",
 }
 
 
@@ -366,3 +369,52 @@ def test_conversation_state_constraints_and_indexes_exist() -> None:
         "ix_conversation_turns_tenant_id_conversation_id",
         "ix_conversation_turns_conversation_sequence",
     } <= turn_indexes
+
+
+def test_deferred_inbound_table_is_postgres_only() -> None:
+    load_postgres_models()
+
+    table = Base.metadata.tables[DEFERRED_INBOUND_TAB]
+
+    assert [column.name for column in table.columns] == [
+        "message_sid",
+        "tenant_id",
+        "customer_key",
+        "from_number",
+        "raw_body",
+        "received_at",
+        "deferred_at",
+        "processed_at",
+        "processing_started_at",
+        "attempt_count",
+    ]
+    assert DEFERRED_INBOUND_TAB not in TABS
+    assert table.c.message_sid.primary_key is True
+    assert table.c.tenant_id.nullable is False
+    assert table.c.customer_key.nullable is False
+    assert table.c.from_number.nullable is False
+    assert table.c.raw_body.nullable is False
+    assert table.c.received_at.nullable is False
+    assert table.c.deferred_at.nullable is False
+    assert table.c.processed_at.nullable is True
+    assert table.c.processing_started_at.nullable is True
+    assert table.c.attempt_count.nullable is False
+    assert isinstance(table.c.raw_body.type, Text)
+    assert isinstance(table.c.received_at.type, DateTime)
+    assert isinstance(table.c.attempt_count.type, Integer)
+
+
+def test_deferred_inbound_pending_index_exists() -> None:
+    load_postgres_models()
+
+    table = Base.metadata.tables[DEFERRED_INBOUND_TAB]
+    indexes = {index.name: index for index in table.indexes}
+
+    pending_index = indexes["ix_deferred_inbound_pending_by_customer"]
+    assert [column.name for column in pending_index.columns] == [
+        "tenant_id",
+        "customer_key",
+        "received_at",
+        "deferred_at",
+        "message_sid",
+    ]

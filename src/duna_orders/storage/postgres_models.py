@@ -32,6 +32,7 @@ from duna_orders.storage.schema import (
     CONVERSATION_SESSIONS_TAB,
     CONVERSATION_TURNS_TAB,
     CONVERSATION_CUSTOMER_CLAIMS_TAB,
+    DEFERRED_INBOUND_TAB,
 )
 
 
@@ -444,3 +445,35 @@ class ConversationCustomerClaimRow(Base):
     acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DeferredInboundRow(Base):
+    __tablename__ = DEFERRED_INBOUND_TAB
+
+    message_sid: Mapped[str] = mapped_column(String(ID_LENGTH), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(TENANT_ID_LENGTH), nullable=False)
+    customer_key: Mapped[str] = mapped_column(String(PHONE_LENGTH), nullable=False)
+    from_number: Mapped[str] = mapped_column(String(PHONE_LENGTH), nullable=False)
+    raw_body: Mapped[str] = mapped_column(Text, nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deferred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        Index(
+            "ix_deferred_inbound_pending_by_customer",
+            "tenant_id",
+            "customer_key",
+            "received_at",
+            "deferred_at",
+            "message_sid",
+            postgresql_where=(processed_at.is_(None)),
+            sqlite_where=(processed_at.is_(None)),
+        ),
+    )
