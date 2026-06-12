@@ -1,6 +1,69 @@
 # Changelog
 ## Unreleased
 
+### M9.6B - Customer-claim validation spike
+
+Validated. Spike only; no runtime/migration/StorageInterface changes.
+
+#### Delivered
+
+* Added `tests/test_conversation_customer_claim_spike.py`, a
+  `live_postgres`-only validation spike for the durable per-customer
+  claim/lock row recommended in `docs/M9_6_CONVERSATION_UOW_DESIGN.md`
+  sections 6/7.
+* A module-scoped fixture creates and drops a test-only
+  `conversation_customer_claims_spike` table directly via SQL
+  (`tenant_id`, `customer_key`, `holder_id`, `acquired_at`,
+  `lease_expires_at`, `updated_at`, `PRIMARY KEY (tenant_id,
+  customer_key)`); it is not Alembic-managed and is not part of
+  `Base.metadata`.
+* Test-local helpers `acquire_claim(...)` / `release_claim(...)` /
+  `_read_claim(...)`, each performing exactly one short `engine.begin()`
+  transaction. `acquire_claim(...)` is an
+  `INSERT ... ON CONFLICT (tenant_id, customer_key) DO UPDATE ... WHERE
+  conversation_customer_claims_spike.lease_expires_at <= :now RETURNING
+  holder_id` - it inserts if no row exists, overwrites if the existing
+  lease has expired, and matches no rows (acquire fails) if the existing
+  lease is still live.
+* Added 4 tests, all passing under `pytest -m live_postgres`:
+  * `test_same_customer_claim_serializes_concurrent_workers` - two threads
+    contend for the same `(tenant_id, customer_key)`; Worker B's
+    `acquire_claim(...)` returns `False` while Worker A's lease is live and
+    only succeeds after Worker A releases. Ordering is proven via a
+    recorded event sequence (`a_acquired` -> `b_blocked` -> `a_released` ->
+    `b_acquired`) coordinated with `threading.Event`, not sleeps alone.
+  * `test_different_customers_do_not_block_each_other` - Worker A holds a
+    claim for customer A indefinitely; Worker B acquires a claim for
+    customer B (same `tenant_id`) immediately, without waiting.
+  * `test_expired_lease_can_be_taken_over_but_live_lease_cannot` - a claim
+    seeded with an already-expired `lease_expires_at` (simulated crashed
+    holder) is taken over by a new holder; a subsequent attempt against the
+    new holder's live lease returns `False` and leaves the row unchanged.
+  * `test_acquire_and_release_hold_no_connection_during_simulated_parser_delay`
+    - after `acquire_claim(...)` commits and returns,
+    `engine.pool.checkedout() == 0` holds across a simulated parser/LLM
+    delay (`time.sleep`, no DB call), confirming the claim survives as
+    committed row state with no held connection/transaction.
+
+#### Excluded
+
+* No migration; no `conversation_customer_claims` production table.
+* No production ORM model or store class.
+* No `StorageInterface` change.
+* No wiring into `ConversationAdvancementService.advance(...)`.
+* No webhook, draft amendment, idle expiry, outbound, payment, or parser
+  changes.
+
+#### Verification
+
+* `pytest tests/test_conversation_customer_claim_spike.py -q -m
+  live_postgres` -> `4 passed`.
+* `pytest -q` -> `645 passed, 34 deselected, 1 xfailed`.
+* `ruff check src tests pages` -> all checks passed.
+* `python -m compileall src tests pages` -> passed.
+* `git diff --check` -> passed.
+* `alembic heads` -> `11605e30520d (head)`; no migration added.
+
 ### M9.6A - Conversation advancement unit-of-work design
 
 Documented. Design only; no runtime/migration/StorageInterface changes.

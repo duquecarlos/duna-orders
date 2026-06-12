@@ -538,7 +538,7 @@ Explicitly excluded:
 
 ## M9.6 - Lifecycle-spanning per-customer unit of work for conversation advancement
 
-Status: M9.6A closed (design only).
+Status: M9.6A closed (design only); M9.6B closed (validation spike only).
 
 M9.6 delivers the prerequisite identified in
 `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` section 4: a lifecycle-spanning,
@@ -577,6 +577,46 @@ Explicitly excluded:
   advisory-lock validation spike, no tests added.
 * No draft amendment, outbound replies, payment flow, or parser prompt
   change.
+
+### M9.6B - Customer-claim validation spike
+
+Status: closed (validation spike only).
+
+Scope completed:
+
+* Added `tests/test_conversation_customer_claim_spike.py`, a
+  `live_postgres`-only validation spike for the durable per-customer
+  claim/lock row recommended in `docs/M9_6_CONVERSATION_UOW_DESIGN.md`
+  sections 6/7.
+* The spike creates and drops a test-only
+  `conversation_customer_claims_spike` table directly via SQL in a
+  module-scoped fixture; it is not Alembic-managed and is not part of
+  `Base.metadata`.
+* Test-local helpers `acquire_claim(...)` / `release_claim(...)`, each
+  exactly one short `engine.begin()` transaction (an
+  `INSERT ... ON CONFLICT (tenant_id, customer_key) DO UPDATE ... WHERE
+  lease_expires_at <= :now RETURNING ...` upsert).
+* Proved against real Postgres:
+  * same `(tenant_id, customer_key)` serializes two concurrent workers -
+    Worker B cannot acquire while Worker A's lease is live, and only
+    succeeds after Worker A releases (order proven via `threading.Event`
+    and a recorded event sequence, not sleeps alone);
+  * different customers (different `customer_key`, same `tenant_id`) do
+    not block each other;
+  * an expired lease can be taken over by a new holder; a live
+    (non-expired) lease cannot be taken over;
+  * `acquire_claim`/`release_claim` hold no checked-out connection
+    (`engine.pool.checkedout() == 0`) during a simulated parser delay.
+* 4 new tests, all passing under `pytest -m live_postgres`.
+
+Explicitly excluded:
+
+* No migration; no `conversation_customer_claims` production table.
+* No production ORM model or store class.
+* No `StorageInterface` change.
+* No wiring into `ConversationAdvancementService.advance(...)`.
+* No webhook, draft amendment, idle expiry, outbound, payment, or parser
+  changes.
 
 ## M8 - WhatsApp conversational ordering and Postgres runtime foundation
 

@@ -789,3 +789,45 @@ The following are explicitly **not** part of M9.6A:
 * `live_sheets` was not run.
 * No advisory-lock validation spike (the pre-flight's proposed spike is
   explicitly not run in this slice).
+
+## 14. M9.6B validation result
+
+M9.6B added `tests/test_conversation_customer_claim_spike.py`, a
+`live_postgres`-only validation spike for the durable per-customer
+claim/lock row recommended in section 6 and sketched in section 7. The
+spike is not a runtime implementation: it creates and drops a test-only
+`conversation_customer_claims_spike` table directly via SQL (not
+Alembic-managed, not part of `Base.metadata`), and its `acquire_claim(...)`
+/ `release_claim(...)` helpers are test-local functions, not a production
+store or `StorageInterface` change.
+
+Against real Postgres, the spike proved:
+
+* **Same customer serializes**: two concurrent workers contending for the
+  same `(tenant_id, customer_key)` claim - Worker B's `acquire_claim(...)`
+  returns `False` (no row matches `RETURNING`) while Worker A's lease is
+  live, and only succeeds after Worker A releases. Ordering is proven via a
+  recorded event sequence (`a_acquired` -> `b_blocked` -> `a_released` ->
+  `b_acquired`) coordinated with `threading.Event`, not sleeps alone.
+* **Different customers do not block each other**: Worker A holds a claim
+  for customer A indefinitely; Worker B acquires a claim for customer B
+  (same `tenant_id`) immediately, without waiting.
+* **Lease/recovery**: a claim seeded with an already-expired
+  `lease_expires_at` (simulating a crashed holder) can be taken over by a
+  new holder via the same `acquire_claim(...)` upsert; a live (non-expired)
+  claim cannot be taken over - `acquire_claim(...)` returns `False` and the
+  row is unchanged.
+* **Parser delay outside any DB transaction**: `acquire_claim(...)` and
+  `release_claim(...)` are each exactly one short `engine.begin()`
+  transaction (`INSERT ... ON CONFLICT (tenant_id, customer_key) DO UPDATE
+  ... WHERE lease_expires_at <= :now RETURNING holder_id`); between acquire
+  and release, `engine.pool.checkedout() == 0` during a simulated
+  parser/LLM delay, confirming the claim survives as committed row state
+  with no held connection/transaction.
+
+All 4 tests pass under
+`pytest tests/test_conversation_customer_claim_spike.py -q -m
+live_postgres`. This validates the primitive recommended in sections 6 and
+7 against real Postgres behavior; it does not implement, migrate, or wire
+the primitive into `advance(...)` - that remains M9.7+ scope per section
+11's conformance checklist.
