@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from twilio.request_validator import RequestValidator
 
@@ -23,6 +25,10 @@ from duna_orders.services.conversation_advancement import (
     ConversationAdvancementResult,
 )
 from duna_orders.storage.base import StorageInterface
+from duna_orders.storage.conversation_customer_claims import (
+    DEFAULT_CLAIM_LEASE_DURATION,
+    normalize_customer_claim_key,
+)
 from duna_orders.storage.conversation_state import PostgresConversationStateStore
 from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.storage.postgres import PostgresStorage
@@ -153,6 +159,7 @@ class _AdvanceCall:
     from_number: str
     body: str
     received_at: datetime
+    renew_customer_claim: Callable[[], bool] | None = None
 
 
 class FakeConversationAdvancementService:
@@ -176,6 +183,7 @@ class FakeConversationAdvancementService:
         from_number: str,
         body: str,
         received_at: datetime,
+        renew_customer_claim: Callable[[], bool] | None = None,
     ) -> ConversationAdvancementResult:
         self.calls.append(
             _AdvanceCall(
@@ -184,9 +192,70 @@ class FakeConversationAdvancementService:
                 from_number=from_number,
                 body=body,
                 received_at=received_at,
+                renew_customer_claim=renew_customer_claim,
             )
         )
         return self._result
+
+
+class FakeConversationCustomerClaimStore:
+    """In-memory ConversationCustomerClaimStore double for webhook tests."""
+
+    def __init__(self) -> None:
+        self.held: dict[tuple[str, str], str] = {}
+        self.acquire_calls: list[tuple[str, str, str]] = []
+        self.release_calls: list[tuple[str, str, str]] = []
+        self.renew_calls: list[tuple[str, str, str]] = []
+
+    def try_acquire(
+        self,
+        *,
+        tenant_id: str,
+        customer_key: str,
+        holder_id: str,
+        lease_duration: timedelta = DEFAULT_CLAIM_LEASE_DURATION,
+    ) -> bool:
+        self.acquire_calls.append((tenant_id, customer_key, holder_id))
+        key = (tenant_id, customer_key)
+
+        if key in self.held:
+            return False
+
+        self.held[key] = holder_id
+        return True
+
+    def release(self, *, tenant_id: str, customer_key: str, holder_id: str) -> bool:
+        self.release_calls.append((tenant_id, customer_key, holder_id))
+        key = (tenant_id, customer_key)
+
+        if self.held.get(key) == holder_id:
+            del self.held[key]
+            return True
+
+        return False
+
+    def renew(
+        self,
+        *,
+        tenant_id: str,
+        customer_key: str,
+        holder_id: str,
+        lease_duration: timedelta = DEFAULT_CLAIM_LEASE_DURATION,
+    ) -> bool:
+        self.renew_calls.append((tenant_id, customer_key, holder_id))
+        return self.held.get((tenant_id, customer_key)) == holder_id
+
+
+def _create_app(**kwargs: object) -> FastAPI:
+    """Build the webhook app, defaulting an isolated claim-store double.
+
+    Individual tests that need to observe or pre-seed claim acquisition can
+    still pass their own `conversation_customer_claim_store=...`.
+    """
+    kwargs.setdefault(
+        "conversation_customer_claim_store", FakeConversationCustomerClaimStore()
+    )
+    return create_app(**kwargs)  # type: ignore[arg-type]
 
 
 def _signed_headers(
@@ -238,7 +307,7 @@ def _order_snapshot(order: Order) -> tuple[object, ...]:
 
 
 def test_health_check_returns_ok() -> None:
-    app = create_app(
+    app = _create_app(
         app_settings=_settings(),
         storage=InMemoryStorage(),
         parser=MockParser(),
@@ -255,7 +324,7 @@ def test_twilio_webhook_rejects_missing_signature_before_processing() -> None:
     storage = InMemoryStorage()
     parser = MockParser()
     fake_service = FakeConversationAdvancementService()
-    app = create_app(
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser,
@@ -281,7 +350,7 @@ def test_twilio_webhook_rejects_invalid_signature_before_processing() -> None:
     storage = InMemoryStorage()
     parser = MockParser()
     fake_service = FakeConversationAdvancementService()
-    app = create_app(
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser,
@@ -311,7 +380,7 @@ def test_twilio_webhook_invalid_signature_does_not_record_processed_message(
     parser = MockParser()
     fake_service = FakeConversationAdvancementService()
     processed_store = _processed_message_store(tmp_path)
-    app = create_app(
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser,
@@ -342,7 +411,7 @@ def test_twilio_webhook_invalid_signature_does_not_record_processed_message(
 def test_twilio_webhook_rejects_missing_message_sid() -> None:
     storage = InMemoryStorage()
     fake_service = FakeConversationAdvancementService()
-    app = create_app(
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         conversation_advancement_service=fake_service,
@@ -368,7 +437,7 @@ def test_twilio_webhook_rejects_missing_from_field(tmp_path: Path) -> None:
     storage = InMemoryStorage()
     fake_service = FakeConversationAdvancementService()
     processed_store = _processed_message_store(tmp_path)
-    app = create_app(
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         processed_message_store=processed_store,
@@ -398,7 +467,7 @@ def test_twilio_webhook_validates_against_configured_public_url(
     storage = InMemoryStorage()
     parser = MockParser()
     fake_service = FakeConversationAdvancementService()
-    app = create_app(
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser,
@@ -428,7 +497,7 @@ def test_twilio_webhook_returns_500_when_public_url_is_missing() -> None:
     parser = MockParser()
     fake_service = FakeConversationAdvancementService()
     settings = _settings().model_copy(update={"twilio_webhook_public_url": None})
-    app = create_app(
+    app = _create_app(
         app_settings=settings,
         storage=storage,
         parser=parser,
@@ -466,11 +535,13 @@ def test_twilio_webhook_creates_one_draft_order_from_signed_inbound_message(
     processed_store = _processed_message_store(tmp_path)
 
     parser = MockParser(result=_parse_result_for_product(product, raw_message))
-    app = create_app(
+    claim_store = FakeConversationCustomerClaimStore()
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser,
         processed_message_store=processed_store,
+        conversation_customer_claim_store=claim_store,
     )
     client = TestClient(app)
 
@@ -507,6 +578,15 @@ def test_twilio_webhook_creates_one_draft_order_from_signed_inbound_message(
     assert len(record.raw_body) > 500
     assert record.resulting_order_id == orders[0].order_id
 
+    # The claim is acquired before processing, renewed once by the real
+    # advancement service after parsing (before the draft write), and
+    # released in the webhook's finally block once processing completes.
+    assert len(claim_store.acquire_calls) == 1
+    assert len(claim_store.release_calls) == 1
+    assert claim_store.acquire_calls[0] == claim_store.release_calls[0]
+    assert claim_store.renew_calls == [claim_store.acquire_calls[0]]
+    assert claim_store.held == {}
+
 
 def test_twilio_webhook_parser_product_context_is_tenant_scoped(
     tmp_path: Path,
@@ -518,7 +598,7 @@ def test_twilio_webhook_parser_product_context_is_tenant_scoped(
     processed_store = _processed_message_store(tmp_path)
 
     parser = MockParser(result=_parse_result_for_product(product, raw_message))
-    app = create_app(
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser,
@@ -555,7 +635,7 @@ def test_twilio_webhook_empty_body_returns_200_and_creates_no_order(
     parser = MockParser()
     fake_service = FakeConversationAdvancementService()
     processed_store = _processed_message_store(tmp_path)
-    app = create_app(
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser,
@@ -596,7 +676,7 @@ def test_twilio_webhook_duplicate_message_sid_creates_only_one_draft(
     raw_message = "Buenas, una bandeja paisa"
 
     parser = MockParser(result=_parse_result_for_product(product, raw_message))
-    app = create_app(
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser,
@@ -628,7 +708,7 @@ def test_twilio_webhook_distinct_customers_create_distinct_drafts(
     raw_message = "Buenas, una bandeja paisa"
 
     parser = MockParser(result=_parse_result_for_product(product, raw_message))
-    app = create_app(
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser,
@@ -680,7 +760,7 @@ def test_twilio_webhook_followup_message_after_draft_created_links_existing_orde
     processed_store = _processed_message_store(tmp_path)
 
     parser = MockParser(result=_parse_result_for_product(product, raw_message))
-    app = create_app(
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser,
@@ -760,13 +840,13 @@ def test_twilio_webhook_tenant_isolation_same_customer_creates_separate_conversa
     parser_a = MockParser(result=_parse_result_for_product(product_a, raw_message_a))
     parser_b = MockParser(result=_parse_result_for_product(product_b, raw_message_b))
 
-    app_a = create_app(
+    app_a = _create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser_a,
         processed_message_store=processed_store,
     )
-    app_b = create_app(
+    app_b = _create_app(
         app_settings=_settings().model_copy(update={"webhook_tenant_id": "other-tenant"}),
         storage=storage,
         parser=parser_b,
@@ -838,7 +918,7 @@ def test_twilio_webhook_empty_body_retry_records_sid_once_and_creates_no_order(
     parser = MockParser()
     fake_service = FakeConversationAdvancementService()
     processed_store = _processed_message_store(tmp_path)
-    app = create_app(
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser,
@@ -882,12 +962,14 @@ def test_twilio_webhook_existing_message_sid_returns_200_without_reprocessing(
         message_sid="SM_ALREADY_SEEN",
         tenant_id=DEFAULT_TEST_TENANT_ID,
     )
-    app = create_app(
+    claim_store = FakeConversationCustomerClaimStore()
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser,
         processed_message_store=processed_store,
         conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
     )
     client = TestClient(app)
 
@@ -908,6 +990,14 @@ def test_twilio_webhook_existing_message_sid_returns_200_without_reprocessing(
     assert storage.list_orders() == []
     assert fake_service.calls == []
 
+    # A genuine duplicate is only detected once the claim is held, so it
+    # still does one acquire/release round-trip without advancing.
+    assert len(claim_store.acquire_calls) == 1
+    assert len(claim_store.release_calls) == 1
+    assert claim_store.acquire_calls[0] == claim_store.release_calls[0]
+    assert claim_store.renew_calls == []
+    assert claim_store.held == {}
+
 
 def test_twilio_webhook_parser_failure_preserves_raw_message_and_creates_no_order(
     tmp_path: Path,
@@ -916,11 +1006,13 @@ def test_twilio_webhook_parser_failure_preserves_raw_message_and_creates_no_orde
     raw_message = "Buenas, una bandeja paisa que el parser no puede procesar."
     parser = MockParser(raise_error=ParserError("mock parser failure"))
     processed_store = _processed_message_store(tmp_path)
-    app = create_app(
+    claim_store = FakeConversationCustomerClaimStore()
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser,
         processed_message_store=processed_store,
+        conversation_customer_claim_store=claim_store,
     )
     client = TestClient(app)
 
@@ -947,6 +1039,14 @@ def test_twilio_webhook_parser_failure_preserves_raw_message_and_creates_no_orde
     assert record.from_number == "whatsapp:+573001112233"
     assert record.resulting_order_id is None
 
+    # ParserError short-circuits before the renew check, but release still
+    # runs in the webhook's finally block.
+    assert len(claim_store.acquire_calls) == 1
+    assert len(claim_store.release_calls) == 1
+    assert claim_store.acquire_calls[0] == claim_store.release_calls[0]
+    assert claim_store.renew_calls == []
+    assert claim_store.held == {}
+
 
 def test_twilio_webhook_uses_injected_lifecycle_store_for_draft_creation(
     tmp_path: Path,
@@ -958,7 +1058,7 @@ def test_twilio_webhook_uses_injected_lifecycle_store_for_draft_creation(
     lifecycle_store = FakeLifecycleStore(storage)
 
     parser = MockParser(result=_parse_result_for_product(product, raw_message))
-    app = create_app(
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         parser=parser,
@@ -999,7 +1099,7 @@ def test_twilio_webhook_calls_advancement_service_exactly_once_for_new_message(
     storage = InMemoryStorage()
     fake_service = FakeConversationAdvancementService()
     processed_store = _processed_message_store(tmp_path)
-    app = create_app(
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         processed_message_store=processed_store,
@@ -1087,11 +1187,13 @@ def test_twilio_webhook_outcome_returns_200_without_outbound_and_links_order(
     )
     fake_service = FakeConversationAdvancementService(result=result)
     processed_store = _processed_message_store(tmp_path)
-    app = create_app(
+    claim_store = FakeConversationCustomerClaimStore()
+    app = _create_app(
         app_settings=_settings(),
         storage=storage,
         processed_message_store=processed_store,
         conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
     )
     client = TestClient(app)
 
@@ -1115,3 +1217,201 @@ def test_twilio_webhook_outcome_returns_200_without_outbound_and_links_order(
     assert len(fake_service.calls) == 1
     assert record is not None
     assert record.resulting_order_id == resulting_order_id
+
+    # Regardless of the advancement outcome, the claim acquired for this
+    # request is released exactly once in the webhook's finally block.
+    assert len(claim_store.acquire_calls) == 1
+    assert len(claim_store.release_calls) == 1
+    assert claim_store.acquire_calls[0] == claim_store.release_calls[0]
+    assert claim_store.held == {}
+
+
+def test_twilio_webhook_claim_busy_returns_503_without_processing(
+    tmp_path: Path,
+) -> None:
+    storage = InMemoryStorage()
+    parser = MockParser()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    claim_store = FakeConversationCustomerClaimStore()
+
+    tenant_id = DEFAULT_TEST_TENANT_ID
+    customer_key = normalize_customer_claim_key(tenant_id, "+573001112233")
+    assert claim_store.try_acquire(
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+        holder_id="other-holder",
+    )
+
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        parser=parser,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+    )
+    client = TestClient(app)
+
+    params = {
+        "MessageSid": "SM_CLAIM_BUSY",
+        "From": "whatsapp:+573001112233",
+        "Body": "Buenas, una bandeja paisa",
+    }
+
+    response = client.post(
+        WEBHOOK_PATH,
+        data=params,
+        headers=_signed_headers(params),
+    )
+
+    assert response.status_code == 503
+    assert processed_store.get_message("SM_CLAIM_BUSY") is None
+    assert parser.calls == []
+    assert fake_service.calls == []
+    assert storage.list_orders() == []
+
+    # Nothing was acquired by this request, so nothing is released, and the
+    # other holder's claim is left untouched.
+    assert claim_store.release_calls == []
+    assert claim_store.held[(tenant_id, customer_key)] == "other-holder"
+
+
+def test_twilio_webhook_genuine_duplicate_does_extra_claim_round_trip_without_advancing(
+    tmp_path: Path,
+) -> None:
+    storage = InMemoryStorage()
+    _seed_product(storage)
+    parser = MockParser()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    processed_store.try_record_message(
+        message_sid="SM_DUPLICATE_CLAIM",
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+    claim_store = FakeConversationCustomerClaimStore()
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        parser=parser,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+    )
+    client = TestClient(app)
+
+    params = {
+        "MessageSid": "SM_DUPLICATE_CLAIM",
+        "From": "whatsapp:+573001112233",
+        "Body": "Buenas, una bandeja paisa",
+    }
+
+    response = client.post(
+        WEBHOOK_PATH,
+        data=params,
+        headers=_signed_headers(params),
+    )
+
+    assert response.status_code == 200
+    assert parser.calls == []
+    assert storage.list_orders() == []
+    assert fake_service.calls == []
+
+    # The duplicate is only detected after the claim is acquired, so it
+    # still does one acquire/release round-trip without advancing.
+    assert len(claim_store.acquire_calls) == 1
+    assert len(claim_store.release_calls) == 1
+    assert claim_store.acquire_calls[0] == claim_store.release_calls[0]
+    assert claim_store.held == {}
+
+
+def test_twilio_webhook_duplicate_message_sid_each_request_does_own_claim_round_trip(
+    tmp_path: Path,
+) -> None:
+    storage = _postgres_storage(tmp_path)
+    product = _seed_product(storage)
+    raw_message = "Buenas, una bandeja paisa"
+    claim_store = FakeConversationCustomerClaimStore()
+
+    parser = MockParser(result=_parse_result_for_product(product, raw_message))
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        parser=parser,
+        processed_message_store=_processed_message_store(tmp_path),
+        conversation_customer_claim_store=claim_store,
+    )
+    client = TestClient(app)
+
+    params = {
+        "MessageSid": "SM_DUPLICATE_CLAIM_ORDER",
+        "From": "whatsapp:+573001112233",
+        "Body": raw_message,
+    }
+    headers = _signed_headers(params)
+
+    first = client.post(WEBHOOK_PATH, data=params, headers=headers)
+    second = client.post(WEBHOOK_PATH, data=params, headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(storage.list_orders()) == 1
+    assert len(parser.calls) == 1
+
+    # Each request acquires and releases its own claim - including the
+    # second, genuine-duplicate request, which does not advance.
+    assert len(claim_store.acquire_calls) == 2
+    assert len(claim_store.release_calls) == 2
+    assert claim_store.acquire_calls[0] == claim_store.release_calls[0]
+    assert claim_store.acquire_calls[1] == claim_store.release_calls[1]
+
+    first_holder = claim_store.acquire_calls[0][2]
+    second_holder = claim_store.acquire_calls[1][2]
+    assert first_holder != second_holder
+
+    tenant_id, customer_key, _ = claim_store.acquire_calls[0]
+    assert claim_store.acquire_calls[1][:2] == (tenant_id, customer_key)
+    assert claim_store.held == {}
+
+
+def test_twilio_webhook_advance_renew_callback_invokes_claim_store_renew(
+    tmp_path: Path,
+) -> None:
+    storage = InMemoryStorage()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    claim_store = FakeConversationCustomerClaimStore()
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+    )
+    client = TestClient(app)
+
+    params = {
+        "MessageSid": "SM_RENEW_WIRING",
+        "From": "whatsapp:+573001112233",
+        "Body": "Buenas, una bandeja paisa",
+    }
+
+    response = client.post(
+        WEBHOOK_PATH,
+        data=params,
+        headers=_signed_headers(params),
+    )
+
+    assert response.status_code == 200
+    assert len(fake_service.calls) == 1
+
+    renew_customer_claim = fake_service.calls[0].renew_customer_claim
+    assert renew_customer_claim is not None
+
+    tenant_id, customer_key, holder_id = claim_store.acquire_calls[0]
+
+    # The webhook's claim has already been released by this point, so the
+    # renew closure correctly reports the lease as no longer held - but it
+    # must still call through to the claim store with the right identity.
+    assert renew_customer_claim() is False
+    assert claim_store.renew_calls == [(tenant_id, customer_key, holder_id)]

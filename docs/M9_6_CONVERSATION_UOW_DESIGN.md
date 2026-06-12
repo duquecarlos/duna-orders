@@ -898,3 +898,142 @@ from a `session_factory` - it is **not** built by `factory.build_storage`.
   `advance(...)` per the sequence sketched in section 8 (acquire the
   customer claim before opening/appending the session, hold it across the
   parser call without an open DB transaction, release on every exit path).
+
+## 16. M9.6D runtime wiring result
+
+M9.6D wires the M9.6C production store into the live
+`POST /webhooks/twilio/whatsapp` path and into
+`ConversationAdvancementService.advance(...)`. The actual ordering differs
+from section 8's sketch in one deliberate respect (claim-before-dedup,
+below); everything else follows the sketch.
+
+* **Implemented webhook ordering**: Twilio signature/request validation
+  (unchanged, first) -> derive `tenant_id`/`customer_phone` -> **acquire the
+  customer claim** (`try_acquire`) -> `try_record_message(...)` (the
+  duplicate-`MessageSid` gate) -> `advance(...)` (with `renew_customer_claim`
+  wired in) -> release the claim in a webhook-level `try/finally`.
+* **Claim-before-dedup, not dedup-before-claim**: section 8 step 1 sketched
+  the duplicate-`MessageSid` gate running *first, outside* the claim, with
+  claim acquisition second (step 2). The implementation reverses this:
+  the claim is acquired **before** `try_record_message(...)`. This is a
+  correction made during M9.6D, not an oversight - the section-8 ordering
+  has a redelivery hazard that only appears once claim-busy returns a
+  non-2xx status:
+  * If `try_record_message(...)` (recording `MessageSid`) ran *before*
+    claim acquisition, a message that is genuinely new but hits a busy
+    claim would have its `MessageSid` recorded and then receive `HTTP 503`.
+    Twilio's redelivery of that same `MessageSid` would then find it already
+    recorded and be swallowed as a duplicate (`200`, no `advance(...)`) -
+    the message would never actually be processed.
+  * Acquiring the claim first means a busy claim returns `503` **before**
+    `MessageSid` is ever recorded, so Twilio's redelivery re-enters
+    processing from the top (including re-attempting claim acquisition)
+    exactly as if the first delivery had not happened.
+  * Net effect for the *non-busy* path is unchanged from section 8: by the
+    time `try_record_message(...)` runs, the claim is already held, so
+    routing/append/parse/write all happen under the held claim as section 8
+    intended. The reordering only changes behavior on the claim-busy branch.
+* **Claim-busy is a webhook-level concern, not an `advance(...)` outcome**:
+  `try_acquire` returning `False` returns `HTTP 503` directly from the
+  webhook handler. It never reaches `try_record_message`, `advance(...)`,
+  or `record_advancement_attempt(...)`; no conversation/session/draft state
+  is touched and `latest_advancement_outcome` is left unchanged. No new
+  `ConversationAdvancementOutcome` member was added for this case - section
+  11's "no broad `StorageInterface` change" and "observability preserved for
+  every lifecycle that *reaches* a terminal outcome" checklist items both
+  hold, because a claim-busy request never starts a lifecycle.
+* **Genuine duplicate flow** (claim acquired, `MessageSid` already recorded):
+  `try_record_message(...)` returns `False`, the webhook returns `200`
+  without calling `advance(...)`, and `finally` releases the claim. Compared
+  to pre-M9.6D behavior this adds one acquire/release round trip per
+  duplicate delivery; section 12's "duplicate-`MessageSid` short-circuit"
+  acceptance test is therefore satisfied at the `advance(...)` boundary (a
+  recorded `MessageSid` never reaches `advance(...)`/the claim-holding
+  lifecycle), not at the claim-acquisition boundary as section 12 originally
+  phrased it ("without acquiring ... the customer claim"). The claim round
+  trip on duplicates is the accepted cost of the claim-before-dedup
+  correction above.
+* **Renew callback (Option B, zero coupling)**: `advance(...)` gained
+  `renew_customer_claim: Callable[[], bool] | None = None`.
+  `conversation_advancement.py` has no import of, or dependency on,
+  `duna_orders.storage.conversation_customer_claims` - it only calls the
+  callback. `web/app.py` is the sole caller that constructs one, via a
+  closure over `claim_store.renew(tenant_id=..., customer_key=...,
+  holder_id=...)`. This satisfies section 11's "no broad `StorageInterface`
+  change" and "no direct page/UI mutation path" items by construction: the
+  claim store is reachable only from the webhook entrypoint.
+* **Renew timing**: `_advance_open_session(...)` calls
+  `renew_customer_claim()` exactly once, immediately after the parser/LLM
+  call returns and before any draft/session write - i.e. after section 8
+  step 6 (parser) and before step 7/8 (revalidation/commit). This is the
+  point in the lifecycle where the held lease is most likely to have expired
+  (the parser call has no upper bound), and is the last point before any
+  state mutation.
+* **Renew failure**: if `renew_customer_claim()` returns `False`, the
+  lifecycle returns `ConversationAdvancementOutcome.TURN_APPENDED_INCOMPLETE`
+  with the new `parse_error_category=None` (the turn was appended before
+  parsing; this is distinct from the existing `PARSER_ERROR` category used
+  when `parse(...)` itself raises `ParserError`) and aborts before
+  `create_draft`/`mark_draft_created`. No new outcome enum value was added.
+  This is a narrower version of section 8 step 7's "revalidation failure"
+  branch, specialized to claim loss; it still calls
+  `record_advancement_attempt(...)` via the normal `_record_outcome` path,
+  preserving section 10/11's observability guarantee.
+* **Post-parse revalidation**: immediately before `create_draft(...)`,
+  `_advance_open_session(...)` calls
+  `_recover_from_create_draft_conflict(tenant_id=..., session=...)` a second
+  time (the same helper already used for the post-`create_draft`
+  `IntegrityError` recovery path). If a draft was created for this
+  conversation during parsing, this returns `ALREADY_HAS_DRAFT` against the
+  existing order. This implements section 8 step 7's revalidation using an
+  existing recovery path rather than new logic, per section 11's "no broad
+  change" and "no new outcome" goals.
+* **Architecture guard becomes an allowlist**: M9.6C's guard asserted the
+  claim-store module was imported nowhere under `services/`, `web/`, `ui/`,
+  or `pages/`. M9.6D narrows this to
+  `CLAIM_STORE_ALLOWED_IMPORT_MODULES = {Path("src/duna_orders/web/app.py")}`
+  in `tests/test_architecture_boundaries.py` - `web/app.py` is the only
+  permitted importer (enforced by
+  `test_conversation_customer_claim_store_import_is_restricted_to_web_app`),
+  and a companion test
+  (`test_web_app_imports_conversation_customer_claim_store`) asserts that
+  import is actually used, so the allowlist entry cannot go stale.
+  `conversation_advancement.py` remains an unlisted (forbidden) importer,
+  consistent with the renew-callback design above.
+* **Section 11 conformance checklist - status after M9.6D**: of the eleven
+  items, M9.6D satisfies "duplicate gate effectively gates `advance(...)`"
+  (via claim-before-dedup, see above), "state-changing lifecycle decisions
+  for a customer are serialized by the claim" (routing, append, draft
+  creation/marking all happen after `try_acquire` and before `release`),
+  "different customers proceed concurrently" (proved by
+  `test_live_postgres_claim_does_not_serialize_different_customers`), "parser
+  runs with no open DB transaction held" (unchanged from before M9.6D),
+  "parser runs while the claim is held" (claim acquired in the webhook,
+  before `advance(...)` is even called), "session state is revalidated after
+  the parser returns and before commit" (post-parse revalidation, above),
+  "no broad `StorageInterface` change", "no direct page/UI mutation path",
+  and "observability preserved for every lifecycle reaching a terminal
+  outcome". The one item **not** addressed by M9.6D is "the M9.4E
+  idle-boundary race is closed /
+  `test_draft_created_session_remains_latest_over_later_open_session_for_customer`
+  flips from `strict=True` xfail to passing" - idle-boundary expiry has no
+  runtime implementation yet, so there is no idle-expiry lifecycle to
+  serialize against. That xfail remains unchanged and is the scope of
+  **M9.6E**, which is the concretized successor to this document's earlier
+  "M9.7+" placeholder (sections 8, 11, 12) for idle-expiry runtime - M9.6E is
+  expected to close that checklist item and the section-12
+  "idle-expiry-vs-draft-completion interleaving" acceptance test, reusing the
+  same claim primitive and `renew_customer_claim`-style integration
+  introduced here.
+* **`DEFAULT_CLAIM_LEASE_DURATION` unchanged**: M9.6D calls `try_acquire` and
+  `renew` with the section-15 default (`timedelta(seconds=60)`); no caller
+  passes an explicit `lease_duration`. Retuning this value against real
+  pilot parse-latency data, as section 15 anticipated "once M9.6D wires real
+  acquire/renew calls into `advance(...)`", remains open and is deferred past
+  M9.6D (candidate for M9.6E or a later pilot-data-driven follow-up).
+* **Outstanding manual verification**: Twilio's actual retry behavior on
+  `HTTP 503` (the claim-busy response) has not been exercised against a live
+  Twilio sandbox/webhook. A live/manual smoke confirming that Twilio retries
+  a `503` and that the retried delivery is processed - not swallowed as a
+  duplicate - is needed before relying on the claim-before-dedup ordering's
+  redelivery behavior in production.

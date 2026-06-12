@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -41,6 +42,7 @@ class ConversationAdvancementResult:
     turn_appended: bool
     draft_created: bool
     resulting_order_id: str | None
+    parse_error_category: str | None = None
 
 
 class ConversationAdvancementService:
@@ -67,6 +69,7 @@ class ConversationAdvancementService:
         from_number: str,
         body: str,
         received_at: datetime,
+        renew_customer_claim: Callable[[], bool] | None = None,
     ) -> ConversationAdvancementResult:
         _require_text(tenant_id, "tenant_id")
         _require_text(message_sid, "message_sid")
@@ -118,20 +121,19 @@ class ConversationAdvancementService:
                     resulting_order_id=None,
                 )
             else:
-                result = self._advance_open_session(tenant_id=tenant_id, session=session)
+                result = self._advance_open_session(
+                    tenant_id=tenant_id,
+                    session=session,
+                    renew_customer_claim=renew_customer_claim,
+                )
 
         if result.outcome == ConversationAdvancementOutcome.DUPLICATE_MESSAGE:
             return result
 
-        parse_error_category = (
-            "PARSER_ERROR"
-            if result.outcome == ConversationAdvancementOutcome.TURN_APPENDED_INCOMPLETE
-            else None
-        )
         return self._record_outcome(
             tenant_id=tenant_id,
             result=result,
-            parse_error_category=parse_error_category,
+            parse_error_category=result.parse_error_category,
         )
 
     def _record_outcome(
@@ -228,6 +230,7 @@ class ConversationAdvancementService:
         *,
         tenant_id: str,
         session: ConversationSession,
+        renew_customer_claim: Callable[[], bool] | None = None,
     ) -> ConversationAdvancementResult:
         turns = self._conversation_state_store.list_turns(
             tenant_id=tenant_id,
@@ -249,6 +252,25 @@ class ConversationAdvancementService:
                 turn_appended=True,
                 draft_created=False,
                 resulting_order_id=None,
+                parse_error_category="PARSER_ERROR",
+            )
+
+        # The parser/LLM call has no upper bound on duration. Renew the
+        # customer claim now, before any draft/session write, so a lease
+        # that expired during parsing aborts the write phase instead of
+        # writing under a claim another holder may already own.
+        if renew_customer_claim is not None and not renew_customer_claim():
+            logger.warning(
+                "Customer claim lost while advancing conversation_id=%s; "
+                "aborting write phase",
+                session.conversation_id,
+            )
+            return ConversationAdvancementResult(
+                outcome=ConversationAdvancementOutcome.TURN_APPENDED_INCOMPLETE,
+                conversation_id=session.conversation_id,
+                turn_appended=True,
+                draft_created=False,
+                resulting_order_id=None,
             )
 
         request = parse_result.request
@@ -261,6 +283,13 @@ class ConversationAdvancementService:
                 draft_created=False,
                 resulting_order_id=None,
             )
+
+        revalidation = self._recover_from_create_draft_conflict(
+            tenant_id=tenant_id,
+            session=session,
+        )
+        if revalidation is not None:
+            return revalidation
 
         request = request.model_copy(
             update={

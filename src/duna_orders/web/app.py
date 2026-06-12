@@ -1,4 +1,6 @@
+import logging
 from urllib.parse import parse_qsl
+from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
@@ -11,6 +13,10 @@ from duna_orders.services.orders import OrderService
 from duna_orders.services.parsing import ParsingService
 from duna_orders.services.tenant_scoped_reads import TenantScopedReadService
 from duna_orders.storage.base import StorageInterface
+from duna_orders.storage.conversation_customer_claims import (
+    PostgresConversationCustomerClaimStore,
+    normalize_customer_claim_key,
+)
 from duna_orders.storage.conversation_orders import PostgresConversationOrderLookup
 from duna_orders.storage.conversation_state import PostgresConversationStateStore
 from duna_orders.storage.factory import build_storage
@@ -24,6 +30,9 @@ from duna_orders.storage.order_lifecycle import (
 )
 from duna_orders.storage.postgres import PostgresStorage
 
+logger = logging.getLogger(__name__)
+
+
 def create_app(
     *,
     app_settings: Settings = settings,
@@ -32,6 +41,7 @@ def create_app(
     processed_message_store: PostgresProcessedMessageStore | None = None,
     order_lifecycle_store: OrderLifecycleStore | None = None,
     conversation_advancement_service: ConversationAdvancementService | None = None,
+    conversation_customer_claim_store: PostgresConversationCustomerClaimStore | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Duna Orders Webhook")
     app.state.settings = app_settings
@@ -40,6 +50,7 @@ def create_app(
     app.state.processed_message_store = processed_message_store
     app.state.order_lifecycle_store = order_lifecycle_store
     app.state.conversation_advancement_service = conversation_advancement_service
+    app.state.conversation_customer_claim_store = conversation_customer_claim_store
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -80,32 +91,64 @@ def create_app(
         inbound_body = form_params.get("Body", "")
         tenant_id = app_settings.webhook_tenant_id
 
-        is_new_message = _get_processed_message_store(app).try_record_message(
-            message_sid=message_sid,
+        claim_store = _get_conversation_customer_claim_store(app)
+        holder_id = str(uuid4())
+        customer_key = normalize_customer_claim_key(tenant_id, customer_phone)
+
+        if not claim_store.try_acquire(
             tenant_id=tenant_id,
-            from_number=raw_sender,
-            raw_body=inbound_body,
-        )
+            customer_key=customer_key,
+            holder_id=holder_id,
+        ):
+            logger.info(
+                "Conversation claim busy for tenant_id=%s customer_key=%s; "
+                "returning 503 for redelivery",
+                tenant_id,
+                customer_key,
+            )
+            return Response(status_code=503)
 
-        if not is_new_message:
-            return Response(status_code=200)
-
-        if inbound_body.strip():
-            result = _get_conversation_advancement_service(app).advance(
-                tenant_id=tenant_id,
+        try:
+            is_new_message = _get_processed_message_store(app).try_record_message(
                 message_sid=message_sid,
-                from_number=customer_phone,
-                body=inbound_body,
-                received_at=utc_now(),
+                tenant_id=tenant_id,
+                from_number=raw_sender,
+                raw_body=inbound_body,
             )
 
-            if result.resulting_order_id is not None:
-                _get_processed_message_store(app).mark_order_created(
+            if not is_new_message:
+                return Response(status_code=200)
+
+            if inbound_body.strip():
+                def renew_customer_claim() -> bool:
+                    return claim_store.renew(
+                        tenant_id=tenant_id,
+                        customer_key=customer_key,
+                        holder_id=holder_id,
+                    )
+
+                result = _get_conversation_advancement_service(app).advance(
+                    tenant_id=tenant_id,
                     message_sid=message_sid,
-                    order_id=result.resulting_order_id,
+                    from_number=customer_phone,
+                    body=inbound_body,
+                    received_at=utc_now(),
+                    renew_customer_claim=renew_customer_claim,
                 )
 
-        return Response(status_code=200)
+                if result.resulting_order_id is not None:
+                    _get_processed_message_store(app).mark_order_created(
+                        message_sid=message_sid,
+                        order_id=result.resulting_order_id,
+                    )
+
+            return Response(status_code=200)
+        finally:
+            claim_store.release(
+                tenant_id=tenant_id,
+                customer_key=customer_key,
+                holder_id=holder_id,
+            )
 
     return app
 
@@ -145,6 +188,23 @@ def _get_processed_message_store(app: FastAPI) -> PostgresProcessedMessageStore:
             get_or_create_session_factory(database_url)
         )
         app.state.processed_message_store = store
+
+    return store
+
+
+def _get_conversation_customer_claim_store(app: FastAPI) -> PostgresConversationCustomerClaimStore:
+    store = app.state.conversation_customer_claim_store
+
+    if store is None:
+        database_url = app.state.settings.database_url
+
+        if not database_url:
+            raise RuntimeError("DATABASE_URL is required for conversation customer claims.")
+
+        store = PostgresConversationCustomerClaimStore(
+            get_or_create_session_factory(database_url)
+        )
+        app.state.conversation_customer_claim_store = store
 
     return store
 

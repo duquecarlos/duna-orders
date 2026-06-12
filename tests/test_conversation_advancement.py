@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -17,11 +19,16 @@ from duna_orders.domain.models import DraftItemRequest, DraftOrderRequest, Parse
 from duna_orders.parsing.exceptions import ParserError
 from duna_orders.services.conversation_advancement import (
     ConversationAdvancementOutcome,
+    ConversationAdvancementResult,
     ConversationAdvancementService,
 )
 from duna_orders.services.orders import OrderService
 from duna_orders.services.parsing import ParsingService
 from duna_orders.services.tenant_scoped_reads import TenantScopedReadService
+from duna_orders.storage.conversation_customer_claims import (
+    PostgresConversationCustomerClaimStore,
+    normalize_customer_claim_key,
+)
 from duna_orders.storage.conversation_orders import PostgresConversationOrderLookup
 from duna_orders.storage.conversation_state import PostgresConversationStateStore
 from duna_orders.storage.postgres import PostgresStorage
@@ -860,6 +867,133 @@ def test_parse_error_category_is_cleared_after_subsequent_draft_created(
     assert after_second.latest_parse_error_category is None
 
 
+def test_renew_customer_claim_called_after_parse_before_draft_write(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path, parser=MockParser(result=_complete_parse_result()))
+
+    renew_calls: list[int] = []
+
+    def renew_customer_claim() -> bool:
+        renew_calls.append(len(harness.parser.calls))
+        # The renew check happens after parsing but before any draft write.
+        assert harness.storage.list_orders() == []
+        return True
+
+    result = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas",
+        received_at=BASE_TIME,
+        renew_customer_claim=renew_customer_claim,
+    )
+
+    assert result.outcome == ConversationAdvancementOutcome.DRAFT_CREATED
+    assert renew_calls == [1]
+    assert len(harness.storage.list_orders()) == 1
+
+
+def test_renew_customer_claim_failure_aborts_write_phase_without_draft(
+    tmp_path: Path,
+) -> None:
+    parser = MockParser(result=_complete_parse_result())
+    harness = Harness(tmp_path, parser=parser)
+
+    result = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas",
+        received_at=BASE_TIME,
+        renew_customer_claim=lambda: False,
+    )
+
+    assert result.outcome == ConversationAdvancementOutcome.TURN_APPENDED_INCOMPLETE
+    assert result.turn_appended is True
+    assert result.draft_created is False
+    assert result.resulting_order_id is None
+
+    assert harness.storage.list_orders() == []
+    assert len(parser.calls) == 1
+
+    session = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=result.conversation_id,
+    )
+    assert session is not None
+    assert session.status == "open"
+    assert session.latest_advancement_outcome == "TURN_APPENDED_INCOMPLETE"
+    assert session.latest_parse_error_category is None
+
+
+def test_post_parse_revalidation_detects_concurrent_draft_and_returns_already_has_draft(
+    tmp_path: Path,
+) -> None:
+    parser = MockParser(result=_complete_parse_result())
+    harness = Harness(tmp_path, parser=parser)
+
+    session = harness.conversation_state_store.get_or_create_open_session(
+        tenant_id=TENANT_ID,
+        customer_phone=FROM_NUMBER,
+        received_at=BASE_TIME,
+    )
+
+    concurrent_order_ids: list[str] = []
+
+    def renew_customer_claim() -> bool:
+        # Simulate a concurrent advance for the same conversation completing
+        # while this call was parsing.
+        concurrent_order = harness.order_service.create_draft(
+            DraftOrderRequest(
+                tenant_id=TENANT_ID,
+                raw_message="concurrent draft from another request",
+                customer_name="Cliente Test",
+                customer_phone=session.customer_phone,
+                conversation_id=session.conversation_id,
+                items=[
+                    DraftItemRequest(
+                        tenant_id=TENANT_ID,
+                        product_id=PRODUCT_ID,
+                        quantity=Decimal("2"),
+                    ),
+                ],
+            )
+        )
+        concurrent_order_ids.append(concurrent_order.order_id)
+        return True
+
+    result = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas",
+        received_at=BASE_TIME,
+        renew_customer_claim=renew_customer_claim,
+    )
+
+    assert result.outcome == ConversationAdvancementOutcome.ALREADY_HAS_DRAFT
+    assert result.turn_appended is True
+    assert result.draft_created is False
+    assert result.resulting_order_id == concurrent_order_ids[0]
+    assert result.conversation_id == session.conversation_id
+
+    # Revalidation must recover the concurrently-created draft instead of
+    # attempting a second create_draft.
+    assert len(harness.storage.list_orders()) == 1
+    assert len(parser.calls) == 1
+
+    recovered_session = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=session.conversation_id,
+    )
+    assert recovered_session is not None
+    assert recovered_session.status == "draft_created"
+    assert recovered_session.resulting_order_id == concurrent_order_ids[0]
+    assert recovered_session.latest_advancement_outcome == "ALREADY_HAS_DRAFT"
+    assert recovered_session.latest_parse_error_category is None
+
+
 @pytest.mark.live_postgres
 def test_live_postgres_concurrent_advance_for_same_customer_creates_one_draft() -> None:
     if not settings.database_url:
@@ -928,6 +1062,258 @@ def test_live_postgres_concurrent_advance_for_same_customer_creates_one_draft() 
         resulting_order_ids = {result.resulting_order_id for result in results}
         assert None not in resulting_order_ids
         assert len(resulting_order_ids) == 1
+    finally:
+        _cleanup_tenant(engine, tenant_id)
+        engine.dispose()
+
+
+@pytest.mark.live_postgres
+def test_live_postgres_claim_serializes_same_customer_advance_and_creates_one_draft() -> None:
+    """A real per-customer claim makes the same-customer race deterministic.
+
+    Without a claim (see the unguarded race above), either call may observe
+    DRAFT_CREATED depending on commit timing, with ALREADY_HAS_DRAFT recovery
+    via an IntegrityError. With the webhook's claim acquired around each
+    advance() call, the second call cannot start until the first has fully
+    committed and released, so it always sees the session as already having
+    a draft - via the ordinary draft_created branch, not IntegrityError
+    recovery.
+    """
+    if not settings.database_url:
+        pytest.skip("DATABASE_URL is required for live_postgres tests")
+
+    upgrade(Config("alembic.ini"), "head")
+    engine = make_engine(settings.database_url)
+    session_factory = make_session_factory(engine)
+    tenant_id = f"tenant_live_claim_serialize_{uuid4().hex}"
+    customer_phone = f"whatsapp:+57{uuid4().hex[:10]}"
+
+    try:
+        _cleanup_tenant(engine, tenant_id)
+
+        storage = PostgresStorage(session_factory)
+        storage.upsert_product(
+            Product(
+                tenant_id=tenant_id,
+                product_id=PRODUCT_ID,
+                product_name="Empanada",
+                unit_price=Decimal("3000"),
+                current_stock=Decimal("100"),
+                active=True,
+            )
+        )
+
+        conversation_state_store = PostgresConversationStateStore(session_factory)
+        conversation_order_lookup = PostgresConversationOrderLookup(session_factory)
+        scoped_reads = TenantScopedReadService(storage)
+        parsing_service = ParsingService(
+            MockParser(result=_complete_parse_result()), storage
+        )
+        order_service = OrderService(storage)
+
+        service = ConversationAdvancementService(
+            conversation_state_store=conversation_state_store,
+            conversation_order_lookup=conversation_order_lookup,
+            scoped_reads=scoped_reads,
+            parsing_service=parsing_service,
+            order_service=order_service,
+        )
+
+        claim_store = PostgresConversationCustomerClaimStore(session_factory)
+        customer_key = normalize_customer_claim_key(tenant_id, customer_phone)
+        lease_duration = timedelta(seconds=30)
+
+        results: dict[str, ConversationAdvancementResult] = {}
+
+        def webhook_style_advance(message_sid: str) -> None:
+            holder_id = str(uuid4())
+
+            # Mirror the webhook's claim-busy/redelivery loop: a real
+            # delivery would be retried by Twilio after a 503.
+            while not claim_store.try_acquire(
+                tenant_id=tenant_id,
+                customer_key=customer_key,
+                holder_id=holder_id,
+                lease_duration=lease_duration,
+            ):
+                time.sleep(0.02)
+
+            try:
+                results[message_sid] = service.advance(
+                    tenant_id=tenant_id,
+                    message_sid=message_sid,
+                    from_number=customer_phone,
+                    body="quiero 2 empanadas",
+                    received_at=BASE_TIME,
+                    renew_customer_claim=lambda: claim_store.renew(
+                        tenant_id=tenant_id,
+                        customer_key=customer_key,
+                        holder_id=holder_id,
+                        lease_duration=lease_duration,
+                    ),
+                )
+            finally:
+                claim_store.release(
+                    tenant_id=tenant_id,
+                    customer_key=customer_key,
+                    holder_id=holder_id,
+                )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            list(
+                executor.map(
+                    webhook_style_advance, ["SM_CLAIM_RACE_1", "SM_CLAIM_RACE_2"]
+                )
+            )
+
+        outcomes = {result.outcome for result in results.values()}
+        assert outcomes == {
+            ConversationAdvancementOutcome.DRAFT_CREATED,
+            ConversationAdvancementOutcome.ALREADY_HAS_DRAFT,
+        }
+
+        resulting_order_ids = {result.resulting_order_id for result in results.values()}
+        assert None not in resulting_order_ids
+        assert len(resulting_order_ids) == 1
+    finally:
+        _cleanup_tenant(engine, tenant_id)
+        engine.dispose()
+
+
+@pytest.mark.live_postgres
+def test_live_postgres_claim_does_not_serialize_different_customers() -> None:
+    if not settings.database_url:
+        pytest.skip("DATABASE_URL is required for live_postgres tests")
+
+    upgrade(Config("alembic.ini"), "head")
+    engine = make_engine(settings.database_url)
+    session_factory = make_session_factory(engine)
+    tenant_id = f"tenant_live_claim_distinct_{uuid4().hex}"
+    customer_phone_a = f"whatsapp:+57{uuid4().hex[:10]}"
+    customer_phone_b = f"whatsapp:+57{uuid4().hex[:10]}"
+
+    try:
+        _cleanup_tenant(engine, tenant_id)
+
+        storage = PostgresStorage(session_factory)
+        storage.upsert_product(
+            Product(
+                tenant_id=tenant_id,
+                product_id=PRODUCT_ID,
+                product_name="Empanada",
+                unit_price=Decimal("3000"),
+                current_stock=Decimal("100"),
+                active=True,
+            )
+        )
+
+        conversation_state_store = PostgresConversationStateStore(session_factory)
+        conversation_order_lookup = PostgresConversationOrderLookup(session_factory)
+        scoped_reads = TenantScopedReadService(storage)
+        parsing_service = ParsingService(
+            MockParser(result=_complete_parse_result()), storage
+        )
+        order_service = OrderService(storage)
+
+        service = ConversationAdvancementService(
+            conversation_state_store=conversation_state_store,
+            conversation_order_lookup=conversation_order_lookup,
+            scoped_reads=scoped_reads,
+            parsing_service=parsing_service,
+            order_service=order_service,
+        )
+
+        claim_store = PostgresConversationCustomerClaimStore(session_factory)
+        lease_duration = timedelta(seconds=30)
+
+        worker_a_holding_claim = threading.Event()
+        worker_b_done = threading.Event()
+        results: dict[str, ConversationAdvancementResult] = {}
+
+        def worker_a() -> None:
+            holder_id = str(uuid4())
+            customer_key = normalize_customer_claim_key(tenant_id, customer_phone_a)
+            assert claim_store.try_acquire(
+                tenant_id=tenant_id,
+                customer_key=customer_key,
+                holder_id=holder_id,
+                lease_duration=lease_duration,
+            )
+            worker_a_holding_claim.set()
+
+            try:
+                results["a"] = service.advance(
+                    tenant_id=tenant_id,
+                    message_sid="SM_DIFF_CUSTOMER_A",
+                    from_number=customer_phone_a,
+                    body="quiero 2 empanadas",
+                    received_at=BASE_TIME,
+                    renew_customer_claim=lambda: claim_store.renew(
+                        tenant_id=tenant_id,
+                        customer_key=customer_key,
+                        holder_id=holder_id,
+                        lease_duration=lease_duration,
+                    ),
+                )
+            finally:
+                # Hold customer A's claim until B has finished - if B had to
+                # wait for it, B would time out instead of completing.
+                worker_b_done.wait(timeout=10)
+                claim_store.release(
+                    tenant_id=tenant_id,
+                    customer_key=customer_key,
+                    holder_id=holder_id,
+                )
+
+        def worker_b() -> None:
+            worker_a_holding_claim.wait(timeout=10)
+            holder_id = str(uuid4())
+            customer_key = normalize_customer_claim_key(tenant_id, customer_phone_b)
+
+            try:
+                assert claim_store.try_acquire(
+                    tenant_id=tenant_id,
+                    customer_key=customer_key,
+                    holder_id=holder_id,
+                    lease_duration=lease_duration,
+                )
+
+                results["b"] = service.advance(
+                    tenant_id=tenant_id,
+                    message_sid="SM_DIFF_CUSTOMER_B",
+                    from_number=customer_phone_b,
+                    body="quiero 2 empanadas",
+                    received_at=BASE_TIME,
+                    renew_customer_claim=lambda: claim_store.renew(
+                        tenant_id=tenant_id,
+                        customer_key=customer_key,
+                        holder_id=holder_id,
+                        lease_duration=lease_duration,
+                    ),
+                )
+            finally:
+                claim_store.release(
+                    tenant_id=tenant_id,
+                    customer_key=customer_key,
+                    holder_id=holder_id,
+                )
+                worker_b_done.set()
+
+        thread_a = threading.Thread(target=worker_a)
+        thread_b = threading.Thread(target=worker_b)
+        thread_a.start()
+        thread_b.start()
+        thread_a.join(timeout=15)
+        thread_b.join(timeout=15)
+
+        assert results["a"].outcome == ConversationAdvancementOutcome.DRAFT_CREATED
+        assert results["b"].outcome == ConversationAdvancementOutcome.DRAFT_CREATED
+
+        order_a_id = results["a"].resulting_order_id
+        order_b_id = results["b"].resulting_order_id
+        assert order_a_id is not None
+        assert order_b_id is not None
+        assert order_a_id != order_b_id
     finally:
         _cleanup_tenant(engine, tenant_id)
         engine.dispose()

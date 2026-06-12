@@ -539,8 +539,8 @@ Explicitly excluded:
 ## M9.6 - Lifecycle-spanning per-customer unit of work for conversation advancement
 
 Status: M9.6A closed (design only); M9.6B closed (validation spike only);
-M9.6C closed (production store foundation, unwired). M9.6D (runtime wiring)
-deferred.
+M9.6C closed (production store foundation, unwired); M9.6D closed (runtime
+wiring). M9.6E (idle-expiry runtime) deferred.
 
 M9.6 delivers the prerequisite identified in
 `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` section 4: a lifecycle-spanning,
@@ -672,15 +672,77 @@ Explicitly excluded:
 * No webhook, UI, parser, idle expiry, draft amendment, outbound, or payment
   changes.
 
-### M9.6D - Runtime wiring (deferred)
+### M9.6D - Runtime wiring (customer claim + webhook dedup reorder)
+
+Status: closed.
+
+Scope completed:
+
+* `POST /webhooks/twilio/whatsapp` acquires the per-customer claim
+  (`try_acquire(tenant_id, customer_key, holder_id)`) before recording
+  `MessageSid`, after signature/request validation. Claim-busy returns
+  `HTTP 503` immediately, before `try_record_message(...)`/`advance(...)`
+  and before any conversation/session/draft mutation, fixing the claim-busy
+  redelivery hazard: an unrecorded `MessageSid` lets Twilio's redelivery
+  re-enter processing instead of being swallowed as a duplicate.
+* A webhook-level `try/finally` releases the claim
+  (`claim_store.release(...)`) on every exit path after a successful
+  acquire, including the genuine-duplicate path (one extra acquire/release
+  round trip per duplicate delivery).
+* Added `ConversationAdvancementService.advance(...,
+  renew_customer_claim: Callable[[], bool] | None = None)`. The service
+  does not import the claim-store module (Option B); `web/app.py` supplies
+  a closure calling `claim_store.renew(...)`. The renew check runs once,
+  after the parser/LLM call returns and before any draft/session write; a
+  `False` result returns `TURN_APPENDED_INCOMPLETE` (turn already appended,
+  `parse_error_category=None`) and aborts the write phase with no new
+  outcome enum value.
+* Added post-parse revalidation immediately before `create_draft(...)`,
+  reusing the existing `_recover_from_create_draft_conflict(...)` /
+  `ALREADY_HAS_DRAFT` recovery path for a draft created during parsing.
+* Added `_get_conversation_customer_claim_store(app)` mirroring
+  `_get_processed_message_store(app)`; production webhook still requires
+  Postgres-backed storage, no no-op claim store in production.
+* Converted `tests/test_architecture_boundaries.py`'s claim-store import
+  guard to an allowlist (`web/app.py` only); `conversation_advancement.py`
+  remains forbidden, per Option B.
+* Added webhook claim-busy/dedup-reorder tests, release/finally coverage,
+  renew-callback and post-parse-revalidation advancement tests, and two
+  `live_postgres` concurrency tests proving same-customer serialization
+  (deterministic `{DRAFT_CREATED, ALREADY_HAS_DRAFT}`, one order) and
+  different-customer non-blocking.
+
+Explicitly excluded:
+
+* No migration; no `StorageInterface` change; no new
+  `ConversationAdvancementOutcome` value.
+* No runtime idle-boundary expiry; the M9.4E `strict=True` xfail remains
+  unchanged - see M9.6E.
+* No draft amendment, outbound replies, payment flow, parser prompt, or UI
+  changes.
+* `DEFAULT_CLAIM_LEASE_DURATION = timedelta(seconds=60)` is unchanged;
+  retuning against real pilot parse-latency data remains a future
+  follow-up.
+
+Deferred follow-ups:
+
+* A live/manual Twilio redelivery smoke for the claim-busy `503` path
+  (confirm Twilio retries and the redelivered `MessageSid` is processed,
+  not swallowed as a duplicate) has not been performed.
+
+### M9.6E - Idle-boundary expiry runtime (deferred)
 
 Status: not started.
 
-M9.6D will wire `try_acquire`/`renew`/`release` into
-`ConversationAdvancementService.advance(...)` per the sequence sketched in
-`docs/M9_6_CONVERSATION_UOW_DESIGN.md` section 8, and is the point at which
-`DEFAULT_CLAIM_LEASE_DURATION` should be revisited against real pilot
-parse-latency data.
+M9.6E is the first consumer of the M9.6D customer claim: runtime
+idle-boundary expiry per `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` and
+`docs/M9_6_CONVERSATION_UOW_DESIGN.md` section 9, gated by the same
+per-customer claim so an idle-boundary transition cannot race an in-flight
+`advance(...)` for the same customer. M9.6E is the milestone expected to
+flip
+`tests/test_conversation_state_store.py::test_draft_created_session_remains_latest_over_later_open_session_for_customer`
+from `strict=True` xfail to passing, per
+`docs/M9_6_CONVERSATION_UOW_DESIGN.md` section 11's conformance checklist.
 
 ## M8 - WhatsApp conversational ordering and Postgres runtime foundation
 

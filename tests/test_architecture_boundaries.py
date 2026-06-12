@@ -106,6 +106,12 @@ CLAIM_STORE_SCAN_ROOTS = frozenset(
     }
 )
 
+CLAIM_STORE_ALLOWED_IMPORT_MODULES = frozenset(
+    {
+        Path("src/duna_orders/web/app.py"),
+    }
+)
+
 
 def test_stage1_runtime_read_modules_are_all_guarded() -> None:
     assert KNOWN_STAGE1_RUNTIME_READ_MODULES <= ENFORCED_RUNTIME_READ_MODULES
@@ -183,8 +189,14 @@ def test_read_only_runtime_pages_do_not_use_mutation_apis() -> None:
     assert violations == []
 
 
-def test_no_runtime_module_imports_conversation_customer_claim_store() -> None:
-    """M9.6C's customer-claim store is unwired - only its own tests may import it."""
+def test_conversation_customer_claim_store_import_is_restricted_to_web_app() -> None:
+    """M9.6D wires the customer-claim store only into the webhook entrypoint.
+
+    src/duna_orders/web/app.py is the sole allowed importer; conversation
+    advancement reaches the claim lease via the renew_customer_claim
+    callback instead, so it - and every other module under the scanned
+    roots - must stay free of this import.
+    """
     violations: list[str] = []
 
     for root in sorted(CLAIM_STORE_SCAN_ROOTS):
@@ -195,6 +207,10 @@ def test_no_runtime_module_imports_conversation_customer_claim_store() -> None:
 
         for module_path in sorted(root_path.rglob("*.py")):
             relative_path = module_path.relative_to(REPO_ROOT)
+
+            if relative_path in CLAIM_STORE_ALLOWED_IMPORT_MODULES:
+                continue
+
             tree = ast.parse(module_path.read_text(encoding="utf-8"))
 
             for node in ast.walk(tree):
@@ -218,3 +234,21 @@ def test_no_runtime_module_imports_conversation_customer_claim_store() -> None:
                             )
 
     assert violations == []
+
+
+def test_web_app_imports_conversation_customer_claim_store() -> None:
+    """The sole allowlisted importer must actually use the claim store.
+
+    Keeps test_conversation_customer_claim_store_import_is_restricted_to_web_app
+    meaningful - an unused allowlist entry would let the guard pass while
+    silently no longer covering anything.
+    """
+    module_path = REPO_ROOT / "src/duna_orders/web/app.py"
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+
+    imported_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == CLAIM_STORE_MODULE:
+            imported_names.update(alias.name for alias in node.names)
+
+    assert imported_names & FORBIDDEN_CLAIM_STORE_IMPORT_NAMES

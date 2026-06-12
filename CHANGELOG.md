@@ -1,6 +1,152 @@
 # Changelog
 ## Unreleased
 
+### M9.6D - Runtime wiring (customer claim + webhook dedup reorder)
+
+Closed. Wires the M9.6C production customer-claim store into the live
+Twilio webhook advancement path; serializes existing
+`ConversationAdvancementService.advance(...)` behavior per customer, with no
+new product behavior.
+
+#### Delivered
+
+* `POST /webhooks/twilio/whatsapp` now acquires the per-customer claim
+  before recording `MessageSid`. Twilio signature/request validation
+  remains the first gate, unchanged, and runs before claim acquisition.
+  After validation, the webhook derives `tenant_id`/`customer_phone`,
+  generates `holder_id = str(uuid4())`, computes `customer_key =
+  normalize_customer_claim_key(tenant_id, customer_phone)`, and calls
+  `claim_store.try_acquire(tenant_id=..., customer_key=...,
+  holder_id=...)`.
+* **Fixes the claim-busy redelivery hazard**: when `try_acquire` returns
+  `False`, the webhook returns `HTTP 503` immediately, before
+  `processed_message_store.try_record_message(...)`, before `advance(...)`,
+  and before any conversation/session/draft state mutation or
+  `latest_advancement_outcome` write. Because the `MessageSid` was never
+  recorded, Twilio's redelivery for the same message re-enters processing
+  (and re-attempts claim acquisition) instead of being treated as an
+  already-processed duplicate. Logged via `logger.info(...)`. No new
+  `ConversationAdvancementOutcome` value was added; claim-busy is resolved
+  entirely at the webhook level, before `try_record_message`/`advance(...)`.
+* On a successful `try_acquire`, the webhook enters a webhook-level
+  `try/finally` wrapping `try_record_message(...)` and (if new)
+  `advance(...)`; `finally` calls `claim_store.release(tenant_id=...,
+  customer_key=..., holder_id=...)` on every exit path.
+* **Genuine duplicate flow**: `try_acquire` succeeds -> `try_record_message`
+  returns `False` (already recorded) -> webhook returns `200` without
+  calling `advance(...)` -> `finally` releases the claim. Each duplicate
+  delivery now does one extra acquire/release round trip; accepted as the
+  cost of claim-based serialization.
+* Added `ConversationAdvancementService.advance(...,
+  renew_customer_claim: Callable[[], bool] | None = None)`.
+  `conversation_advancement.py` does not import the claim-store module - it
+  receives only this opaque callback. `web/app.py` supplies
+  `renew_customer_claim() -> bool: return claim_store.renew(tenant_id=...,
+  customer_key=..., holder_id=...)`.
+* In `_advance_open_session(...)`, `renew_customer_claim()` is called once,
+  after the parser/LLM call returns and before any draft/session write (the
+  parser/LLM call has no upper bound, so the lease may have expired during
+  it). If it returns `False`, the lifecycle returns
+  `ConversationAdvancementOutcome.TURN_APPENDED_INCOMPLETE` (the turn was
+  already appended; `parse_error_category=None`, distinguishing claim loss
+  from a genuine `PARSER_ERROR`) and aborts the write phase without creating
+  a draft or marking the session `draft_created`. No new outcome enum value
+  was added.
+* Added `ConversationAdvancementResult.parse_error_category: str | None =
+  None` to carry this distinction.
+* Added post-parse revalidation: immediately before `create_draft(...)`,
+  `_advance_open_session(...)` calls
+  `_recover_from_create_draft_conflict(tenant_id=..., session=...)` a
+  second time. If a draft was created for this conversation during parsing,
+  this routes through the existing `ALREADY_HAS_DRAFT` recovery logic - the
+  same path already used for the post-`create_draft` `IntegrityError`
+  recovery - with no new logic or enum value.
+* Added `_get_conversation_customer_claim_store(app)` to `web/app.py`,
+  lazily constructing
+  `PostgresConversationCustomerClaimStore(get_or_create_session_factory(database_url))`
+  when not injected, mirroring `_get_processed_message_store(app)`. The
+  production webhook continues to require Postgres-backed storage for
+  advancement; there is no no-op/in-memory claim store in production.
+* Updated `tests/test_architecture_boundaries.py`'s claim-store import
+  guard from "forbidden everywhere under services/web/ui/pages" to an
+  allowlist: `CLAIM_STORE_ALLOWED_IMPORT_MODULES = {Path(
+  "src/duna_orders/web/app.py")}`. The import remains forbidden in
+  `conversation_advancement.py` (Option B avoids it) and every other
+  scanned module. Added
+  `test_web_app_imports_conversation_customer_claim_store()` so an unused
+  allowlist entry cannot silently pass.
+* Added webhook tests (`tests/test_web_twilio_webhook.py`): claim-busy
+  returns `503` without recording `MessageSid`, calling the parser, calling
+  `advance(...)`, or creating any order
+  (`test_twilio_webhook_claim_busy_returns_503_without_processing`);
+  genuine-duplicate extra acquire/release round trip without advancing
+  (`test_twilio_webhook_genuine_duplicate_does_extra_claim_round_trip_without_advancing`);
+  each duplicate `MessageSid` request does its own claim round trip
+  (`test_twilio_webhook_duplicate_message_sid_each_request_does_own_claim_round_trip`);
+  the renew callback invokes `claim_store.renew(...)`
+  (`test_twilio_webhook_advance_renew_callback_invokes_claim_store_renew`).
+  Added a `FakeConversationCustomerClaimStore` test double and a
+  `_create_app(...)` wrapper defaulting an isolated fake claim store for
+  every `create_app(...)` call site. Added acquire/release-pairing and
+  `held == {}` assertions to the success, existing-`MessageSid`,
+  parser-failure, and all-five-outcome tests.
+* Added conversation-advancement tests
+  (`tests/test_conversation_advancement.py`): `renew_customer_claim` is
+  called once, after the parser returns and before any draft/session write
+  (`test_renew_customer_claim_called_after_parse_before_draft_write`); a
+  `renew_customer_claim` returning `False` aborts the write phase with
+  `TURN_APPENDED_INCOMPLETE`, no draft, no order, and
+  `latest_parse_error_category=None`
+  (`test_renew_customer_claim_failure_aborts_write_phase_without_draft`);
+  post-parse revalidation detects a concurrent draft created during parsing
+  and returns `ALREADY_HAS_DRAFT` against the existing order
+  (`test_post_parse_revalidation_detects_concurrent_draft_and_returns_already_has_draft`).
+* Added two `live_postgres` concurrency tests
+  (`tests/test_conversation_advancement.py`):
+  `test_live_postgres_claim_serializes_same_customer_advance_and_creates_one_draft`
+  (webhook-style acquire/advance/release loop for the same customer via
+  `ThreadPoolExecutor`; the outcome set is now deterministically
+  `{DRAFT_CREATED, ALREADY_HAS_DRAFT}` with one resulting order, unlike the
+  pre-existing unguarded race test which could only assert a subset) and
+  `test_live_postgres_claim_does_not_serialize_different_customers` (two
+  different customers' claims do not block each other; both reach
+  `DRAFT_CREATED` with distinct orders).
+
+#### Excluded
+
+* No migration; no `StorageInterface` change.
+* No new `ConversationAdvancementOutcome` enum value.
+* No runtime idle-boundary expiry. The M9.4E `strict=True` xfail
+  (`tests/test_conversation_state_store.py::test_draft_created_session_remains_latest_over_later_open_session_for_customer`)
+  remains unchanged and xfailed; idle-expiry runtime is deferred to M9.6E.
+* No draft amendment, outbound replies, payment flow, parser prompt, or
+  `PROMPT_VERSION` changes.
+* No UI changes.
+* `live_sheets` was not run.
+
+#### Deferred
+
+* A live/manual Twilio redelivery smoke for the claim-busy `503` path
+  (confirm Twilio retries on `503` and that the redelivered `MessageSid` is
+  processed rather than swallowed as a duplicate) has not been performed and
+  is needed before relying on this behavior in production.
+* `DEFAULT_CLAIM_LEASE_DURATION = timedelta(seconds=60)` is unchanged and
+  remains tunable pending real pilot parse-latency data, per
+  `docs/M9_6_CONVERSATION_UOW_DESIGN.md` section 15.
+* Idle-boundary expiry runtime (M9.6E).
+
+#### Verification
+
+* `pytest -q` -> `658 passed, 45 deselected, 1 xfailed`.
+* `pytest tests/test_conversation_advancement.py -q -m live_postgres` ->
+  `3 passed`.
+* `pytest tests/test_conversation_customer_claim_store.py -q -m
+  live_postgres` -> `9 passed` (regression, unaffected).
+* `ruff check src tests pages` -> all checks passed.
+* `python -m compileall src tests pages` -> passed.
+* `git diff --check` -> passed (only benign LF/CRLF warnings).
+* `alembic heads` -> `5eb2de4cca12 (head)`; unchanged, no migration added.
+
 ### M9.6C - Production customer-claim store foundation
 
 Closed. Foundation only; unwired from runtime.
