@@ -1,6 +1,68 @@
 # Changelog
 ## Unreleased
 
+### M9.6D-fix - Accept-and-defer design for claim-busy (design only)
+
+Documented. Design only; no runtime/migration/StorageInterface changes.
+
+#### Delivered
+
+* A live smoke of M9.6D's claim-busy `503` strategy (baseline `ed31030`,
+  `MessageSid SMea149d267f55a8183b3452883b140abb`) proved it unsafe: Uvicorn
+  returned `503` with `processed_messages.sid_rows = 0` as designed (the
+  claim-before-dedup ordering worked), but no Twilio redelivery reached
+  Uvicorn within ~28 minutes, and the message was permanently lost. The
+  claim-busy `503` strategy is treated as **failed, not closed**.
+* Added `DECISIONS.md` entry "M9.6D-fix - Accept-and-defer replaces
+  claim-busy-via-503 (design only)" recording the full live-smoke evidence
+  (correct `customer_key` derivation, manual claim forcing, Twilio Request
+  Inspector `503`/warning `11200`, timestamps, fallback-URL rejection) and
+  the decision to replace claim-busy-`503` with accept-and-defer.
+* Added `docs/M9_6D_ACCEPT_AND_DEFER_CLAIM_BUSY_DESIGN.md`: on claim-busy,
+  durably persist the inbound message to a new `deferred_inbound` table and
+  return `202` (not `503`); drain pending rows for a customer
+  (`received_at`-ordered) via drain-on-release (`BackgroundTask`, in-process,
+  no new worker/scheduler) with a standalone sweep-script backstop for crash
+  recovery. Covers the `deferred_inbound` schema and indexes, the idempotent
+  defer-write, a full idempotency proof (deferred `MessageSid` is not yet in
+  `processed_messages`; reprocessing goes through the same
+  `try_record_message` dedup gate; `deferred_inbound` row is marked processed
+  only on a terminal outcome), an "ahead-of-queue" check that prevents a later
+  message from overtaking an earlier deferred one, and a shared
+  `_process_validated_inbound_message` function reused by the webhook and the
+  drain loop.
+* Added `docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md`: the manual smoke
+  procedure for the claim-busy path, recording the failed `503` baseline
+  result and documenting the future accept-and-defer (`202` +
+  `deferred_inbound` + drain) verification procedure for M9.6D-fix-impl.
+
+#### Excluded
+
+* No runtime implementation: no `deferred_inbound` table/store, no
+  defer-write, no `202` response change, no drain-on-release, no sweep
+  script.
+* No migration; no `StorageInterface` change. (A new Alembic migration with
+  `down_revision = "5eb2de4cca12"` is noted as required for M9.6D-fix-impl,
+  not added here.)
+* No change to `DEFAULT_CLAIM_LEASE_DURATION` (shortening it is noted as a
+  possible follow-up once accept-and-defer lands, not part of this slice).
+* No runtime idle-boundary expiry; the M9.4E `strict=True` xfail
+  (`tests/test_conversation_state_store.py::test_draft_created_session_remains_latest_over_later_open_session_for_customer`)
+  remains unchanged and xfailed.
+* No draft amendment, outbound replies, payment flow, parser prompt, or UI
+  changes.
+* `live_sheets` was not run.
+
+#### Verification
+
+* `git diff --stat` -> `CHANGELOG.md`, `ROADMAP.md`, `DECISIONS.md`,
+  `docs/M9_6D_ACCEPT_AND_DEFER_CLAIM_BUSY_DESIGN.md`, and
+  `docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md` only.
+* `alembic heads` -> `5eb2de4cca12 (head)`; unchanged, no migration added.
+* `pytest tests/test_conversation_state_store.py -q` -> 1 xfailed
+  (`test_draft_created_session_remains_latest_over_later_open_session_for_customer`,
+  unchanged).
+
 ### M9.6D - Runtime wiring (customer claim + webhook dedup reorder)
 
 Closed. Wires the M9.6C production customer-claim store into the live

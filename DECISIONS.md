@@ -1,4 +1,85 @@
 # Architectural Decisions
+## M9.6D-fix - Accept-and-defer replaces claim-busy-via-503 (design only)
+
+Decision:
+A live smoke of the M9.6D claim-busy strategy (`try_acquire` fails ->
+`HTTP 503`, relying on Twilio redelivery) proved unsafe: the redelivery half
+of the contract did not hold, and a message that hit claim-busy was
+permanently lost. Treat the M9.6D claim-busy `503` strategy as **failed, not
+closed**. Replace it with **accept-and-defer**: on claim-busy, durably
+persist the inbound message and return `HTTP 202`; Duna drains and
+reprocesses it itself once the customer's claim frees, independent of Twilio
+redelivery. The replacement design is recorded in
+`docs/M9_6D_ACCEPT_AND_DEFER_CLAIM_BUSY_DESIGN.md`. No runtime code,
+migration, or test changes are made by this decision; it is design-only.
+
+Details (live-smoke evidence, baseline `ed31030`):
+
+* Route under test: `POST /webhooks/twilio/whatsapp`.
+* The correct per-customer claim key is `+573223454241` - the value of
+  `normalize_customer_claim_key(tenant_id, customer_phone)` for the sandbox
+  sender - **not** `whatsapp:+573223454241`, the raw Twilio `From` header. A
+  `conversation_customer_claims` row was manually inserted with this key and
+  a future `lease_expires_at` to force the claim busy.
+* This manual claim successfully forced claim-busy: a real WhatsApp message
+  sent from the joined Twilio sandbox number triggered `try_acquire ->
+  False`, and the webhook returned `HTTP 503`.
+* Uvicorn logged
+  `POST /webhooks/twilio/whatsapp HTTP/1.1" 503 Service Unavailable`.
+* The triggering message's `MessageSid` was
+  `SMea149d267f55a8183b3452883b140abb`.
+* Twilio's Request Inspector recorded this delivery as HTTP `503` with
+  warning `11200`.
+* `processed_messages` had zero rows for this `MessageSid` (`sid_rows = 0`),
+  confirming the M9.6D claim-before-dedup ordering worked as designed - the
+  `MessageSid` was never recorded on the busy path.
+* The first `503` was logged at approximately `2026-06-12 19:01:22 UTC`. The
+  manually-held claim remained in place until approximately
+  `2026-06-12 19:29:12 UTC` (~28 minutes later).
+* In that ~28-minute window, no retry/redelivery for `MessageSid
+  SMea149d267f55a8183b3452883b140abb` reached Uvicorn. The message was never
+  processed: no `processed_messages`, `conversation_turns`, or `orders` row
+  was ever created for it.
+* A Twilio fallback URL was considered as a remediation and rejected: a
+  fallback URL would route to the same backend and the same per-customer
+  claim, and would fail the same way (still busy) - it does not change the
+  outcome.
+
+Rationale:
+
+* The M9.6D claim-before-dedup ordering is correct on its own terms - it
+  successfully avoided recording a `MessageSid` that the busy-path response
+  could not yet process. But "claim-busy returns a non-2xx and relies on
+  Twilio redelivery" is a two-part contract, and the live smoke shows the
+  redelivery half did not hold in this environment within an operationally
+  useful window (if at all). A strategy whose safety depends on an unproven
+  redelivery guarantee is not safe, regardless of how correct the other half
+  is.
+* Accept-and-defer removes the dependency on Twilio redelivery entirely for
+  the claim-busy path: the message is durably captured in a new
+  `deferred_inbound` table before the webhook returns `202`, and Duna's own
+  drain-on-release (plus a sweep backstop) reprocesses it on Duna's timeline.
+  `docs/M9_6D_ACCEPT_AND_DEFER_CLAIM_BUSY_DESIGN.md` records the full schema,
+  idempotency proof, drain trigger, ordering guarantee, and scope boundary.
+
+Deferred:
+
+* The `deferred_inbound` table, its store, the defer-write/`202` change, the
+  shared reprocessing function, drain-on-release, and the sweep backstop are
+  all implementation work for **M9.6D-fix-impl**, not done here.
+* A new Alembic migration (`down_revision = "5eb2de4cca12"`) for
+  `deferred_inbound` is required for M9.6D-fix-impl; not added here.
+* `docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md` records the future
+  accept-and-defer verification procedure; it has not yet been run (no
+  implementation exists yet to verify).
+* `DEFAULT_CLAIM_LEASE_DURATION = timedelta(seconds=60)` is unchanged.
+  Shortening it is a possible follow-up once accept-and-defer is implemented
+  (see design doc section 7), not part of this decision.
+* Runtime idle-boundary expiry (M9.6E) is untouched; the M9.4E `strict=True`
+  xfail
+  (`tests/test_conversation_state_store.py::test_draft_created_session_remains_latest_over_later_open_session_for_customer`)
+  remains unchanged and xfailed.
+
 ## M9.3A - Webhook wiring to conversation advancement is implemented
 
 Decision:

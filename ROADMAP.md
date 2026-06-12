@@ -540,7 +540,8 @@ Explicitly excluded:
 
 Status: M9.6A closed (design only); M9.6B closed (validation spike only);
 M9.6C closed (production store foundation, unwired); M9.6D closed (runtime
-wiring). M9.6E (idle-expiry runtime) deferred.
+wiring); M9.6D-fix closed (accept-and-defer design only, replaces M9.6D's
+claim-busy-`503` strategy). M9.6E (idle-expiry runtime) deferred.
 
 M9.6 delivers the prerequisite identified in
 `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` section 4: a lifecycle-spanning,
@@ -729,6 +730,53 @@ Deferred follow-ups:
 * A live/manual Twilio redelivery smoke for the claim-busy `503` path
   (confirm Twilio retries and the redelivered `MessageSid` is processed,
   not swallowed as a duplicate) has not been performed.
+
+### M9.6D-fix - Accept-and-defer design for claim-busy
+
+Status: closed (design only).
+
+The M9.6D deferred follow-up above was performed: a live smoke of the
+claim-busy `503` strategy (baseline `ed31030`,
+`MessageSid SMea149d267f55a8183b3452883b140abb`) showed Uvicorn correctly
+returned `503` with `processed_messages.sid_rows = 0`, but no Twilio
+redelivery reached Uvicorn within ~28 minutes - the message was permanently
+lost. The claim-busy `503` strategy is therefore treated as failed, not
+closed.
+
+Scope completed:
+
+* Added `DECISIONS.md` entry "M9.6D-fix - Accept-and-defer replaces
+  claim-busy-via-503 (design only)" recording the full live-smoke evidence
+  and the replacement decision.
+* Added `docs/M9_6D_ACCEPT_AND_DEFER_CLAIM_BUSY_DESIGN.md`: on claim-busy,
+  persist the inbound message to a new `deferred_inbound` table (schema,
+  unique `message_sid`, partial index for draining) and return `202`, not
+  `503`. Drain pending rows for a customer in `received_at` order via
+  drain-on-release (in-process `BackgroundTask`, no new worker/scheduler)
+  with a standalone sweep-script backstop for crash recovery. Includes a
+  full idempotency proof, an "ahead-of-queue" check preventing a later
+  message from overtaking an earlier deferred one, and a shared
+  `_process_validated_inbound_message` function reused by the webhook and
+  the drain loop.
+* Added `docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md`: records the failed
+  `503` baseline result and the future accept-and-defer verification
+  procedure for M9.6D-fix-impl.
+
+Explicitly excluded:
+
+* No runtime implementation: no `deferred_inbound` table/store, defer-write,
+  `202` response change, drain-on-release, or sweep script.
+* No migration; no `StorageInterface` change.
+* No change to `DEFAULT_CLAIM_LEASE_DURATION`.
+* No runtime idle-boundary expiry; the M9.4E `strict=True` xfail remains
+  unchanged - see M9.6E.
+* No draft amendment, outbound replies, payment flow, parser, or UI changes.
+
+M9.6D-fix-impl (not started) is the implementation of this design: the
+`deferred_inbound` table and migration, `PostgresDeferredInboundStore`, the
+defer-write/`202` change, the shared reprocessing function,
+drain-on-release, the sweep-script backstop, and a live re-smoke per
+`docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md`.
 
 ### M9.6E - Idle-boundary expiry runtime (deferred)
 
