@@ -595,6 +595,65 @@ def test_get_latest_session_for_customer_returns_draft_created_session(
     assert latest.resulting_order_id == "ord_latest_draft"
 
 
+@pytest.mark.xfail(
+    reason=(
+        "M9.4E idle expiry deferred: needs lifecycle-spanning "
+        "per-customer serialization; see docs/M9_4E_IDLE_BOUNDARY_DESIGN.md"
+    ),
+    strict=True,
+)
+def test_draft_created_session_remains_latest_over_later_open_session_for_customer(
+    tmp_path: Path,
+) -> None:
+    """Acceptance test for a future M9.4E idle-boundary implementation.
+
+    A future idle-boundary transition can create a new open session for a
+    customer that already has a draft_created session, e.g. when a
+    concurrent advance() call's create_draft/mark_draft_created for `old`
+    lands only after the idle path has already opened `new` for the same
+    customer. For that customer, `old` (draft_created) must remain the
+    routing authority -- the next inbound message must route
+    ALREADY_HAS_DRAFT to `old`, not start fresh parsing against `new`.
+
+    Currently xfail: get_latest_session_for_customer orders purely by
+    last_message_at/updated_at/opened_at/conversation_id, so a later open
+    session always outranks an earlier draft_created session regardless of
+    status. A correct implementation must either make a draft_created
+    session win "latest" over a later open session for the same customer,
+    or prevent the competing open session from being created at all.
+    """
+    store = _store(tmp_path)
+
+    old = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    store.mark_draft_created(
+        tenant_id=TENANT_A,
+        conversation_id=old.conversation_id,
+        order_id="ord_first_conversation",
+    )
+
+    new = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME + timedelta(hours=5),
+    )
+    assert new.conversation_id != old.conversation_id
+    assert new.status == "open"
+
+    latest = store.get_latest_session_for_customer(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+    )
+
+    assert latest is not None
+    assert latest.conversation_id == old.conversation_id
+    assert latest.status == "draft_created"
+    assert latest.resulting_order_id == "ord_first_conversation"
+
+
 def test_get_latest_session_for_customer_returns_most_recent_by_last_message_at(
     tmp_path: Path,
 ) -> None:

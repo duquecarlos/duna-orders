@@ -6,7 +6,8 @@ latest-session lookup implemented; M9.2C advancement service implemented;
 M9.3A webhook wiring implemented; M9.4A conversation advancement hardening
 tests implemented; M9.4B observability/read-model design refined; M9.4C
 read-only conversation observation/read-model implemented; M9.4D persisted
-conversation advancement observability implemented.
+conversation advancement observability implemented; M9.4E idle-boundary
+design recorded and runtime expiry deferred. M9 closed.
 
 Baseline: `6bd4c40 docs(outbound): close retry attempt limit`
 
@@ -676,9 +677,59 @@ Explicitly excluded:
 * no `StorageInterface` changes;
 * `live_sheets` not run.
 
-Remaining M9.4 work:
+#### M9.4E - Idle-boundary design and deferral
 
-* idle-boundary behavior/design.
+Status: design recorded in `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md`; runtime
+idle-boundary expiry deferred.
+
+Scope completed:
+
+* documented the intended idle policy: idle boundary =
+  `received_at - open_session.last_message_at > DEFAULT_IDLE_THRESHOLD`
+  (default 4 hours), applying only to `status="open"`; `draft_created`
+  never auto-expires; `expired`/`failed` remain terminal/non-routable; a
+  post-idle message starts a brand-new conversation with
+  `sequence_number=1` and no inherited transcript context;
+* documented the required cross-session invariant for
+  `(tenant_id, customer_phone)`: at most one routable session; a successful
+  `create_draft(...)` must drive its producing session to
+  `draft_created`/`resulting_order_id`; idle expiry must not let a new
+  `open` session win over an existing `draft_created` session for the same
+  customer; `mark_draft_created(...)` must never silently no-op into an
+  expired/unlinked row; `get_latest_session_for_customer(...)` must keep a
+  `draft_created` session as the routing answer over a later `open` session,
+  or the competing `open` session must not be created;
+* added
+  `tests/test_conversation_state_store.py::test_draft_created_session_remains_latest_over_later_open_session_for_customer`
+  as a `strict=True` xfail acceptance test reproducing the invalid terminal
+  state (`old=draft_created`, `new=open` and `latest`) for a future
+  implementation;
+* documented why a runtime implementation attempt was reverted: each
+  `PostgresConversationStateStore` method opens its own
+  `session_scope`/transaction, so a transaction-scoped
+  `pg_advisory_xact_lock` inside one method cannot protect the
+  `_route_session -> append_turn_if_new -> parse -> create_draft ->
+  mark_draft_created -> record_advancement_attempt` lifecycle that spans
+  multiple store calls, and a naive session-scoped service-level lock can
+  self-deadlock against those inner calls' own connections;
+* documented the future prerequisite: a lifecycle-spanning, per-customer
+  unit of work for conversation advancement that also resolves how to bound
+  serialization around parser/LLM/network latency without pinning a
+  database connection for the duration of an external API call.
+
+Explicitly excluded:
+
+* no runtime idle-boundary expiry;
+* no `status="expired"` writes by runtime code;
+* no migration;
+* no `StorageInterface` changes;
+* no UI;
+* `live_sheets` not run.
+
+See `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` for the full design, including the
+required invariant and the acceptance-test walkthrough.
+
+Remaining M9.4 work: none. M9.4 is closed.
 
 ## 12. What M9 will and will not touch
 

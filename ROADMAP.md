@@ -8,8 +8,10 @@ Detailed completed work belongs in `CHANGELOG.md`. This file only keeps mileston
 
 ## M9 - Conversation state architecture
 
-Status: M9.3A closed; M9.4A closed; M9.4B closed; M9.4C closed; M9.4D closed;
-remaining M9.4 scope (idle-boundary behavior/design) planned.
+Status: closed. M9.3A closed; M9.4A closed; M9.4B closed; M9.4C closed;
+M9.4D closed; M9.4E closed (design/deferral). Runtime idle-boundary expiry
+is deferred to a future milestone (lifecycle-spanning unit of work for
+conversation advancement).
 
 M9 introduces conversation state as the next real WhatsApp capability. The goal
 is to support customers who order across multiple messages while preserving the
@@ -235,8 +237,8 @@ Deferred follow-up:
 
 ### M9.4 - Tests and observability hardening
 
-Status: M9.4A closed; M9.4B closed; M9.4C closed; M9.4D closed; remaining
-M9.4 scope (idle-boundary behavior/design) planned.
+Status: closed. M9.4A closed; M9.4B closed; M9.4C closed; M9.4D closed;
+M9.4E closed (design/deferral).
 
 Scope:
 
@@ -392,9 +394,63 @@ Explicitly excluded:
 * No `StorageInterface` changes.
 * `live_sheets` was not run.
 
-Remaining M9.4 scope:
+### M9.4E - Idle-boundary design and deferral
 
-* Idle-boundary behavior/design.
+Status: closed (design/deferral only).
+
+Scope completed:
+
+* Added `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md`, documenting the intended idle
+  policy, the required cross-session invariant for
+  `(tenant_id, customer_phone)`, why a runtime implementation attempt was
+  deferred, and the future prerequisite.
+* Documented the intended idle policy: idle boundary =
+  `received_at - open_session.last_message_at > DEFAULT_IDLE_THRESHOLD`
+  (default 4 hours), applies only to `status="open"`, `draft_created` never
+  auto-expires, `expired`/`failed` remain terminal/non-routable, and a
+  post-idle message starts a brand-new conversation with
+  `sequence_number=1` and no inherited transcript context.
+* Documented the required invariant: at most one routable session per
+  `(tenant_id, customer_phone)`; a successful `create_draft(...)` must
+  always drive its producing session to `draft_created`/
+  `resulting_order_id`; idle expiry must never let a new `open` session win
+  over a customer's existing `draft_created` session; `mark_draft_created`
+  must never silently no-op into an expired/unlinked row.
+* Added
+  `tests/test_conversation_state_store.py::test_draft_created_session_remains_latest_over_later_open_session_for_customer`
+  as a `strict=True` xfail acceptance test reproducing the invalid terminal
+  state (`old=draft_created`, `new=open` and `latest`) that a future
+  implementation must prevent.
+* Confirmed runtime behavior is unchanged from `e84a844`:
+  `conversation_state.py`, `conversation_observation.py`, and
+  `conversation_advancement.py` are unchanged; no migration; no
+  `status="expired"` is written by runtime code.
+
+Why deferred:
+
+* A prior implementation attempt proved that store-method-scoped
+  `pg_advisory_xact_lock` cannot protect the
+  `_route_session -> append_turn_if_new -> parse -> create_draft ->
+  mark_draft_created -> record_advancement_attempt` lifecycle, because each
+  `PostgresConversationStateStore` method opens its own
+  `session_scope`/transaction and the lock releases between methods.
+* Correct idle-boundary behavior requires a lifecycle-spanning, per-customer
+  unit of work, which is a larger architectural change out of scope for
+  M9.4E.
+
+Deferred to a future milestone ("Lifecycle-spanning unit of work for
+conversation advancement"):
+
+* Runtime idle-boundary expiry
+  (`get_or_create_open_session_after_idle_boundary(...)` or equivalent).
+* Per-customer serialization across the full advancement lifecycle,
+  including how to bound serialization around parser/LLM/network latency.
+* Any change to `get_latest_session_for_customer(...)` ordering needed so a
+  `draft_created` session wins "latest" over a later `open` session for the
+  same customer, or an equivalent prevention of the competing `open`
+  session.
+
+Remaining M9.4 scope: none. M9.4 is closed.
 
 ## M8 - WhatsApp conversational ordering and Postgres runtime foundation
 

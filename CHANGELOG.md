@@ -1,6 +1,75 @@
 # Changelog
 ## Unreleased
 
+### M9.4E - Idle-boundary design and deferral
+
+Documented. Runtime idle-boundary expiry is deferred.
+
+#### Delivered
+
+* Added `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md`, recording the intended idle
+  policy, the required `(tenant_id, customer_phone)` invariant, why a
+  runtime implementation attempt was deferred, and the future
+  lifecycle-spanning unit-of-work prerequisite.
+* Added
+  `tests/test_conversation_state_store.py::test_draft_created_session_remains_latest_over_later_open_session_for_customer`,
+  a `strict=True` xfail acceptance test reproducing the invalid terminal
+  state (`old=draft_created`, `new=open` and `latest`) that a future
+  implementation must prevent.
+* Updated `ROADMAP.md`, `docs/M9_CONVERSATION_STATE_ARCHITECTURE.md`, and
+  `docs/M9_4B_CONVERSATION_OBSERVABILITY_READ_MODEL_DESIGN.md` to close M9.4
+  as design/deferral and cross-reference
+  `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md`.
+
+#### Reverted
+
+* A prior uncommitted M9.4E runtime attempt (advisory-lock-based
+  `mark_draft_created(...)`, `get_or_create_open_session_after_idle_boundary(...)`,
+  `_try_idle_boundary_transition(...)`, and `_route_session(...)`
+  idle-boundary wiring) was fully reverted from
+  `src/duna_orders/storage/conversation_state.py`,
+  `src/duna_orders/storage/conversation_observation.py`, and
+  `src/duna_orders/services/conversation_advancement.py` back to
+  `e84a844`.
+* `mark_draft_created(...)` is back to its exact pre-M9.4E behavior: it
+  marks `status="draft_created"` / `resulting_order_id=order_id` regardless
+  of the row's current status, is idempotent for the same `order_id`, and
+  raises `ValueError` if linked to a different order.
+* `DEFAULT_IDLE_THRESHOLD` remains defined locally in
+  `conversation_observation.py`, as it was before the attempt.
+* The broad M9.4E runtime test additions to
+  `tests/test_conversation_state_store.py`,
+  `tests/test_conversation_advancement.py`, and
+  `tests/test_conversation_observation.py` were reverted, leaving only the
+  one xfail acceptance test added on top of the `e84a844` baseline.
+
+#### Excluded
+
+* No runtime idle-boundary expiry behavior.
+* No `status="expired"` writes by runtime code.
+* No migration.
+* No `StorageInterface` changes.
+* No UI / operator page.
+* `live_sheets` was not run.
+
+#### Verification
+
+* `alembic heads` -> `11605e30520d (head)`.
+* `git diff -- alembic/versions` -> empty.
+* `pytest tests/test_conversation_state_store.py -q` -> 29 passed,
+  4 deselected, 1 xfailed.
+* `pytest tests/test_conversation_advancement.py -q` -> 18 passed,
+  1 deselected.
+* `pytest tests/test_conversation_observation.py -q` -> 18 passed.
+* `pytest tests/test_web_twilio_webhook.py -q` -> 25 passed.
+* `pytest tests/test_postgres_models.py tests/test_smoke_preflight.py -q`
+  -> 31 passed.
+* `pytest tests/test_architecture_boundaries.py -q` -> 2 passed.
+* `pytest -q` -> 602 passed, 30 deselected, 1 xfailed.
+* `ruff check src tests pages` -> all checks passed.
+* `python -m compileall src tests pages` -> passed.
+* `git diff --check` -> passed.
+
 ### M9.4D - Persisted conversation advancement observability
 
 Implemented in `1b33d8a feat(m9): add conversation advancement observability

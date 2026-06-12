@@ -11,7 +11,9 @@ hooks for a later operator conversation view. It answers two questions:
 * What is genuinely missing, and what would it take to add it?
 
 M9.4B is docs/design only. M9.4C and M9.4D were implemented later (see
-sections 11 and 12).
+sections 11 and 12). M9.4E (idle-boundary behavior/design, the second
+remaining M9.4 scope item from section 5) was closed as design/deferral; see
+`docs/M9_4E_IDLE_BOUNDARY_DESIGN.md`.
 
 ```text
 draft -> approved -> confirmed -> atomic inventory commit -> outbound acknowledgement
@@ -434,10 +436,14 @@ Scope completed:
 Explicitly excluded: UI, idle-boundary policy, draft amendment, parser prompt
 or `PROMPT_VERSION` changes.
 
-### Idle-boundary behavior/design - separate, later slice
+### Idle-boundary behavior/design - separate, later slice (M9.4E)
 
-Not part of M9.4B, M9.4C, or M9.4D. Tracked as the second remaining M9.4 scope
-item ("idle-boundary behavior/design") in `ROADMAP.md`.
+Not part of M9.4B, M9.4C, or M9.4D. Closed as design/deferral in M9.4E; see
+`docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` for the intended idle policy, the
+required `(tenant_id, customer_phone)` invariant, why a runtime
+implementation attempt was deferred, and the future lifecycle-spanning
+unit-of-work prerequisite. Runtime idle-boundary expiry remains
+unimplemented.
 
 ## 8. Required tests (future, per slice)
 
