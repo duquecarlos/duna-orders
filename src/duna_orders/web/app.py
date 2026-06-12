@@ -1,4 +1,7 @@
 import logging
+from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
 from urllib.parse import parse_qsl
 from uuid import uuid4
 
@@ -31,6 +34,93 @@ from duna_orders.storage.order_lifecycle import (
 from duna_orders.storage.postgres import PostgresStorage
 
 logger = logging.getLogger(__name__)
+
+
+class ValidatedInboundProcessingOutcome(Enum):
+    PROCESSED = "processed"
+    DUPLICATE = "duplicate"
+    CLAIM_BUSY = "claim_busy"
+
+
+@dataclass(frozen=True)
+class ValidatedInboundProcessingResult:
+    outcome: ValidatedInboundProcessingOutcome
+
+
+def _process_validated_inbound_message(
+    *,
+    app: FastAPI,
+    tenant_id: str,
+    message_sid: str,
+    raw_sender: str,
+    customer_phone: str,
+    inbound_body: str,
+    received_at: datetime,
+) -> ValidatedInboundProcessingResult:
+    claim_store = _get_conversation_customer_claim_store(app)
+    holder_id = str(uuid4())
+    customer_key = normalize_customer_claim_key(tenant_id, customer_phone)
+
+    if not claim_store.try_acquire(
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+        holder_id=holder_id,
+    ):
+        logger.info(
+            "Conversation claim busy for tenant_id=%s customer_key=%s; "
+            "returning 503 for redelivery",
+            tenant_id,
+            customer_key,
+        )
+        return ValidatedInboundProcessingResult(
+            outcome=ValidatedInboundProcessingOutcome.CLAIM_BUSY
+        )
+
+    try:
+        is_new_message = _get_processed_message_store(app).try_record_message(
+            message_sid=message_sid,
+            tenant_id=tenant_id,
+            from_number=raw_sender,
+            raw_body=inbound_body,
+        )
+
+        if not is_new_message:
+            return ValidatedInboundProcessingResult(
+                outcome=ValidatedInboundProcessingOutcome.DUPLICATE
+            )
+
+        if inbound_body.strip():
+            def renew_customer_claim() -> bool:
+                return claim_store.renew(
+                    tenant_id=tenant_id,
+                    customer_key=customer_key,
+                    holder_id=holder_id,
+                )
+
+            result = _get_conversation_advancement_service(app).advance(
+                tenant_id=tenant_id,
+                message_sid=message_sid,
+                from_number=customer_phone,
+                body=inbound_body,
+                received_at=received_at,
+                renew_customer_claim=renew_customer_claim,
+            )
+
+            if result.resulting_order_id is not None:
+                _get_processed_message_store(app).mark_order_created(
+                    message_sid=message_sid,
+                    order_id=result.resulting_order_id,
+                )
+
+        return ValidatedInboundProcessingResult(
+            outcome=ValidatedInboundProcessingOutcome.PROCESSED
+        )
+    finally:
+        claim_store.release(
+            tenant_id=tenant_id,
+            customer_key=customer_key,
+            holder_id=holder_id,
+        )
 
 
 def create_app(
@@ -91,64 +181,20 @@ def create_app(
         inbound_body = form_params.get("Body", "")
         tenant_id = app_settings.webhook_tenant_id
 
-        claim_store = _get_conversation_customer_claim_store(app)
-        holder_id = str(uuid4())
-        customer_key = normalize_customer_claim_key(tenant_id, customer_phone)
-
-        if not claim_store.try_acquire(
+        result = _process_validated_inbound_message(
+            app=app,
             tenant_id=tenant_id,
-            customer_key=customer_key,
-            holder_id=holder_id,
-        ):
-            logger.info(
-                "Conversation claim busy for tenant_id=%s customer_key=%s; "
-                "returning 503 for redelivery",
-                tenant_id,
-                customer_key,
-            )
+            message_sid=message_sid,
+            raw_sender=raw_sender,
+            customer_phone=customer_phone,
+            inbound_body=inbound_body,
+            received_at=utc_now(),
+        )
+
+        if result.outcome is ValidatedInboundProcessingOutcome.CLAIM_BUSY:
             return Response(status_code=503)
 
-        try:
-            is_new_message = _get_processed_message_store(app).try_record_message(
-                message_sid=message_sid,
-                tenant_id=tenant_id,
-                from_number=raw_sender,
-                raw_body=inbound_body,
-            )
-
-            if not is_new_message:
-                return Response(status_code=200)
-
-            if inbound_body.strip():
-                def renew_customer_claim() -> bool:
-                    return claim_store.renew(
-                        tenant_id=tenant_id,
-                        customer_key=customer_key,
-                        holder_id=holder_id,
-                    )
-
-                result = _get_conversation_advancement_service(app).advance(
-                    tenant_id=tenant_id,
-                    message_sid=message_sid,
-                    from_number=customer_phone,
-                    body=inbound_body,
-                    received_at=utc_now(),
-                    renew_customer_claim=renew_customer_claim,
-                )
-
-                if result.resulting_order_id is not None:
-                    _get_processed_message_store(app).mark_order_created(
-                        message_sid=message_sid,
-                        order_id=result.resulting_order_id,
-                    )
-
-            return Response(status_code=200)
-        finally:
-            claim_store.release(
-                tenant_id=tenant_id,
-                customer_key=customer_key,
-                holder_id=holder_id,
-            )
+        return Response(status_code=200)
 
     return app
 

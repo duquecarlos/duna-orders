@@ -19,6 +19,7 @@ from duna_orders.domain.models import (
     Product,
     Order,
     OrderStatusTransition,
+    utc_now,
 )
 from duna_orders.services.conversation_advancement import (
     ConversationAdvancementOutcome,
@@ -35,7 +36,11 @@ from duna_orders.storage.postgres import PostgresStorage
 from duna_orders.storage.postgres_base import Base
 from duna_orders.storage.postgres_session import make_engine, make_session_factory
 from duna_orders.storage.processed_messages import PostgresProcessedMessageStore
-from duna_orders.web.app import create_app
+from duna_orders.web.app import (
+    ValidatedInboundProcessingOutcome,
+    _process_validated_inbound_message,
+    create_app,
+)
 from tests._fakes import MockParser
 from tests.conftest import DEFAULT_TEST_TENANT_ID
 from duna_orders.parsing.exceptions import ParserError
@@ -1415,3 +1420,81 @@ def test_twilio_webhook_advance_renew_callback_invokes_claim_store_renew(
     # must still call through to the claim store with the right identity.
     assert renew_customer_claim() is False
     assert claim_store.renew_calls == [(tenant_id, customer_key, holder_id)]
+
+
+def test_process_validated_inbound_message_outcome_mapping(tmp_path: Path) -> None:
+    storage = InMemoryStorage()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    claim_store = FakeConversationCustomerClaimStore()
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+    )
+
+    tenant_id = DEFAULT_TEST_TENANT_ID
+    customer_phone = "+573001112233"
+    raw_sender = "whatsapp:+573001112233"
+    customer_key = normalize_customer_claim_key(tenant_id, customer_phone)
+
+    # CLAIM_BUSY: another holder already holds the conversation claim, so the
+    # message is neither recorded nor advanced.
+    assert claim_store.try_acquire(
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+        holder_id="other-holder",
+    )
+
+    busy_result = _process_validated_inbound_message(
+        app=app,
+        tenant_id=tenant_id,
+        message_sid="SM_HELPER_BUSY",
+        raw_sender=raw_sender,
+        customer_phone=customer_phone,
+        inbound_body="Buenas, una bandeja paisa",
+        received_at=utc_now(),
+    )
+
+    assert busy_result.outcome is ValidatedInboundProcessingOutcome.CLAIM_BUSY
+    assert processed_store.get_message("SM_HELPER_BUSY") is None
+    assert fake_service.calls == []
+    assert claim_store.held[(tenant_id, customer_key)] == "other-holder"
+
+    claim_store.release(
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+        holder_id="other-holder",
+    )
+
+    # PROCESSED: a brand-new message with a non-empty body advances once.
+    processed_result = _process_validated_inbound_message(
+        app=app,
+        tenant_id=tenant_id,
+        message_sid="SM_HELPER_NEW",
+        raw_sender=raw_sender,
+        customer_phone=customer_phone,
+        inbound_body="Buenas, una bandeja paisa",
+        received_at=utc_now(),
+    )
+
+    assert processed_result.outcome is ValidatedInboundProcessingOutcome.PROCESSED
+    assert len(fake_service.calls) == 1
+    assert fake_service.calls[0].from_number == customer_phone
+
+    # DUPLICATE: replaying the same MessageSid does not advance again.
+    duplicate_result = _process_validated_inbound_message(
+        app=app,
+        tenant_id=tenant_id,
+        message_sid="SM_HELPER_NEW",
+        raw_sender=raw_sender,
+        customer_phone=customer_phone,
+        inbound_body="Buenas, una bandeja paisa",
+        received_at=utc_now(),
+    )
+
+    assert duplicate_result.outcome is ValidatedInboundProcessingOutcome.DUPLICATE
+    assert len(fake_service.calls) == 1
+    assert claim_store.held == {}

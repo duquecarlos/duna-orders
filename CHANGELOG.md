@@ -45,8 +45,25 @@ accept-and-defer design; no webhook/runtime behavior changed yet.
   remains unchanged.
 * M9.6E remains blocked/not started.
 
-M9.6D-fix-impl B (not started) wires the defer-write/`202` response,
-drain-on-release, and the sweep-script backstop into the webhook per
+### M9.6D-fix-impl B - shared inbound processing helper
+
+Implementation slice. Refactor only; no runtime behavior changed.
+
+#### Delivered
+
+* Extracted shared validated inbound processing helper
+  (`_process_validated_inbound_message`, with
+  `ValidatedInboundProcessingOutcome` {`PROCESSED`, `DUPLICATE`,
+  `CLAIM_BUSY`} and `ValidatedInboundProcessingResult`) in
+  `src/duna_orders/web/app.py`; the Twilio webhook is now a thin wrapper that
+  validates the request and maps the helper's outcome to a response.
+* Behavior preserved: claim-busy still returns `503`; no deferred write,
+  `202`, or drain-on-release yet.
+* Prepares for accept-and-defer wiring in a later slice.
+
+M9.6D-fix-impl C (not started) wires the defer-write/`202` response into the
+webhook, and M9.6D-fix-impl D (not started) adds drain-on-release and the
+sweep-script backstop, per
 `docs/M9_6D_ACCEPT_AND_DEFER_CLAIM_BUSY_DESIGN.md`.
 
 ### M9.6D-fix - Accept-and-defer design for claim-busy (design only)

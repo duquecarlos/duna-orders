@@ -542,8 +542,11 @@ Status: M9.6A closed (design only); M9.6B closed (validation spike only);
 M9.6C closed (production store foundation, unwired); M9.6D closed (runtime
 wiring); M9.6D-fix closed (accept-and-defer design only, replaces M9.6D's
 claim-busy-`503` strategy); M9.6D-fix-impl A closed (`deferred_inbound`
-migration + store foundation, no webhook wiring yet). M9.6D-fix-impl B
-(webhook wiring) and M9.6E (idle-expiry runtime) not started.
+migration + store foundation, no webhook wiring yet); M9.6D-fix-impl B closed
+(shared validated inbound processing helper extracted, no behavior change).
+M9.6D-fix-impl C (defer-write/`202` wiring), M9.6D-fix-impl D
+(drain-on-release + sweep backstop), and M9.6E (idle-expiry runtime) not
+started.
 
 M9.6 delivers the prerequisite identified in
 `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` section 4: a lifecycle-spanning,
@@ -814,10 +817,38 @@ Explicitly excluded:
   outbound, payment, or queue/worker changes. M9.4E `strict=True` xfail
   unchanged.
 
-M9.6D-fix-impl B (not started) wires the defer-write/`202` change, the
-shared reprocessing function, drain-on-release, the sweep-script backstop,
-and a live re-smoke per `docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md`. M9.6E
-remains blocked until M9.6D-fix-impl is fully landed.
+### M9.6D-fix-impl B - shared inbound processing helper
+
+Status: closed (refactor only, no behavior change).
+
+Scope completed:
+
+* Extracted the webhook's validated inbound processing into
+  `_process_validated_inbound_message(*, app, tenant_id, message_sid,
+  raw_sender, customer_phone, inbound_body, received_at)` in
+  `src/duna_orders/web/app.py`, returning a
+  `ValidatedInboundProcessingResult` with outcome
+  `ValidatedInboundProcessingOutcome.PROCESSED | DUPLICATE | CLAIM_BUSY`.
+* The Twilio webhook is now a thin wrapper: parse/validate the request
+  unchanged, call the helper, then map `CLAIM_BUSY` -> `503` and
+  `DUPLICATE`/`PROCESSED` -> `200`, matching prior behavior exactly.
+* Extended `tests/test_web_twilio_webhook.py` to exercise the helper
+  directly for all three outcomes, on top of the existing
+  behavior-preservation tests (claim-busy `503`, duplicate handling, claim
+  acquire/release/renew sequencing).
+
+Explicitly excluded:
+
+* No defer-write call, no `202` response, no drain-on-release, no
+  `BackgroundTask`, no sweep script.
+* No `StorageInterface` or migration change. M9.4E `strict=True` xfail
+  unchanged.
+
+M9.6D-fix-impl C (not started) wires the defer-write/`202` change into the
+webhook using this shared helper, per
+`docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md`. M9.6D-fix-impl D (drain-on-release
++ sweep-script backstop) and M9.6E remain blocked until M9.6D-fix-impl is
+fully landed.
 
 ### M9.6E - Idle-boundary expiry runtime (deferred)
 
