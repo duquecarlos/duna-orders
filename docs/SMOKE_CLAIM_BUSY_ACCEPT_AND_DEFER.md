@@ -28,15 +28,20 @@ a throwaway Neon branch.
   deferred with a durable `deferred_inbound` row (`processed_at NULL`,
   `processed_messages` absent at defer time), then processed to completion by
   manual `drain_pending_deferred_inbound(...)` callable after manual claim
-  deletion. Full evidence in Smoke Verdict Table and "Live Smoke Evidence"
-  section below.
-  **Limitation**: Option A proves manual claim-busy defer + manual drain. It
-  does not prove automatic drain-on-release because the claim was manually
-  deleted, not released through `_process_validated_inbound_message`'s
-  `finally` block. Automatic drain-on-release is covered by the passing unit
-  test suite (`test_twilio_webhook_auto_drain_on_release_*`). A live Option B
-  smoke (two back-to-back real WhatsApp messages) would be needed for
-  timing-dependent end-to-end proof of the automatic path.
+  deletion. Full evidence in Smoke Verdict Table and "Live Smoke Evidence —
+  Option A" section below. Option A proves manual claim-busy defer + manual
+  drain; automatic drain-on-release was not exercised (claim was deleted
+  directly, not released through the `finally` block).
+* **Automatic drain-on-release (M9.6D-fix-impl, Option B)**: **PASSED** —
+  Option B (B1 two-message + B2 three-message reentrancy guard) smoke run on
+  baseline `e5f5500` (`test(web): expose deferred drain suppression`), Alembic
+  head `d60b084798e0`, Uvicorn 0.48.0 with 2 workers,
+  `DUNA_OUTBOUND_ENABLED=false`, signed local POSTs via Cloudflared tunnel
+  `https://advances-tin-characterized-jpeg.trycloudflare.com`. Automatic
+  drain-on-release through the real `finally` path is live-proven. Multi-pending
+  replay drains in order and exactly once. Guard-suppression INFO logs confirmed
+  (1 for B1, 2 for B2). Full evidence in "Live Smoke Evidence — Option B"
+  section below. **M9.6E idle-boundary expiry is unblocked.**
 
 ## Background
 
@@ -289,6 +294,8 @@ DELETE FROM conversation_customer_claims WHERE holder_id = 'manual-smoke-claim-b
 | Phase 3a: claim-busy returns `503`, `sid_rows = 0` (baseline, already run) | FAILED (message permanently lost - see `DECISIONS.md`) | `MessageSid SMea149d267f55a8183b3452883b140abb`, first `503` at `2026-06-12 19:01:22 UTC`, no redelivery by `2026-06-12 19:29:12 UTC` |
 | Phase 3b: claim-busy defers durably, `deferred_inbound` row present, `processed_messages` absent | PASSED (Option A, 2026-06-13) | `MessageSid SMc480bf527d5f5c81e3a43014e70c4210`; `deferred_inbound` row written with `processed_at NULL`; duplicate signed POST with same sid returned `202` with exactly one row remaining; `processed_messages` count = 0 at defer time |
 | Phase 4-5: drain processes the deferred row, `processed_messages` row created, ordering preserved | PASSED (Option A, 2026-06-13) | Manual `drain_pending_deferred_inbound(...)` callable; summary `processed=['SMc480...']`, `still_pending=[]`, `failed=[]`; `processed_at` populated; `processed_messages` row exists (count = 1); `attempt_count = 1`; conversation turn appended with original `received_at` preserved |
+| Option B B1: automatic drain-on-release (two-message) | PASSED (2026-06-13, baseline `e5f5500`) | SIDs `SM_OPT_B1_A_003`/`SM_OPT_B1_B_003`; B returned `202`, `deferred_inbound` row with `processed_at NULL` before drain; post-drain `processed_at=05:06:02 UTC`, `attempt_count=1`, both SIDs in `processed_messages`, `still_pending=0`; guard-suppression INFO log present |
+| Option B B2: multi-pending + reentrancy guard (three-message) | PASSED (2026-06-13, baseline `e5f5500`) | SIDs `SM_OPT_B2_A_001`/`SM_OPT_B2_B_001`/`SM_OPT_B2_C_001`; B+C both `202`; post-drain: B `processed_at=05:06:13 UTC`, C `processed_at=05:06:17 UTC`, all three in `processed_messages`, drain order B then C, `still_pending=0`; guard-suppression INFO lines exactly 2 |
 
 ## Notes / Observations
 
@@ -408,9 +415,9 @@ wired into `finally` was never reached. This is an inherent limitation of
 Option A. The automatic path is covered by six passing unit tests
 (`test_twilio_webhook_auto_drain_on_release_*`). A live Option B smoke — two
 real WhatsApp messages back-to-back, with the second arriving while the first
-message's `advance()` call is still in flight — would provide timing-dependent
-end-to-end proof; it was not attempted in this session due to timing
-reliability concerns.
+message's `advance()` call is still in flight — provides timing-dependent
+end-to-end proof. Option B was subsequently performed (baseline `e5f5500`,
+2026-06-13) and passed; see "Live Smoke Evidence — Option B" below.
 
 ---
 
@@ -808,3 +815,118 @@ SELECT * FROM conversation_customer_claims
 WHERE tenant_id = 'el-fogon-colombiano' AND customer_key = '+573223454241';
 -- expected: 0 rows
 ```
+
+---
+
+## Live Smoke Evidence — Option B (2026-06-13)
+
+**Baseline**: `e5f5500 test(web): expose deferred drain suppression`
+**Alembic head**: `d60b084798e0`
+**Method**: Option B — signed local httpx POSTs via Cloudflared tunnel, no
+manual claim row, no manual drain. Claim held naturally by a live `advance()`
+call (real Anthropic API). Two sub-scenarios:
+
+* **B1**: two messages (A primary, B deferred then auto-drained).
+* **B2**: three messages (A primary, B and C deferred then auto-drained in
+  order, reentrancy guard confirmed).
+
+### Environment
+
+| Setting | Value |
+| --- | --- |
+| Uvicorn | 0.48.0, 2 workers (PIDs 1164 + 22120) |
+| `DUNA_OUTBOUND_ENABLED` | `false` (shell override of `.env` `true`) |
+| `DUNA_STORAGE_BACKEND` | `postgres` |
+| Cloudflared tunnel | `https://advances-tin-characterized-jpeg.trycloudflare.com` |
+| Transport | HMAC-signed `httpx.post` to `http://127.0.0.1:8000/webhooks/twilio/whatsapp` |
+| Log capture | `uvicorn_smoke_b.log` via `log_config.json` root logger at INFO |
+| Tenant | `el-fogon-colombiano` |
+| `customer_key` | `+573223454241` |
+| Secrets printed | None |
+| Code edits | None |
+| Commit / push | None |
+| Manual drain invoked | No |
+
+### B1 — Two-message automatic drain
+
+SIDs: A = `SM_OPT_B1_A_003`, B = `SM_OPT_B1_B_003`.
+
+**Dispatch**: A dispatched in a background thread. DB polling confirmed A's
+claim row appeared in `conversation_customer_claims` before B was sent. B sent
+immediately after claim confirmed.
+
+| Check | Result |
+| --- | --- |
+| B POST HTTP status | `202` ✓ |
+| B `deferred_inbound` row present before A returns | `deferred_at=05:05:56 UTC`, `processed_at NULL` ✓ |
+| B absent from `processed_messages` before A returns | count=0 ✓ |
+| B `deferred_inbound.processed_at` after A joins | `05:06:02 UTC` — populated ✓ |
+| B `deferred_inbound.attempt_count` | `1` ✓ |
+| B `processed_messages` row | 1 row, `received_at=05:06:00 UTC` ✓ |
+| A `processed_messages` row | 1 row, `received_at=05:05:53 UTC` ✓ |
+| `still_pending` for customer | `0` ✓ |
+| `"Automatic drain-on-release failed"` in log | absent ✓ |
+| Guard-suppression INFO log | 1 line present ✓ |
+
+**B1 OVERALL: PASS 10/10**
+
+### B2 — Three-message multi-pending + reentrancy guard
+
+SIDs: A = `SM_OPT_B2_A_001`, B = `SM_OPT_B2_B_001`, C = `SM_OPT_B2_C_001`.
+
+**Dispatch**: A dispatched in a background thread. DB polling confirmed A's
+claim before B was sent. B sent immediately, then C sent immediately after.
+
+| Check | Result |
+| --- | --- |
+| B POST HTTP status | `202` ✓ |
+| C POST HTTP status | `202` ✓ |
+| B+C `deferred_inbound` rows before A returns | present, both `processed_at NULL` ✓ |
+| B+C absent from `processed_messages` before A returns | count=0 ✓ |
+| B `deferred_inbound.processed_at` | `05:06:13 UTC` ✓ |
+| C `deferred_inbound.processed_at` | `05:06:17 UTC` ✓ |
+| B `attempt_count` | `1` ✓ |
+| C `attempt_count` | `1` ✓ |
+| `processed_messages` rows for A, B, C | exactly 1 each ✓ |
+| Drain order (by `processed_at`) | B then C ✓ |
+| `still_pending` for customer | `0` ✓ |
+| `"Automatic drain-on-release failed"` in log | absent ✓ |
+| Guard-suppression INFO lines | exactly 2 (one per replayed deferred message) ✓ |
+
+**B2 OVERALL: PASS 12/12 DB checks + 2/2 guard log lines**
+
+### Guard-suppression log evidence
+
+Uvicorn log search phrase: `deferred inbound auto-drain suppressed after claim release`
+
+Relevant sequence from `uvicorn_smoke_b.log`:
+
+```
+INFO:     duna_orders.web.app: Conversation claim busy for tenant_id=el-fogon-colombiano customer_key=+573223454241 message_sid=SM_OPT_B1_B_003; deferring for later processing
+INFO:     127.0.0.1:58629 - "POST /webhooks/twilio/whatsapp HTTP/1.1" 202 Accepted
+INFO:     duna_orders.web.app: deferred inbound auto-drain suppressed after claim release (auto_drain_after_release=False) for tenant_id=el-fogon-colombiano customer_key=+573223454241
+INFO:     127.0.0.1:58627 - "POST /webhooks/twilio/whatsapp HTTP/1.1" 200 OK
+INFO:     duna_orders.web.app: Conversation claim busy for tenant_id=el-fogon-colombiano customer_key=+573223454241 message_sid=SM_OPT_B2_B_001; deferring for later processing
+INFO:     127.0.0.1:58637 - "POST /webhooks/twilio/whatsapp HTTP/1.1" 202 Accepted
+INFO:     duna_orders.web.app: Conversation claim busy for tenant_id=el-fogon-colombiano customer_key=+573223454241 message_sid=SM_OPT_B2_C_001; deferring for later processing
+INFO:     127.0.0.1:58639 - "POST /webhooks/twilio/whatsapp HTTP/1.1" 202 Accepted
+INFO:     duna_orders.web.app: deferred inbound auto-drain suppressed after claim release (auto_drain_after_release=False) for tenant_id=el-fogon-colombiano customer_key=+573223454241
+INFO:     duna_orders.web.app: deferred inbound auto-drain suppressed after claim release (auto_drain_after_release=False) for tenant_id=el-fogon-colombiano customer_key=+573223454241
+INFO:     127.0.0.1:58636 - "POST /webhooks/twilio/whatsapp HTTP/1.1" 200 OK
+```
+
+The `200 OK` for B1's A appears after B1's single suppression log; the `200 OK` for B2's
+A appears after both of B2's suppression logs. In both cases this confirms the drain
+(including sequential replay LLM calls) ran synchronously in the `finally` block before
+the HTTP response was returned. B1 contributes 1 suppression line; B2 contributes exactly
+2 suppression lines (one per replayed deferred message). Total in log: 3.
+
+### Constraints confirmed
+
+| Constraint | Status |
+| --- | --- |
+| No app code changes during smoke | ✓ |
+| No docs changes during smoke | ✓ |
+| No commits or pushes during smoke | ✓ |
+| No M9.6E implementation during smoke | ✓ |
+| No manual drain invoked during B1 or B2 | ✓ |

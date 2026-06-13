@@ -545,8 +545,9 @@ claim-busy-`503` strategy); M9.6D-fix-impl A closed (`deferred_inbound`
 migration + store foundation, no webhook wiring yet); M9.6D-fix-impl B closed
 (shared validated inbound processing helper extracted, no behavior change);
 M9.6D-fix-impl C closed (defer-on-claim-busy + `202` + manual one-shot drain);
-M9.6D-fix-impl D closed (automatic drain-on-release + manual sweep backstop).
-M9.6E (idle-expiry runtime) not started.
+M9.6D-fix-impl D closed (automatic drain-on-release + manual sweep backstop);
+Option B live smoke passed (automatic drain live-proven, 2026-06-13).
+M9.6E (idle-expiry runtime) not started; unblocked by Option B.
 
 M9.6 delivers the prerequisite identified in
 `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` section 4: a lifecycle-spanning,
@@ -945,15 +946,19 @@ Explicitly excluded:
 
 Live smoke (Option A — manual claim row, 2026-06-13, baseline `66c2ab6`):
 claim-busy defer + manual drain passed against a real Twilio sandbox message
-and a throwaway Neon branch. Full evidence in
-`docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md`. Automatic drain-on-release was
-not exercised by Option A; it is covered by the passing unit test suite.
+and a throwaway Neon branch.
 
-M9.6E remains blocked until M9.6D-fix-impl is fully landed.
+Live smoke (Option B — automatic drain-on-release, 2026-06-13, baseline
+`e5f5500`): B1 (two-message drain) and B2 (three-message multi-pending +
+reentrancy guard) both passed. Automatic drain through the real `finally` path
+is live-proven. Guard-suppression INFO logs confirmed (1 for B1, 2 for B2).
+
+Full evidence for both in `docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md`.
+M9.6D-fix-impl is fully landed. M9.6E is unblocked.
 
 ### M9.6E - Idle-boundary expiry runtime (deferred)
 
-Status: not started.
+Status: not started. Unblocked by M9.6D Option B live smoke (2026-06-13).
 
 M9.6E is the first consumer of the M9.6D customer claim: runtime
 idle-boundary expiry per `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` and

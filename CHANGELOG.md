@@ -247,9 +247,9 @@ Automatic drain-on-release was not exercised. The manual claim row was deleted
 directly via SQL, not released through `_process_validated_inbound_message`'s
 `finally` block, so the automatic `drain_pending_deferred_inbound_for_customer`
 call in `finally` was never triggered. Option A proves manual drain; the
-automatic path is covered by the passing unit tests. A live Option B smoke
-(two back-to-back real WhatsApp messages) would be the timing-dependent
-end-to-end proof; it was not attempted in this session.
+automatic path is covered by the passing unit tests. Option B (live automatic
+drain) was performed in a subsequent session; see "M9.6D live smoke — Option B"
+below.
 
 #### Verification
 
@@ -257,6 +257,65 @@ end-to-end proof; it was not attempted in this session.
 `pytest tests/test_deferred_inbound.py tests/test_processed_messages.py
 tests/test_conversation_customer_claim_store.py -q` → 26 passed, 10 deselected.
 `git status --short` clean. `git diff --check` clean.
+
+### M9.6D live smoke — Option B automatic drain-on-release (2026-06-13)
+
+Live/manual smoke of the M9.6D-fix-impl automatic drain-on-release path.
+Proves automatic drain through the real `_process_validated_inbound_message`
+`finally` block using signed local POSTs against a live Postgres database.
+
+#### Environment
+
+Baseline `e5f5500`, Alembic head `d60b084798e0`. Live Postgres (same Neon
+branch). Uvicorn 0.48.0, 2 workers. `DUNA_OUTBOUND_ENABLED=false` overridden
+at shell level. Cloudflared tunnel
+`https://advances-tin-characterized-jpeg.trycloudflare.com` for HMAC signing;
+signed local httpx POST to `http://127.0.0.1:8000/webhooks/twilio/whatsapp`.
+`log_config.json` root logger at INFO to capture app-level log lines. No
+secrets printed, no code edits, no commit, no push.
+
+#### B1 — Two-message automatic drain: PASS (10/10)
+
+SIDs: A = `SM_OPT_B1_A_003`, B = `SM_OPT_B1_B_003`.
+
+* A dispatched in a background thread; DB polling confirmed A's claim row
+  appeared in `conversation_customer_claims` before B was sent.
+* B returned `202` (DEFERRED) in 2.70 s.
+* Mid-run: B `deferred_inbound` row with `processed_at NULL`; B absent from
+  `processed_messages` (count 0).
+* Post-drain (after A thread joined): B `deferred_inbound.processed_at =
+  05:06:02 UTC`, `attempt_count = 1`; B in `processed_messages`
+  (`received_at = 05:06:00 UTC`); A in `processed_messages`
+  (`received_at = 05:05:53 UTC`); `still_pending = 0`.
+* No manual drain. Guard-suppression INFO log: 1 line present.
+
+#### B2 — Three-message multi-pending + reentrancy guard: PASS (12/12)
+
+SIDs: A = `SM_OPT_B2_A_001`, B = `SM_OPT_B2_B_001`, C = `SM_OPT_B2_C_001`.
+
+* A dispatched in background thread; B sent after claim confirmed, C sent
+  immediately after B.
+* B and C both returned `202` (DEFERRED).
+* Mid-run: B+C in `deferred_inbound` with `processed_at NULL`; B+C absent
+  from `processed_messages` (count 0).
+* Post-drain: B `processed_at = 05:06:13 UTC`, C `processed_at = 05:06:17 UTC`,
+  both `attempt_count = 1`; all three SIDs in `processed_messages`; drain order
+  B then C (by `processed_at`); `still_pending = 0`.
+* No manual drain. Guard-suppression INFO lines: exactly 2 (one per replayed
+  deferred message). `200 OK` for A arrived after both suppression lines,
+  confirming drain ran synchronously in `finally` before A's HTTP response.
+
+#### Guard-suppression log (combined, 3 lines total = 1 B1 + 2 B2)
+
+```
+INFO: duna_orders.web.app: deferred inbound auto-drain suppressed after claim release (auto_drain_after_release=False) for tenant_id=el-fogon-colombiano customer_key=+573223454241
+INFO: duna_orders.web.app: deferred inbound auto-drain suppressed after claim release (auto_drain_after_release=False) for tenant_id=el-fogon-colombiano customer_key=+573223454241
+INFO: duna_orders.web.app: deferred inbound auto-drain suppressed after claim release (auto_drain_after_release=False) for tenant_id=el-fogon-colombiano customer_key=+573223454241
+```
+
+Full log and evidence in `docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md` "Live
+Smoke Evidence — Option B" section. M9.6D-fix-impl is fully landed.
+M9.6E is unblocked.
 
 ### M9.6D-fix - Accept-and-defer design for claim-busy (design only)
 
