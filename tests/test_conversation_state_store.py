@@ -595,33 +595,9 @@ def test_get_latest_session_for_customer_returns_draft_created_session(
     assert latest.resulting_order_id == "ord_latest_draft"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "M9.4E idle expiry deferred: needs lifecycle-spanning "
-        "per-customer serialization; see docs/M9_4E_IDLE_BOUNDARY_DESIGN.md"
-    ),
-    strict=True,
-)
 def test_draft_created_session_remains_latest_over_later_open_session_for_customer(
     tmp_path: Path,
 ) -> None:
-    """Acceptance test for a future M9.4E idle-boundary implementation.
-
-    A future idle-boundary transition can create a new open session for a
-    customer that already has a draft_created session, e.g. when a
-    concurrent advance() call's create_draft/mark_draft_created for `old`
-    lands only after the idle path has already opened `new` for the same
-    customer. For that customer, `old` (draft_created) must remain the
-    routing authority -- the next inbound message must route
-    ALREADY_HAS_DRAFT to `old`, not start fresh parsing against `new`.
-
-    Currently xfail: get_latest_session_for_customer orders purely by
-    last_message_at/updated_at/opened_at/conversation_id, so a later open
-    session always outranks an earlier draft_created session regardless of
-    status. A correct implementation must either make a draft_created
-    session win "latest" over a later open session for the same customer,
-    or prevent the competing open session from being created at all.
-    """
     store = _store(tmp_path)
 
     old = store.get_or_create_open_session(
@@ -654,7 +630,7 @@ def test_draft_created_session_remains_latest_over_later_open_session_for_custom
     assert latest.resulting_order_id == "ord_first_conversation"
 
 
-def test_get_latest_session_for_customer_returns_most_recent_by_last_message_at(
+def test_get_latest_session_for_customer_prefers_draft_created_over_later_open(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
@@ -673,6 +649,7 @@ def test_get_latest_session_for_customer_returns_most_recent_by_last_message_at(
         customer_phone=CUSTOMER_PHONE,
         received_at=BASE_TIME + timedelta(hours=1),
     )
+    assert newer.conversation_id != older.conversation_id
 
     latest = store.get_latest_session_for_customer(
         tenant_id=TENANT_A,
@@ -680,8 +657,8 @@ def test_get_latest_session_for_customer_returns_most_recent_by_last_message_at(
     )
 
     assert latest is not None
-    assert latest.conversation_id == newer.conversation_id
-    assert latest.status == "open"
+    assert latest.conversation_id == older.conversation_id
+    assert latest.status == "draft_created"
 
 
 def test_get_latest_session_for_customer_is_tenant_isolated(
@@ -727,6 +704,62 @@ def test_get_latest_session_for_customer_requires_exact_phone_match(
     latest = store.get_latest_session_for_customer(
         tenant_id=TENANT_A,
         customer_phone=CUSTOMER_PHONE.removeprefix("whatsapp:"),
+    )
+
+    assert latest is None
+
+
+def test_expire_session_marks_status_expired(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    store.expire_session(tenant_id=TENANT_A, conversation_id=session.conversation_id)
+
+    current = store.get_session(tenant_id=TENANT_A, conversation_id=session.conversation_id)
+    assert current is not None
+    assert current.status == "expired"
+    assert current.version == session.version + 1
+    assert current.last_message_at == session.last_message_at
+
+
+def test_expire_session_is_idempotent_when_already_expired(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    store.expire_session(tenant_id=TENANT_A, conversation_id=session.conversation_id)
+    first = store.get_session(tenant_id=TENANT_A, conversation_id=session.conversation_id)
+
+    store.expire_session(tenant_id=TENANT_A, conversation_id=session.conversation_id)
+    second = store.get_session(tenant_id=TENANT_A, conversation_id=session.conversation_id)
+
+    assert first is not None
+    assert second is not None
+    assert first.status == "expired"
+    assert second.status == "expired"
+    assert second.version == first.version
+
+
+def test_get_latest_session_for_customer_excludes_expired_sessions(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    store.expire_session(tenant_id=TENANT_A, conversation_id=session.conversation_id)
+
+    latest = store.get_latest_session_for_customer(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
     )
 
     assert latest is None

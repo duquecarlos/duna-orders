@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal, Protocol
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -109,6 +109,14 @@ class ConversationStateStore(Protocol):
         tenant_id: str,
         customer_phone: str,
     ) -> ConversationSession | None:
+        ...
+
+    def expire_session(
+        self,
+        *,
+        tenant_id: str,
+        conversation_id: str,
+    ) -> None:
         ...
 
     def mark_draft_created(
@@ -256,7 +264,12 @@ class PostgresConversationStateStore:
                 select(ConversationSessionRow)
                 .where(ConversationSessionRow.tenant_id == tenant_id)
                 .where(ConversationSessionRow.customer_phone == customer_phone)
+                .where(ConversationSessionRow.status.in_(("open", "draft_created")))
                 .order_by(
+                    case(
+                        (ConversationSessionRow.status == "draft_created", 0),
+                        else_=1,
+                    ),
                     ConversationSessionRow.last_message_at.desc(),
                     ConversationSessionRow.updated_at.desc(),
                     ConversationSessionRow.opened_at.desc(),
@@ -266,6 +279,31 @@ class PostgresConversationStateStore:
             )
 
             return _session_from_row(row) if row is not None else None
+
+    def expire_session(
+        self,
+        *,
+        tenant_id: str,
+        conversation_id: str,
+    ) -> None:
+        _require_text(tenant_id, "tenant_id")
+        _require_text(conversation_id, "conversation_id")
+
+        with session_scope(self._session_factory) as session:
+            row = session.scalar(
+                select(ConversationSessionRow)
+                .where(ConversationSessionRow.tenant_id == tenant_id)
+                .where(ConversationSessionRow.conversation_id == conversation_id)
+                .with_for_update()
+            )
+            if row is None:
+                raise ValueError(f"Conversation session not found: {conversation_id}")
+            if row.status == "expired":
+                return
+            row.status = "expired"
+            row.version += 1
+            row.updated_at = utc_now()
+            session.flush()
 
     def mark_draft_created(
         self,

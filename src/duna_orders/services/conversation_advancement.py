@@ -14,6 +14,7 @@ from duna_orders.services.orders import OrderService
 from duna_orders.services.parsing import ParsingService
 from duna_orders.services.tenant_scoped_reads import TenantScopedReadService
 from duna_orders.storage.conversation_orders import ConversationOrderLookup
+from duna_orders.storage.conversation_observation import DEFAULT_IDLE_THRESHOLD
 from duna_orders.storage.conversation_state import (
     ConversationSession,
     ConversationStateStore,
@@ -172,6 +173,14 @@ class ConversationAdvancementService:
             tenant_id=tenant_id,
             customer_phone=customer_phone,
         )
+
+        if latest is not None and latest.status == "open":
+            if received_at - latest.last_message_at > DEFAULT_IDLE_THRESHOLD:
+                self._conversation_state_store.expire_session(
+                    tenant_id=tenant_id,
+                    conversation_id=latest.conversation_id,
+                )
+                latest = None
 
         if latest is None:
             return self._conversation_state_store.get_or_create_open_session(

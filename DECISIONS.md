@@ -1,4 +1,15 @@
 # Architectural Decisions
+## M9.6E - Idle threshold source is deferred from lifecycle config
+
+Decision:
+`M9.6E` reads `DEFAULT_IDLE_THRESHOLD` from `conversation_observation.py`
+for the MVP lazy-expiry runtime. The threshold value (`timedelta(hours=4)`)
+was already defined there for read-model `is_idle` visibility; reusing it
+avoids a new constant without a new config surface.
+
+The threshold belongs in lifecycle/tenant config when per-tenant idle policy
+is introduced. Relocation is deferred until that milestone.
+
 ## M9.6D-fix - Accept-and-defer replaces claim-busy-via-503 (design only)
 
 Decision:

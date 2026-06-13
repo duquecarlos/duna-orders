@@ -994,6 +994,113 @@ def test_post_parse_revalidation_detects_concurrent_draft_and_returns_already_ha
     assert recovered_session.latest_parse_error_category is None
 
 
+def test_idle_open_session_expires_and_routes_to_new_session_on_next_advance(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path, parser=MockParser(result=_incomplete_parse_result()))
+
+    first = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM_IDLE_FIRST",
+        from_number=FROM_NUMBER,
+        body="hola",
+        received_at=BASE_TIME,
+    )
+    assert first.outcome == ConversationAdvancementOutcome.PARSE_INCOMPLETE
+
+    idle_received_at = BASE_TIME + timedelta(hours=4, seconds=1)
+    second = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM_IDLE_SECOND",
+        from_number=FROM_NUMBER,
+        body="hola de nuevo",
+        received_at=idle_received_at,
+    )
+
+    assert second.outcome == ConversationAdvancementOutcome.PARSE_INCOMPLETE
+    assert second.conversation_id != first.conversation_id
+
+    expired = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=first.conversation_id,
+    )
+    assert expired is not None
+    assert expired.status == "expired"
+
+    fresh = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=second.conversation_id,
+    )
+    assert fresh is not None
+    assert fresh.status == "open"
+
+
+def test_non_idle_open_session_is_resumed_on_next_advance(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, parser=MockParser(result=_incomplete_parse_result()))
+
+    first = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM_ACTIVE_FIRST",
+        from_number=FROM_NUMBER,
+        body="hola",
+        received_at=BASE_TIME,
+    )
+    assert first.outcome == ConversationAdvancementOutcome.PARSE_INCOMPLETE
+
+    active_received_at = BASE_TIME + timedelta(hours=3, minutes=59)
+    second = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM_ACTIVE_SECOND",
+        from_number=FROM_NUMBER,
+        body="tienen empanadas?",
+        received_at=active_received_at,
+    )
+
+    assert second.conversation_id == first.conversation_id
+
+    session = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=first.conversation_id,
+    )
+    assert session is not None
+    assert session.status == "open"
+
+
+def test_draft_created_session_past_idle_threshold_is_not_auto_expired(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path, parser=MockParser(result=_complete_parse_result()))
+
+    first = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM_DRAFT_IDLE",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas",
+        received_at=BASE_TIME,
+    )
+    assert first.outcome == ConversationAdvancementOutcome.DRAFT_CREATED
+
+    idle_received_at = BASE_TIME + timedelta(hours=5)
+    second = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM_DRAFT_IDLE_FOLLOWUP",
+        from_number=FROM_NUMBER,
+        body="algo mas?",
+        received_at=idle_received_at,
+    )
+
+    assert second.outcome == ConversationAdvancementOutcome.ALREADY_HAS_DRAFT
+    assert second.conversation_id == first.conversation_id
+    assert second.resulting_order_id == first.resulting_order_id
+
+    session = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=first.conversation_id,
+    )
+    assert session is not None
+    assert session.status == "draft_created"
+
+
 @pytest.mark.live_postgres
 def test_live_postgres_concurrent_advance_for_same_customer_creates_one_draft() -> None:
     if not settings.database_url:
