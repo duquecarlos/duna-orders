@@ -1,7 +1,8 @@
 # M9.4E Idle-Boundary Design and Deferral
 
-Status: design/deferral only. Runtime idle-boundary expiry is NOT
-implemented.
+Status: design/deferral closed. Runtime idle-boundary expiry is implemented
+in M9.6E (committed `93c78e6`, 2026-06-13). See section 5 for updated
+runtime behavior.
 
 Baseline: `e84a844 docs(m9): close advancement observability`
 
@@ -170,49 +171,50 @@ Idle-boundary expiry (section 1) and the invariant in section 2 should be
 implemented as part of, or immediately after, that unit-of-work milestone,
 not before it.
 
-## 5. Current behavior after M9.4E
+## 5. Current behavior after M9.6E (committed `93c78e6`)
 
-* Runtime behavior is unchanged from `e84a844`:
-  `src/duna_orders/storage/conversation_state.py`,
-  `src/duna_orders/storage/conversation_observation.py`, and
-  `src/duna_orders/services/conversation_advancement.py` are byte-identical
-  to that baseline.
-* `mark_draft_created(...)` retains its exact pre-M9.4E behavior: it marks
-  `status="draft_created"` and `resulting_order_id=order_id` regardless of
-  the row's current status, is idempotent when called again with the same
-  `order_id`, and raises `ValueError` if the session is already linked to a
-  different order.
-* `ConversationObservationReads.get_conversation_observation_snapshot(...)`
-  still computes read-time `is_idle` exactly as it did before M9.4E
-  (`now - last_message_at > DEFAULT_IDLE_THRESHOLD`, defined locally in
-  `conversation_observation.py`). This is unchanged read-time visibility, not
-  a session-boundary policy.
-* No runtime code path writes `status="expired"`. `"expired"` remains a
-  defined value of `ConversationSessionStatus` and a valid
-  `conversation_sessions.status` value, but nothing sets it.
-* M9.4E is closed as design/deferral only: no runtime idle-boundary expiry,
-  no migration, no `StorageInterface` change, and no UI.
+M9.6E implemented the runtime idle-boundary expiry described in section 1.
+The following replaces the post-M9.4E behavior snapshot:
+
+* `_route_session(...)` in `ConversationAdvancementService` now lazily
+  expires idle `open` sessions: if `received_at - last_message_at >
+  DEFAULT_IDLE_THRESHOLD` and `status == "open"`, `expire_session(...)` is
+  called and the advance is routed to a new `open` session. Sessions with
+  `status="draft_created"` are never idle-expired (positive `== "open"`
+  guard).
+* `expire_session(*, tenant_id, conversation_id)` is now live on
+  `ConversationStateStore` Protocol and `PostgresConversationStateStore`.
+  It acquires `WITH FOR UPDATE`, sets `status="expired"`, increments
+  `version`, and updates `updated_at`. It is idempotent: no-ops if already
+  `expired`. It does not mutate `last_message_at`.
+* `get_latest_session_for_customer(...)` now filters to
+  `status.in_(("open", "draft_created"))` and orders with a
+  `case((status == "draft_created", 0), else_=1)` prefix so a
+  `draft_created` session wins over a later `open` session.
+* `mark_draft_created(...)` is unchanged: marks `status="draft_created"` and
+  `resulting_order_id=order_id`, idempotent for the same order, raises
+  `ValueError` for a different order.
+* `DEFAULT_IDLE_THRESHOLD = timedelta(hours=4)` is imported from
+  `conversation_observation.py`. Relocation to lifecycle/tenant config is
+  deferred; see `DECISIONS.md` "M9.6E - Idle threshold source is deferred
+  from lifecycle config".
+* No Alembic migration. Alembic head stays `d60b084798e0`. No
+  `StorageInterface` change.
 
 ## Acceptance test
 
 `tests/test_conversation_state_store.py::test_draft_created_session_remains_latest_over_later_open_session_for_customer`
-is kept as a `strict=True` xfail acceptance test for a future
-implementation. It uses only baseline (pre-M9.4E) public
-`ConversationStateStore` APIs to reproduce the invalid terminal state from
-section 2:
+was kept as a `strict=True` xfail acceptance test; it reproduced the invalid
+terminal state from section 2 using only public `ConversationStateStore` APIs:
 
-1. `old = get_or_create_open_session(...)` then
-   `mark_draft_created(tenant_id=..., conversation_id=old.conversation_id,
-   order_id=...)` - `old` is now `draft_created`.
+1. `old = get_or_create_open_session(...)` then `mark_draft_created(...)` —
+   `old` is `draft_created`.
 2. `new = get_or_create_open_session(...)` for the same
-   `(tenant_id, customer_phone)` five hours later - `new` is `open` and is a
-   *different* session, per existing baseline behavior
-   (`test_get_or_create_open_session_opens_new_session_after_draft_created`).
-3. `get_latest_session_for_customer(...)` currently returns `new` (`open`),
-   not `old` (`draft_created`), because ordering is purely
-   `last_message_at DESC, updated_at DESC, opened_at DESC,
-   conversation_id DESC` with no status preference.
+   `(tenant_id, customer_phone)` five hours later — `new` is `open` and a
+   different session.
+3. `get_latest_session_for_customer(...)` returned `new` instead of `old`
+   because ordering had no status preference.
 
-A future implementation must make this test pass (by satisfying section 2's
-invariant) without weakening it; the test is `strict=True` so an unexpected
-pass (XPASS) fails the suite until the `xfail` marker is removed.
+M9.6E D2 (`case((status == "draft_created", 0), else_=1)` ORDER BY prefix)
+makes this test pass. The `@pytest.mark.xfail(strict=True)` decorator was
+removed in commit `93c78e6`. The test now passes unconditionally.

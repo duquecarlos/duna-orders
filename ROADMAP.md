@@ -547,7 +547,8 @@ migration + store foundation, no webhook wiring yet); M9.6D-fix-impl B closed
 M9.6D-fix-impl C closed (defer-on-claim-busy + `202` + manual one-shot drain);
 M9.6D-fix-impl D closed (automatic drain-on-release + manual sweep backstop);
 Option B live smoke passed (automatic drain live-proven, 2026-06-13).
-M9.6E (idle-expiry runtime) not started; unblocked by Option B.
+M9.6E closed (idle-expiry runtime implemented, unit/integration test coverage,
+committed `93c78e6`, 2026-06-13).
 
 M9.6 delivers the prerequisite identified in
 `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` section 4: a lifecycle-spanning,
@@ -956,19 +957,33 @@ is live-proven. Guard-suppression INFO logs confirmed (1 for B1, 2 for B2).
 Full evidence for both in `docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md`.
 M9.6D-fix-impl is fully landed. M9.6E is unblocked.
 
-### M9.6E - Idle-boundary expiry runtime (deferred)
+### M9.6E - Idle-boundary expiry runtime
 
-Status: not started. Unblocked by M9.6D Option B live smoke (2026-06-13).
+Status: closed. Implemented (unit/integration test coverage). Committed
+`93c78e6` (2026-06-13).
 
-M9.6E is the first consumer of the M9.6D customer claim: runtime
-idle-boundary expiry per `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` and
-`docs/M9_6_CONVERSATION_UOW_DESIGN.md` section 9, gated by the same
-per-customer claim so an idle-boundary transition cannot race an in-flight
-`advance(...)` for the same customer. M9.6E is the milestone expected to
-flip
-`tests/test_conversation_state_store.py::test_draft_created_session_remains_latest_over_later_open_session_for_customer`
-from `strict=True` xfail to passing, per
-`docs/M9_6_CONVERSATION_UOW_DESIGN.md` section 11's conformance checklist.
+Scope completed:
+
+* `expire_session(*, tenant_id, conversation_id)` added to
+  `ConversationStateStore` Protocol and `PostgresConversationStateStore`:
+  tenant-scoped, idempotent, `WITH FOR UPDATE` row lock, no `last_message_at`
+  mutation.
+* `get_latest_session_for_customer(...)` fixed: excludes `expired` sessions
+  via `status.in_(("open", "draft_created"))` and prioritizes `draft_created`
+  over a later `open` session via `case((status == "draft_created", 0),
+  else_=1)` ORDER BY prefix. Both fixes are required; D1 prevents
+  `NotImplementedError` on next advance after expiry; D2 satisfies the routing
+  invariant from `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` section 2.
+* `_route_session(...)` in `ConversationAdvancementService` lazily expires
+  idle `open` sessions (positive `== "open"` guard; `draft_created` sessions
+  never idle-expired) using `DEFAULT_IDLE_THRESHOLD` imported from
+  `conversation_observation.py`. Threshold relocation deferred to a future
+  per-tenant idle-policy milestone.
+* `test_draft_created_session_remains_latest_over_later_open_session_for_customer`
+  `strict=True` xfail removed — M9.6E D2 makes it pass.
+* No `StorageInterface` change. No Alembic migration. Alembic head stays
+  `d60b084798e0`.
+* No live/manual smoke; unit/integration test coverage only.
 
 ## M8 - WhatsApp conversational ordering and Postgres runtime foundation
 

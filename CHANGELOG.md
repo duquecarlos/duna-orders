@@ -317,6 +317,59 @@ Full log and evidence in `docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md` "Live
 Smoke Evidence — Option B" section. M9.6D-fix-impl is fully landed.
 M9.6E is unblocked.
 
+### M9.6E - Idle-boundary expiry runtime
+
+Status: closed. Implemented (unit/integration test coverage). Baseline:
+`ed31030`. Committed `93c78e6`.
+
+#### Delivered
+
+* Added `expire_session(*, tenant_id, conversation_id)` to
+  `ConversationStateStore` Protocol and `PostgresConversationStateStore`.
+  Tenant-scoped, idempotent (`return` early if already `expired`). Acquires
+  `WITH FOR UPDATE` row lock; does not mutate `last_message_at`. The
+  `session_scope` no-op commit on early return is correct.
+* Fixed `get_latest_session_for_customer(...)` with two required changes:
+  (D1) `status.in_(("open", "draft_created"))` filter — excludes `expired`
+  sessions so a customer with an expired session does not hit
+  `NotImplementedError` on next advance; (D2)
+  `case((status == "draft_created", 0), else_=1)` ORDER BY prefix —
+  prioritizes a `draft_created` session over a later `open` session,
+  satisfying the routing invariant from
+  `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` section 2 without requiring a
+  per-customer lock.
+* Modified `_route_session(...)` in `ConversationAdvancementService` to
+  lazily expire idle `open` sessions: if the latest routable session has
+  `status="open"` and `received_at - last_message_at > DEFAULT_IDLE_THRESHOLD`,
+  the session is expired and `latest` is reset to `None`, routing the advance
+  to a new `open` session. `draft_created` sessions are never idle-expired
+  (positive `== "open"` guard).
+* Reused `DEFAULT_IDLE_THRESHOLD = timedelta(hours=4)` from
+  `conversation_observation.py` — already the read-time `is_idle` constant.
+  Relocation to lifecycle/tenant config deferred; see `DECISIONS.md`
+  "M9.6E - Idle threshold source is deferred from lifecycle config".
+* Removed `@pytest.mark.xfail(strict=True)` from
+  `test_draft_created_session_remains_latest_over_later_open_session_for_customer`
+  — M9.6E D2 fix makes it pass.
+
+#### Excluded
+
+* No `StorageInterface` change.
+* No Alembic migration. `status="expired"` was already a valid
+  `ConversationSessionStatus` value; Alembic head stays `d60b084798e0`.
+* No `draft_created` auto-expiry.
+* No parser, `PROMPT_VERSION`, outbound, payment, amendment, or UI changes.
+* No live/manual smoke. M9.6E has unit/integration test coverage only.
+
+#### Verification
+
+* `pytest tests/test_conversation_state_store.py
+  tests/test_conversation_advancement.py` → 57 passed (33 + 24),
+  7 deselected.
+* Committed 5 files: `conversation_state.py`, `conversation_advancement.py`,
+  `tests/test_conversation_state_store.py`,
+  `tests/test_conversation_advancement.py`, `DECISIONS.md`.
+
 ### M9.6D-fix - Accept-and-defer design for claim-busy (design only)
 
 Documented. Design only; no runtime/migration/StorageInterface changes.
