@@ -22,7 +22,10 @@ from duna_orders.storage.conversation_customer_claims import (
 )
 from duna_orders.storage.conversation_orders import PostgresConversationOrderLookup
 from duna_orders.storage.conversation_state import PostgresConversationStateStore
-from duna_orders.storage.deferred_inbound import PostgresDeferredInboundStore
+from duna_orders.storage.deferred_inbound import (
+    DeferredInboundRecord,
+    PostgresDeferredInboundStore,
+)
 from duna_orders.storage.factory import build_storage
 from duna_orders.storage.processed_messages import PostgresProcessedMessageStore
 from duna_orders.storage.postgres_session import get_or_create_session_factory
@@ -35,6 +38,12 @@ from duna_orders.storage.order_lifecycle import (
 from duna_orders.storage.postgres import PostgresStorage
 
 logger = logging.getLogger(__name__)
+
+# Bounded number of pending deferred_inbound rows for the same customer that
+# automatic drain-on-release will replay after a single held claim is
+# released. Keeps post-release draining a fast, in-request operation rather
+# than an unbounded loop.
+AUTO_DRAIN_LIMIT = 5
 
 
 class ValidatedInboundProcessingOutcome(Enum):
@@ -58,6 +67,7 @@ def _process_validated_inbound_message(
     customer_phone: str,
     inbound_body: str,
     received_at: datetime,
+    auto_drain_after_release: bool = True,
 ) -> ValidatedInboundProcessingResult:
     claim_store = _get_conversation_customer_claim_store(app)
     holder_id = str(uuid4())
@@ -146,6 +156,23 @@ def _process_validated_inbound_message(
             customer_key=customer_key,
             holder_id=holder_id,
         )
+
+        if auto_drain_after_release:
+            try:
+                drain_pending_deferred_inbound_for_customer(
+                    app,
+                    tenant_id=tenant_id,
+                    customer_key=customer_key,
+                    limit=AUTO_DRAIN_LIMIT,
+                )
+            except Exception:
+                logger.exception(
+                    "Automatic drain-on-release failed for tenant_id=%s "
+                    "customer_key=%s; pending deferred_inbound rows remain "
+                    "for the next release or manual drain",
+                    tenant_id,
+                    customer_key,
+                )
 
 
 def create_app(
@@ -360,14 +387,49 @@ def drain_pending_deferred_inbound(
 ) -> DeferredInboundDrainSummary:
     """Manually reprocess pending deferred_inbound rows for one tenant.
 
-    One-shot, manual-only: re-enters _process_validated_inbound_message as a
-    fresh arrival for each pending row, using the trusted stored
-    post-validation artifact (no signature re-validation). Rows whose claim
-    is still busy are re-deferred (idempotent) and remain pending.
+    One-shot, manual-only backstop: re-enters _process_validated_inbound_message
+    as a fresh arrival for each pending row across the whole tenant, using the
+    trusted stored post-validation artifact (no signature re-validation). Rows
+    whose claim is still busy are re-deferred (idempotent) and remain pending.
     """
     deferred_store = _get_deferred_inbound_store(app)
     pending = deferred_store.list_pending_for_tenant(tenant_id=tenant_id, limit=limit)
 
+    return _replay_deferred_records(app, deferred_store, pending, tenant_id=tenant_id)
+
+
+def drain_pending_deferred_inbound_for_customer(
+    app: FastAPI,
+    *,
+    tenant_id: str,
+    customer_key: str,
+    limit: int | None = None,
+) -> DeferredInboundDrainSummary:
+    """Reprocess pending deferred_inbound rows for one tenant+customer.
+
+    Used both as the automatic drain-on-release step (with a small bounded
+    `limit`, after the originating request's own claim has been released) and
+    as a customer-scoped manual drain. Re-enters
+    _process_validated_inbound_message as a fresh arrival for each pending
+    row using the trusted stored post-validation artifact (no signature
+    re-validation). Rows whose claim is still busy are re-deferred (idempotent)
+    and remain pending.
+    """
+    deferred_store = _get_deferred_inbound_store(app)
+    pending = deferred_store.list_pending_for_customer(
+        tenant_id=tenant_id, customer_key=customer_key, limit=limit
+    )
+
+    return _replay_deferred_records(app, deferred_store, pending, tenant_id=tenant_id)
+
+
+def _replay_deferred_records(
+    app: FastAPI,
+    deferred_store: PostgresDeferredInboundStore,
+    pending: list[DeferredInboundRecord],
+    *,
+    tenant_id: str,
+) -> DeferredInboundDrainSummary:
     processed: list[str] = []
     still_pending: list[str] = []
     failed: list[str] = []
@@ -396,10 +458,11 @@ def drain_pending_deferred_inbound(
                 customer_phone=customer_phone,
                 inbound_body=record.raw_body,
                 received_at=record.received_at,
+                auto_drain_after_release=False,
             )
         except Exception:
             logger.exception(
-                "Manual drain failed to reprocess deferred message_sid=%s "
+                "Drain failed to reprocess deferred message_sid=%s "
                 "for tenant_id=%s",
                 record.message_sid,
                 tenant_id,

@@ -129,6 +129,81 @@ a manual one-shot drain; automatic drain-on-release is not part of this slice.
 * No UI, outbound, payment, or amendment changes. The M9.4E `strict=True`
   xfail remains unchanged.
 
+### M9.6D-fix-impl D - automatic drain-on-release + manual sweep backstop
+
+Implementation slice. Closes the "message accepted as deferred but never
+retried unless manually drained" gap by triggering a bounded customer-scoped
+drain after claim release, without adding a worker, scheduler, or replay daemon.
+
+#### Delivered
+
+* `_process_validated_inbound_message` (`src/duna_orders/web/app.py`) gained
+  an `auto_drain_after_release: bool = True` keyword argument (reentrancy
+  guard). Normal webhook calls use the default `True`; drain replay calls
+  pass `False`, bounding auto-drain recursion to depth 1.
+* **Automatic drain-on-release**: when `_process_validated_inbound_message`
+  acquires a claim and reaches the `finally` block it now: (1) releases the
+  claim first (unconditionally), then (2) if `auto_drain_after_release` is
+  `True`, calls `drain_pending_deferred_inbound_for_customer(...)` inside a
+  `try/except` that logs and suppresses any exception. This ordering
+  guarantees claim release is never delayed or skipped by a failing drain,
+  and a drain exception inside `finally` never overwrites the original
+  `try`-block return value.
+* `AUTO_DRAIN_LIMIT = 5` (module-level constant) bounds how many
+  `deferred_inbound` rows the automatic drain replays per release; keeps the
+  operation fast and in-request rather than an unbounded loop.
+* Added `drain_pending_deferred_inbound_for_customer(app, *, tenant_id,
+  customer_key, limit=None) -> DeferredInboundDrainSummary`
+  (`src/duna_orders/web/app.py`): customer-scoped drain backed by the
+  pre-existing `list_pending_for_customer(tenant_id, customer_key, limit)`.
+  Used both for automatic drain-on-release (with `limit=AUTO_DRAIN_LIMIT`)
+  and as a customer-scoped manual drain building block.
+* Extracted `_replay_deferred_records(app, deferred_store, pending, *,
+  tenant_id) -> DeferredInboundDrainSummary`: shared loop body factored out
+  of the old `drain_pending_deferred_inbound`; used by both the tenant-wide
+  and customer-scoped drain functions. Always passes
+  `auto_drain_after_release=False` to replay calls, enforcing the depth-1
+  reentrancy bound structurally.
+* Refactored `drain_pending_deferred_inbound(app, *, tenant_id, limit=None)`
+  to delegate to `_replay_deferred_records` via `list_pending_for_tenant`;
+  docstring updated to describe it as the one-shot, manual-only tenant-wide
+  backstop. External behavior unchanged.
+* `deferred_inbound` rows are replayed as **trusted, post-validation
+  artifacts**: no Twilio signature re-validation on drain replay. The
+  stored raw `From`/body/`received_at` are re-entered directly into
+  `_process_validated_inbound_message`.
+* `processed_messages` invariant preserved: no `processed_messages` write at
+  defer time; a `message_sid` appears in `processed_messages` only after
+  replay processing actually succeeds (PROCESSED or DUPLICATE outcome from
+  `_process_validated_inbound_message`).
+* If replay finds the claim still busy: the row is re-deferred (idempotent
+  no-op), stays pending, no duplicate `deferred_inbound` row is created, and
+  no `processed_messages` write occurs for that row.
+* Added focused tests in `tests/test_web_twilio_webhook.py` covering:
+  automatic drain after release (pending row replayed, `processed_messages`
+  updated, advance called for original and replay); customer scoping (same
+  tenant/customer drains, different customer/tenant rows remain pending);
+  reentrancy guard (drain entry point called exactly once regardless of how
+  many rows are drained per pass); still-busy-during-drain (row stays
+  pending, no duplicate row, no `processed_messages` write, original outcome
+  unchanged); drain-failure isolation (original `200` preserved, failure
+  logged, claim released); manual sweep limit (tenant-wide drain respects
+  `limit` parameter).
+
+#### Excluded
+
+* No worker, scheduler, replay daemon, `BackgroundTask`, or queue system.
+* No `StorageInterface` change. No migration - Alembic head remains
+  `d60b084798e0`. No new index or constraint was needed: the existing
+  `ix_deferred_inbound_pending_by_customer` partial index (added in impl A)
+  and idempotent `ON CONFLICT (message_sid) DO NOTHING` defer-write are
+  sufficient for customer-scoped draining and duplicate-row prevention.
+* No parser, `PROMPT_VERSION`, or `ConversationAdvancementService` change.
+* No UI, outbound, payment, amendment, or idle-expiry changes. The M9.4E
+  `strict=True` xfail remains unchanged.
+* No sweep script (`scripts/drain_deferred_inbound.py`): the
+  `drain_pending_deferred_inbound` callable is the manual backstop.
+
 ### M9.6D-fix - Accept-and-defer design for claim-busy (design only)
 
 Documented. Design only; no runtime/migration/StorageInterface changes.

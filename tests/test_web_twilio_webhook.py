@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -37,6 +38,7 @@ from duna_orders.storage.postgres import PostgresStorage
 from duna_orders.storage.postgres_base import Base
 from duna_orders.storage.postgres_session import make_engine, make_session_factory
 from duna_orders.storage.processed_messages import PostgresProcessedMessageStore
+from duna_orders.web import app as app_module
 from duna_orders.web.app import (
     ValidatedInboundProcessingOutcome,
     _process_validated_inbound_message,
@@ -386,6 +388,53 @@ class FailingDeferredInboundStore(FakeDeferredInboundStore):
     ) -> bool:
         self.defer_calls.append(message_sid)
         raise RuntimeError("simulated defer_message failure")
+
+
+class ListPendingForCustomerFailsDeferredInboundStore(FakeDeferredInboundStore):
+    """DeferredInboundStore double whose list_pending_for_customer always raises.
+
+    Used to verify that an automatic drain-on-release failure does not affect
+    the original webhook's outcome, claim release, or response status.
+    """
+
+    def list_pending_for_customer(
+        self,
+        *,
+        tenant_id: str,
+        customer_key: str,
+        limit: int | None = None,
+    ) -> list[DeferredInboundRecord]:
+        raise RuntimeError("simulated list_pending_for_customer failure")
+
+
+class ClaimStoreBusyAfterFirstAcquire(FakeConversationCustomerClaimStore):
+    """try_acquire succeeds once, then reports busy for every later attempt.
+
+    Simulates another holder acquiring the customer claim in the window
+    between this request's release and an automatic drain replay's
+    try_acquire for the same customer.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._acquire_count = 0
+
+    def try_acquire(
+        self,
+        *,
+        tenant_id: str,
+        customer_key: str,
+        holder_id: str,
+        lease_duration: timedelta = DEFAULT_CLAIM_LEASE_DURATION,
+    ) -> bool:
+        self._acquire_count += 1
+        self.acquire_calls.append((tenant_id, customer_key, holder_id))
+
+        if self._acquire_count > 1:
+            return False
+
+        self.held[(tenant_id, customer_key)] = holder_id
+        return True
 
 
 def _create_app(**kwargs: object) -> FastAPI:
@@ -1723,6 +1772,10 @@ def test_process_validated_inbound_message_outcome_mapping(tmp_path: Path) -> No
     )
 
     # PROCESSED: a brand-new message with a non-empty body advances once.
+    # auto_drain_after_release=False isolates this outcome-mapping test from
+    # automatic drain-on-release (covered separately below), which would
+    # otherwise also replay the pending SM_HELPER_BUSY row once this claim is
+    # released.
     processed_result = _process_validated_inbound_message(
         app=app,
         tenant_id=tenant_id,
@@ -1731,6 +1784,7 @@ def test_process_validated_inbound_message_outcome_mapping(tmp_path: Path) -> No
         customer_phone=customer_phone,
         inbound_body="Buenas, una bandeja paisa",
         received_at=utc_now(),
+        auto_drain_after_release=False,
     )
 
     assert processed_result.outcome is ValidatedInboundProcessingOutcome.PROCESSED
@@ -1746,6 +1800,7 @@ def test_process_validated_inbound_message_outcome_mapping(tmp_path: Path) -> No
         customer_phone=customer_phone,
         inbound_body="Buenas, una bandeja paisa",
         received_at=utc_now(),
+        auto_drain_after_release=False,
     )
 
     assert duplicate_result.outcome is ValidatedInboundProcessingOutcome.DUPLICATE
@@ -1935,3 +1990,380 @@ def test_drain_pending_deferred_inbound_does_not_require_twilio_signature(
     assert summary.processed_message_sids == ["SM_DRAIN_TRUSTED"]
     assert summary.failed_message_sids == []
     assert deferred_store.records["SM_DRAIN_TRUSTED"].processed_at is not None
+
+
+def test_drain_pending_deferred_inbound_respects_limit(tmp_path: Path) -> None:
+    storage = InMemoryStorage()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    claim_store = FakeConversationCustomerClaimStore()
+    deferred_store = FakeDeferredInboundStore()
+
+    tenant_id = DEFAULT_TEST_TENANT_ID
+
+    _seed_deferred_record(
+        deferred_store,
+        message_sid="SM_LIMIT_FIRST",
+        tenant_id=tenant_id,
+        customer_key=normalize_customer_claim_key(tenant_id, "+573001112233"),
+        from_number="whatsapp:+573001112233",
+        raw_body="first",
+        received_at=DRAIN_RECEIVED_AT,
+    )
+    _seed_deferred_record(
+        deferred_store,
+        message_sid="SM_LIMIT_SECOND",
+        tenant_id=tenant_id,
+        customer_key=normalize_customer_claim_key(tenant_id, "+573009998877"),
+        from_number="whatsapp:+573009998877",
+        raw_body="second",
+        received_at=DRAIN_RECEIVED_AT + timedelta(minutes=1),
+    )
+
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+        deferred_inbound_store=deferred_store,
+    )
+
+    summary = drain_pending_deferred_inbound(app, tenant_id=tenant_id, limit=1)
+
+    assert summary.processed_message_sids == ["SM_LIMIT_FIRST"]
+    assert summary.still_pending_message_sids == []
+    assert summary.failed_message_sids == []
+
+    # Only the oldest pending row is drained when a limit is provided; the
+    # second is left untouched for a later drain.
+    assert deferred_store.records["SM_LIMIT_FIRST"].processed_at is not None
+    assert deferred_store.records["SM_LIMIT_SECOND"].processed_at is None
+    assert deferred_store.mark_processing_started_calls == ["SM_LIMIT_FIRST"]
+    assert len(fake_service.calls) == 1
+    assert fake_service.calls[0].message_sid == "SM_LIMIT_FIRST"
+
+
+def test_twilio_webhook_auto_drain_on_release_replays_pending_customer_row(
+    tmp_path: Path,
+) -> None:
+    storage = InMemoryStorage()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    claim_store = FakeConversationCustomerClaimStore()
+    deferred_store = FakeDeferredInboundStore()
+
+    tenant_id = DEFAULT_TEST_TENANT_ID
+    customer_phone = "+573001112233"
+    customer_key = normalize_customer_claim_key(tenant_id, customer_phone)
+
+    _seed_deferred_record(
+        deferred_store,
+        message_sid="SM_AUTO_DRAIN_PENDING",
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+        raw_body="Pending while claim was busy",
+    )
+
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+        deferred_inbound_store=deferred_store,
+    )
+    client = TestClient(app)
+
+    params = {
+        "MessageSid": "SM_AUTO_DRAIN_NEW",
+        "From": "whatsapp:+573001112233",
+        "Body": "Buenas, una bandeja paisa",
+    }
+
+    response = client.post(WEBHOOK_PATH, data=params, headers=_signed_headers(params))
+
+    assert response.status_code == 200
+
+    # The original message is processed and recorded as usual.
+    assert processed_store.get_message("SM_AUTO_DRAIN_NEW") is not None
+
+    # Once the original request's claim is released, the pending deferred
+    # row for the same tenant+customer is automatically replayed and marked
+    # processed - and now appears in processed_messages too.
+    assert deferred_store.records["SM_AUTO_DRAIN_PENDING"].processed_at is not None
+    assert deferred_store.mark_processing_started_calls == ["SM_AUTO_DRAIN_PENDING"]
+    assert deferred_store.mark_processed_calls == ["SM_AUTO_DRAIN_PENDING"]
+    assert processed_store.get_message("SM_AUTO_DRAIN_PENDING") is not None
+
+    # The advancement service ran for the original message first, then for
+    # the drained replay - using the replay's original received_at and the
+    # customer phone re-derived from the stored raw From value.
+    assert len(fake_service.calls) == 2
+    assert fake_service.calls[0].message_sid == "SM_AUTO_DRAIN_NEW"
+    assert fake_service.calls[1].message_sid == "SM_AUTO_DRAIN_PENDING"
+    assert fake_service.calls[1].from_number == customer_phone
+    assert fake_service.calls[1].body == "Pending while claim was busy"
+    assert fake_service.calls[1].received_at == DRAIN_RECEIVED_AT
+
+    # Both claims (original + replay) were acquired and released cleanly.
+    assert len(claim_store.acquire_calls) == 2
+    assert len(claim_store.release_calls) == 2
+    assert claim_store.held == {}
+
+
+def test_twilio_webhook_auto_drain_on_release_is_scoped_to_customer_and_tenant(
+    tmp_path: Path,
+) -> None:
+    storage = InMemoryStorage()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    claim_store = FakeConversationCustomerClaimStore()
+    deferred_store = FakeDeferredInboundStore()
+
+    tenant_id = DEFAULT_TEST_TENANT_ID
+    customer_phone = "+573001112233"
+    customer_key = normalize_customer_claim_key(tenant_id, customer_phone)
+    other_customer_key = normalize_customer_claim_key(tenant_id, "+573009998877")
+
+    _seed_deferred_record(
+        deferred_store,
+        message_sid="SM_SCOPE_SAME_CUSTOMER",
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+        raw_body="same tenant, same customer",
+    )
+    _seed_deferred_record(
+        deferred_store,
+        message_sid="SM_SCOPE_OTHER_CUSTOMER",
+        tenant_id=tenant_id,
+        customer_key=other_customer_key,
+        from_number="whatsapp:+573009998877",
+        raw_body="same tenant, other customer",
+    )
+    _seed_deferred_record(
+        deferred_store,
+        message_sid="SM_SCOPE_OTHER_TENANT",
+        tenant_id="tenant_other",
+        customer_key=customer_key,
+        raw_body="other tenant, same customer key",
+    )
+
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+        deferred_inbound_store=deferred_store,
+    )
+    client = TestClient(app)
+
+    params = {
+        "MessageSid": "SM_SCOPE_NEW",
+        "From": "whatsapp:+573001112233",
+        "Body": "Buenas, una bandeja paisa",
+    }
+
+    response = client.post(WEBHOOK_PATH, data=params, headers=_signed_headers(params))
+
+    assert response.status_code == 200
+
+    # Only the pending row for the same tenant+customer is drained.
+    assert deferred_store.records["SM_SCOPE_SAME_CUSTOMER"].processed_at is not None
+    assert processed_store.get_message("SM_SCOPE_SAME_CUSTOMER") is not None
+
+    # A pending row for a different customer in the same tenant is untouched.
+    assert deferred_store.records["SM_SCOPE_OTHER_CUSTOMER"].processed_at is None
+    assert processed_store.get_message("SM_SCOPE_OTHER_CUSTOMER") is None
+
+    # A pending row for a different tenant is untouched, even with the same
+    # customer key.
+    assert deferred_store.records["SM_SCOPE_OTHER_TENANT"].processed_at is None
+    assert processed_store.get_message("SM_SCOPE_OTHER_TENANT") is None
+
+    assert len(fake_service.calls) == 2
+    assert fake_service.calls[0].message_sid == "SM_SCOPE_NEW"
+    assert fake_service.calls[1].message_sid == "SM_SCOPE_SAME_CUSTOMER"
+
+
+def test_twilio_webhook_auto_drain_on_release_does_not_recurse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = InMemoryStorage()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    claim_store = FakeConversationCustomerClaimStore()
+    deferred_store = FakeDeferredInboundStore()
+
+    tenant_id = DEFAULT_TEST_TENANT_ID
+    customer_phone = "+573001112233"
+    customer_key = normalize_customer_claim_key(tenant_id, customer_phone)
+
+    _seed_deferred_record(
+        deferred_store,
+        message_sid="SM_REENTRANT_A",
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+        raw_body="pending a",
+        received_at=DRAIN_RECEIVED_AT,
+    )
+    _seed_deferred_record(
+        deferred_store,
+        message_sid="SM_REENTRANT_B",
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+        raw_body="pending b",
+        received_at=DRAIN_RECEIVED_AT + timedelta(minutes=1),
+    )
+
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+        deferred_inbound_store=deferred_store,
+    )
+
+    original_drain = app_module.drain_pending_deferred_inbound_for_customer
+    drain_calls: list[tuple[str, str]] = []
+
+    def spy_drain(
+        app_arg: FastAPI,
+        *,
+        tenant_id: str,
+        customer_key: str,
+        limit: int | None = None,
+    ) -> app_module.DeferredInboundDrainSummary:
+        drain_calls.append((tenant_id, customer_key))
+        return original_drain(
+            app_arg, tenant_id=tenant_id, customer_key=customer_key, limit=limit
+        )
+
+    monkeypatch.setattr(app_module, "drain_pending_deferred_inbound_for_customer", spy_drain)
+
+    client = TestClient(app)
+    params = {
+        "MessageSid": "SM_REENTRANT_NEW",
+        "From": "whatsapp:+573001112233",
+        "Body": "Buenas, una bandeja paisa",
+    }
+
+    response = client.post(WEBHOOK_PATH, data=params, headers=_signed_headers(params))
+
+    assert response.status_code == 200
+
+    # Both pending rows are drained in a single bounded pass.
+    assert deferred_store.records["SM_REENTRANT_A"].processed_at is not None
+    assert deferred_store.records["SM_REENTRANT_B"].processed_at is not None
+    assert len(fake_service.calls) == 3
+
+    # The auto-drain entry point is invoked exactly once - for the original
+    # request's release. The two replayed rows pass
+    # auto_drain_after_release=False, so they do not recursively trigger
+    # their own drain-on-release.
+    assert drain_calls == [(tenant_id, customer_key)]
+    assert claim_store.held == {}
+
+
+def test_twilio_webhook_auto_drain_on_release_leaves_row_pending_when_replay_claim_still_busy(
+    tmp_path: Path,
+) -> None:
+    storage = InMemoryStorage()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    claim_store = ClaimStoreBusyAfterFirstAcquire()
+    deferred_store = FakeDeferredInboundStore()
+
+    tenant_id = DEFAULT_TEST_TENANT_ID
+    customer_phone = "+573001112233"
+    customer_key = normalize_customer_claim_key(tenant_id, customer_phone)
+
+    _seed_deferred_record(
+        deferred_store,
+        message_sid="SM_STILL_BUSY_PENDING",
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+        raw_body="still pending after replay",
+    )
+
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+        deferred_inbound_store=deferred_store,
+    )
+    client = TestClient(app)
+
+    params = {
+        "MessageSid": "SM_STILL_BUSY_NEW",
+        "From": "whatsapp:+573001112233",
+        "Body": "Buenas, una bandeja paisa",
+    }
+
+    response = client.post(WEBHOOK_PATH, data=params, headers=_signed_headers(params))
+
+    # The original message is unaffected by the replay finding the claim busy.
+    assert response.status_code == 200
+    assert processed_store.get_message("SM_STILL_BUSY_NEW") is not None
+    assert len(fake_service.calls) == 1
+
+    # The replay leaves the same row pending - no duplicate row, no
+    # processed mark, and no processed_messages write for it.
+    assert list(deferred_store.records) == ["SM_STILL_BUSY_PENDING"]
+    assert deferred_store.records["SM_STILL_BUSY_PENDING"].processed_at is None
+    assert deferred_store.mark_processed_calls == []
+    assert processed_store.get_message("SM_STILL_BUSY_PENDING") is None
+
+    # The original claim was released; the replay never acquired one.
+    assert claim_store.held == {}
+
+
+def test_twilio_webhook_auto_drain_on_release_failure_does_not_affect_original_outcome(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    storage = InMemoryStorage()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    claim_store = FakeConversationCustomerClaimStore()
+    deferred_store = ListPendingForCustomerFailsDeferredInboundStore()
+
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+        deferred_inbound_store=deferred_store,
+    )
+    client = TestClient(app)
+
+    params = {
+        "MessageSid": "SM_DRAIN_FAILS",
+        "From": "whatsapp:+573001112233",
+        "Body": "Buenas, una bandeja paisa",
+    }
+
+    with caplog.at_level(logging.ERROR, logger="duna_orders.web.app"):
+        response = client.post(WEBHOOK_PATH, data=params, headers=_signed_headers(params))
+
+    # A failing automatic drain must not turn an already-processed message
+    # into an error response.
+    assert response.status_code == 200
+    assert processed_store.get_message("SM_DRAIN_FAILS") is not None
+    assert len(fake_service.calls) == 1
+
+    # The claim was still acquired and released exactly once for the original
+    # message, despite the post-release drain failing.
+    assert len(claim_store.acquire_calls) == 1
+    assert len(claim_store.release_calls) == 1
+    assert claim_store.acquire_calls[0] == claim_store.release_calls[0]
+    assert claim_store.held == {}
+
+    # The drain failure is logged rather than silently swallowed.
+    assert "Automatic drain-on-release failed" in caplog.text

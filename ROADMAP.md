@@ -544,9 +544,9 @@ wiring); M9.6D-fix closed (accept-and-defer design only, replaces M9.6D's
 claim-busy-`503` strategy); M9.6D-fix-impl A closed (`deferred_inbound`
 migration + store foundation, no webhook wiring yet); M9.6D-fix-impl B closed
 (shared validated inbound processing helper extracted, no behavior change);
-M9.6D-fix-impl C closed (defer-on-claim-busy + `202` + manual one-shot drain).
-M9.6D-fix-impl D (automatic drain-on-release + sweep backstop) and M9.6E
-(idle-expiry runtime) not started.
+M9.6D-fix-impl C closed (defer-on-claim-busy + `202` + manual one-shot drain);
+M9.6D-fix-impl D closed (automatic drain-on-release + manual sweep backstop).
+M9.6E (idle-expiry runtime) not started.
 
 M9.6 delivers the prerequisite identified in
 `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` section 4: a lifecycle-spanning,
@@ -896,10 +896,54 @@ Explicitly excluded:
 * No UI, outbound, payment, or amendment changes. M9.4E `strict=True` xfail
   unchanged.
 
-M9.6D-fix-impl D (not started) adds automatic drain-on-release plus a
-sweep-script backstop on top of the manual drain above, per
-`docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md`. M9.6E remains blocked until
-M9.6D-fix-impl is fully landed.
+### M9.6D-fix-impl D - automatic drain-on-release + manual sweep backstop
+
+Status: closed.
+
+Scope completed:
+
+* `_process_validated_inbound_message` (`src/duna_orders/web/app.py`) gained
+  `auto_drain_after_release: bool = True` (reentrancy guard). Normal webhook
+  calls use `True`; drain replay calls pass `False`, bounding auto-drain
+  recursion to depth 1.
+* `AUTO_DRAIN_LIMIT = 5` caps how many `deferred_inbound` rows the automatic
+  drain replays per release.
+* After a held claim is released, the `finally` block triggers
+  `drain_pending_deferred_inbound_for_customer(app, tenant_id=...,
+  customer_key=..., limit=AUTO_DRAIN_LIMIT)` inside a `try/except` that logs
+  and suppresses any exception. Claim release happens first (unconditional);
+  drain failure cannot skip release or overwrite the original return value.
+* Added `drain_pending_deferred_inbound_for_customer(app, *, tenant_id,
+  customer_key, limit=None) -> DeferredInboundDrainSummary`: customer-scoped
+  drain backed by `list_pending_for_customer`. Serves both automatic
+  drain-on-release and customer-scoped manual drain.
+* Extracted `_replay_deferred_records(...)`: shared loop body used by both
+  tenant-wide and customer-scoped drain functions; always passes
+  `auto_drain_after_release=False`.
+* Refactored `drain_pending_deferred_inbound(app, *, tenant_id, limit=None)`
+  to delegate to `_replay_deferred_records`; one-shot manual tenant-wide
+  backstop behavior unchanged.
+* No Twilio signature re-validation on drain replay; `deferred_inbound` rows
+  are treated as trusted, post-validation artifacts.
+* `processed_messages` written only on successful replay (PROCESSED or
+  DUPLICATE outcome), never at defer time.
+* Added focused tests in `tests/test_web_twilio_webhook.py` (6 new test
+  functions across categories: automatic drain, customer scoping, reentrancy
+  guard, still-busy-during-drain, drain-failure isolation, and manual sweep
+  limit).
+
+Explicitly excluded:
+
+* No worker, scheduler, replay daemon, `BackgroundTask`, or queue system.
+* No `StorageInterface` change. No migration - Alembic head stays
+  `d60b084798e0`.
+* No parser, `PROMPT_VERSION`, or `ConversationAdvancementService` change.
+* No sweep script: `drain_pending_deferred_inbound` callable is the manual
+  backstop.
+* No UI, outbound, payment, amendment, or idle-expiry changes. M9.4E
+  `strict=True` xfail unchanged.
+
+M9.6E remains blocked until M9.6D-fix-impl is fully landed.
 
 ### M9.6E - Idle-boundary expiry runtime (deferred)
 
