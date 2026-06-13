@@ -15,7 +15,15 @@ from alembic.config import Config
 from sqlalchemy.exc import IntegrityError
 
 from duna_orders.config import settings
-from duna_orders.domain.models import DraftItemRequest, DraftOrderRequest, ParseResult, Product
+from duna_orders.domain.models import (
+    AccumulatedDraft,
+    AccumulatedDraftItem,
+    DraftItemRequest,
+    DraftOrderRequest,
+    ParseResult,
+    Product,
+)
+from duna_orders.parsing.base import ParserInterface
 from duna_orders.parsing.exceptions import ParserError
 from duna_orders.services.conversation_advancement import (
     ConversationAdvancementOutcome,
@@ -124,6 +132,38 @@ class _RaceOrderService(OrderService):
             {},
             Exception("UNIQUE constraint failed: orders.conversation_id"),
         )
+
+
+class _FailOnceOrderService(OrderService):
+    """Raises RuntimeError on the first create_draft call; succeeds on subsequent calls."""
+
+    def __init__(self, storage) -> None:
+        super().__init__(storage)
+        self.create_draft_calls = 0
+
+    def create_draft(self, request: DraftOrderRequest):
+        self.create_draft_calls += 1
+        if self.create_draft_calls == 1:
+            raise RuntimeError("transient storage failure on first attempt")
+        return super().create_draft(request)
+
+
+class _SequencedParser(ParserInterface):
+    """Returns ParseResults in sequence; raises if exhausted."""
+
+    def __init__(self, results: list[ParseResult]) -> None:
+        self._results = list(results)
+        self.calls: list[tuple[str, list]] = []
+
+    @property
+    def model_name(self) -> str:
+        return "sequenced-mock"
+
+    def parse(self, raw_message: str, products: list[Product]) -> ParseResult:
+        self.calls.append((raw_message, list(products)))
+        if not self._results:
+            raise RuntimeError("_SequencedParser exhausted")
+        return self._results.pop(0)
 
 
 class _SpyConversationStateStore:
@@ -1099,6 +1139,571 @@ def test_draft_created_session_past_idle_threshold_is_not_auto_expired(
     )
     assert session is not None
     assert session.status == "draft_created"
+
+
+def test_accumulated_draft_saved_after_each_successful_parse_regardless_of_completeness(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path, parser=MockParser(result=_incomplete_parse_result()))
+
+    result = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="hola",
+        received_at=BASE_TIME,
+    )
+
+    assert result.outcome == ConversationAdvancementOutcome.PARSE_INCOMPLETE
+
+    draft = harness.conversation_state_store.get_accumulated_draft(
+        tenant_id=TENANT_ID,
+        conversation_id=result.conversation_id,
+    )
+    assert draft is not None
+    assert draft.is_complete is False
+
+
+def test_accumulated_draft_not_saved_on_parser_error(tmp_path: Path) -> None:
+    harness = Harness(tmp_path, parser=MockParser(raise_error=ParserError("boom")))
+
+    result = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="???",
+        received_at=BASE_TIME,
+    )
+
+    assert result.outcome == ConversationAdvancementOutcome.TURN_APPENDED_INCOMPLETE
+
+    draft = harness.conversation_state_store.get_accumulated_draft(
+        tenant_id=TENANT_ID,
+        conversation_id=result.conversation_id,
+    )
+    assert draft is None
+
+
+def test_draft_created_uses_accumulated_draft_scalars_not_latest_empty_parse_scalars(
+    tmp_path: Path,
+) -> None:
+    turn1 = ParseResult(
+        request=DraftOrderRequest(
+            tenant_id=TENANT_ID,
+            raw_message="",
+            customer_name="Ana",
+            items=[],
+        ),
+        warnings=[],
+        model="mock",
+        latency_ms=0,
+        raw_response="{}",
+    )
+    turn2 = ParseResult(
+        request=DraftOrderRequest(
+            tenant_id=TENANT_ID,
+            raw_message="",
+            customer_name="",
+            items=[
+                DraftItemRequest(
+                    tenant_id=TENANT_ID,
+                    product_id=PRODUCT_ID,
+                    quantity=Decimal("2"),
+                ),
+            ],
+        ),
+        warnings=[],
+        model="mock",
+        latency_ms=0,
+        raw_response="{}",
+    )
+    harness = Harness(tmp_path, parser=_SequencedParser([turn1, turn2]))
+
+    r1 = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="me llamo Ana",
+        received_at=BASE_TIME,
+    )
+    assert r1.outcome == ConversationAdvancementOutcome.PARSE_INCOMPLETE
+
+    r2 = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM2",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas",
+        received_at=BASE_TIME + timedelta(seconds=30),
+    )
+    assert r2.outcome == ConversationAdvancementOutcome.DRAFT_CREATED
+
+    orders = harness.storage.list_orders()
+    assert len(orders) == 1
+    assert orders[0].customer_name_snapshot == "Ana"
+
+
+def test_incremental_two_turn_order_reaches_draft_created(tmp_path: Path) -> None:
+    harness = Harness(
+        tmp_path,
+        parser=_SequencedParser([_incomplete_parse_result(), _complete_parse_result()]),
+    )
+
+    r1 = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="hola",
+        received_at=BASE_TIME,
+    )
+    assert r1.outcome == ConversationAdvancementOutcome.PARSE_INCOMPLETE
+    assert r1.draft_created is False
+
+    accumulated_after_r1 = harness.conversation_state_store.get_accumulated_draft(
+        tenant_id=TENANT_ID,
+        conversation_id=r1.conversation_id,
+    )
+    assert accumulated_after_r1 is not None
+    assert accumulated_after_r1.is_complete is False
+
+    r2 = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM2",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas",
+        received_at=BASE_TIME + timedelta(seconds=30),
+    )
+    assert r2.outcome == ConversationAdvancementOutcome.DRAFT_CREATED
+    assert r2.draft_created is True
+    assert r2.conversation_id == r1.conversation_id
+
+    orders = harness.storage.list_orders()
+    assert len(orders) == 1
+    assert orders[0].conversation_id == r2.conversation_id
+
+
+def test_missing_prior_item_conflict_blocks_draft_creation(tmp_path: Path) -> None:
+    prd_b = "prd_gaseosa"
+    harness = Harness(tmp_path, parser=MockParser())
+    harness.storage.upsert_product(
+        Product(
+            tenant_id=TENANT_ID,
+            product_id=prd_b,
+            product_name="Gaseosa",
+            unit_price=Decimal("2000"),
+            active=True,
+        )
+    )
+
+    session = harness.conversation_state_store.get_or_create_open_session(
+        tenant_id=TENANT_ID,
+        customer_phone=FROM_NUMBER,
+        received_at=BASE_TIME,
+    )
+    harness.conversation_state_store.append_turn_if_new(
+        tenant_id=TENANT_ID,
+        conversation_id=session.conversation_id,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas",
+        received_at=BASE_TIME,
+    )
+    harness.conversation_state_store.save_accumulated_draft(
+        tenant_id=TENANT_ID,
+        conversation_id=session.conversation_id,
+        draft=AccumulatedDraft(
+            tenant_id=TENANT_ID,
+            conversation_id=session.conversation_id,
+            turn_count=1,
+            items=[AccumulatedDraftItem(product_id=PRODUCT_ID, quantity=Decimal("2"))],
+            is_complete=True,
+        ),
+    )
+
+    harness.parser._result = ParseResult(
+        request=DraftOrderRequest(
+            tenant_id=TENANT_ID,
+            raw_message="",
+            customer_name="",
+            items=[
+                DraftItemRequest(
+                    tenant_id=TENANT_ID,
+                    product_id=prd_b,
+                    quantity=Decimal("1"),
+                )
+            ],
+        ),
+        warnings=[],
+        model="mock",
+        latency_ms=0,
+        raw_response="{}",
+    )
+
+    result = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM2",
+        from_number=FROM_NUMBER,
+        body="y una gaseosa",
+        received_at=BASE_TIME + timedelta(seconds=30),
+    )
+
+    assert result.outcome == ConversationAdvancementOutcome.PARSE_INCOMPLETE
+    assert result.draft_created is False
+    assert harness.storage.list_orders() == []
+
+    draft = harness.conversation_state_store.get_accumulated_draft(
+        tenant_id=TENANT_ID,
+        conversation_id=result.conversation_id,
+    )
+    assert draft is not None
+    assert any(PRODUCT_ID in c for c in draft.conflicts)
+
+
+def test_conflict_clears_when_missing_item_reappears_and_draft_created(
+    tmp_path: Path,
+) -> None:
+    prd_b = "prd_gaseosa"
+    harness = Harness(tmp_path, parser=MockParser())
+    harness.storage.upsert_product(
+        Product(
+            tenant_id=TENANT_ID,
+            product_id=prd_b,
+            product_name="Gaseosa",
+            unit_price=Decimal("2000"),
+            active=True,
+        )
+    )
+
+    session = harness.conversation_state_store.get_or_create_open_session(
+        tenant_id=TENANT_ID,
+        customer_phone=FROM_NUMBER,
+        received_at=BASE_TIME,
+    )
+    harness.conversation_state_store.append_turn_if_new(
+        tenant_id=TENANT_ID,
+        conversation_id=session.conversation_id,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas",
+        received_at=BASE_TIME,
+    )
+    harness.conversation_state_store.save_accumulated_draft(
+        tenant_id=TENANT_ID,
+        conversation_id=session.conversation_id,
+        draft=AccumulatedDraft(
+            tenant_id=TENANT_ID,
+            conversation_id=session.conversation_id,
+            turn_count=1,
+            items=[AccumulatedDraftItem(product_id=PRODUCT_ID, quantity=Decimal("2"))],
+            is_complete=True,
+        ),
+    )
+
+    harness.parser._result = ParseResult(
+        request=DraftOrderRequest(
+            tenant_id=TENANT_ID,
+            raw_message="",
+            customer_name="",
+            items=[
+                DraftItemRequest(
+                    tenant_id=TENANT_ID,
+                    product_id=prd_b,
+                    quantity=Decimal("1"),
+                )
+            ],
+        ),
+        warnings=[],
+        model="mock",
+        latency_ms=0,
+        raw_response="{}",
+    )
+    r2 = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM2",
+        from_number=FROM_NUMBER,
+        body="y una gaseosa",
+        received_at=BASE_TIME + timedelta(seconds=30),
+    )
+    assert r2.outcome == ConversationAdvancementOutcome.PARSE_INCOMPLETE
+
+    harness.parser._result = ParseResult(
+        request=DraftOrderRequest(
+            tenant_id=TENANT_ID,
+            raw_message="",
+            customer_name="Cliente Test",
+            items=[
+                DraftItemRequest(
+                    tenant_id=TENANT_ID,
+                    product_id=PRODUCT_ID,
+                    quantity=Decimal("2"),
+                ),
+                DraftItemRequest(
+                    tenant_id=TENANT_ID,
+                    product_id=prd_b,
+                    quantity=Decimal("1"),
+                ),
+            ],
+        ),
+        warnings=[],
+        model="mock",
+        latency_ms=0,
+        raw_response="{}",
+    )
+    r3 = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM3",
+        from_number=FROM_NUMBER,
+        body="eso es todo",
+        received_at=BASE_TIME + timedelta(seconds=60),
+    )
+    assert r3.outcome == ConversationAdvancementOutcome.DRAFT_CREATED
+    assert r3.draft_created is True
+
+    draft = harness.conversation_state_store.get_accumulated_draft(
+        tenant_id=TENANT_ID,
+        conversation_id=r3.conversation_id,
+    )
+    assert draft is not None
+    assert draft.conflicts == []
+    assert draft.is_complete is True
+
+    orders = harness.storage.list_orders()
+    assert len(orders) == 1
+
+
+def test_non_catalog_product_id_blocks_draft_creation(tmp_path: Path) -> None:
+    harness = Harness(
+        tmp_path,
+        parser=MockParser(
+            result=ParseResult(
+                request=DraftOrderRequest(
+                    tenant_id=TENANT_ID,
+                    raw_message="",
+                    customer_name="",
+                    items=[
+                        DraftItemRequest(
+                            tenant_id=TENANT_ID,
+                            product_id="prd_hallucinated",
+                            quantity=Decimal("1"),
+                        )
+                    ],
+                ),
+                warnings=[],
+                model="mock",
+                latency_ms=0,
+                raw_response="{}",
+            )
+        ),
+    )
+
+    result = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="quiero algo desconocido",
+        received_at=BASE_TIME,
+    )
+
+    assert result.outcome == ConversationAdvancementOutcome.PARSE_INCOMPLETE
+    assert result.draft_created is False
+    assert harness.storage.list_orders() == []
+
+    draft = harness.conversation_state_store.get_accumulated_draft(
+        tenant_id=TENANT_ID,
+        conversation_id=result.conversation_id,
+    )
+    assert draft is not None
+    assert draft.is_complete is True
+
+
+def test_draft_created_session_does_not_parse_merge_or_save_accumulated_draft(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path, parser=MockParser(result=_complete_parse_result()))
+
+    r1 = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas",
+        received_at=BASE_TIME,
+    )
+    assert r1.outcome == ConversationAdvancementOutcome.DRAFT_CREATED
+
+    draft_after_r1 = harness.conversation_state_store.get_accumulated_draft(
+        tenant_id=TENANT_ID,
+        conversation_id=r1.conversation_id,
+    )
+    assert draft_after_r1 is not None
+
+    r2 = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM2",
+        from_number=FROM_NUMBER,
+        body="algo mas?",
+        received_at=BASE_TIME + timedelta(minutes=1),
+    )
+    assert r2.outcome == ConversationAdvancementOutcome.ALREADY_HAS_DRAFT
+    assert len(harness.parser.calls) == 1
+
+    draft_after_r2 = harness.conversation_state_store.get_accumulated_draft(
+        tenant_id=TENANT_ID,
+        conversation_id=r1.conversation_id,
+    )
+    assert draft_after_r2 == draft_after_r1
+
+
+def test_create_draft_failure_after_accumulated_save_recovers_on_next_inbound(
+    tmp_path: Path,
+) -> None:
+    # Proves that if save_accumulated_draft succeeds but create_draft raises a
+    # transient RuntimeError, the accumulated draft survives the failure.  The
+    # next inbound message loads the persisted draft, retries create_draft, and
+    # reaches DRAFT_CREATED without creating a duplicate.
+    parser = MockParser(result=_complete_parse_result())
+    harness = Harness(tmp_path, parser=parser)
+    fail_once = _FailOnceOrderService(harness.storage)
+    harness.service = ConversationAdvancementService(
+        conversation_state_store=harness.conversation_state_store,
+        conversation_order_lookup=harness.conversation_order_lookup,
+        scoped_reads=harness.scoped_reads,
+        parsing_service=harness.parsing_service,
+        order_service=fail_once,
+    )
+
+    # First inbound: parse succeeds, accumulated draft is saved, create_draft fails.
+    with pytest.raises(RuntimeError, match="transient storage failure"):
+        harness.service.advance(
+            tenant_id=TENANT_ID,
+            message_sid="SM1",
+            from_number=FROM_NUMBER,
+            body="quiero 2 empanadas",
+            received_at=BASE_TIME,
+        )
+
+    # Session is still open — mark_draft_created was never called.
+    session_after_fail = harness.conversation_state_store.get_latest_session_for_customer(
+        tenant_id=TENANT_ID,
+        customer_phone=FROM_NUMBER,
+    )
+    assert session_after_fail is not None
+    assert session_after_fail.status == "open"
+
+    # No order was created.
+    assert harness.storage.list_orders() == []
+
+    # The accumulated draft IS persisted — it was saved before create_draft was called.
+    draft_after_fail = harness.conversation_state_store.get_accumulated_draft(
+        tenant_id=TENANT_ID,
+        conversation_id=session_after_fail.conversation_id,
+    )
+    assert draft_after_fail is not None
+    assert draft_after_fail.is_complete is True
+
+    # Second inbound: loads the persisted accumulated draft, retries create_draft,
+    # which now succeeds.  Session transitions to draft_created.
+    result = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM2",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas (retry)",
+        received_at=BASE_TIME + timedelta(minutes=1),
+    )
+
+    assert result.outcome == ConversationAdvancementOutcome.DRAFT_CREATED
+    assert result.draft_created is True
+    assert result.conversation_id == session_after_fail.conversation_id
+
+    orders = harness.storage.list_orders()
+    assert len(orders) == 1
+    assert orders[0].conversation_id == result.conversation_id
+
+    session_after_recovery = harness.conversation_state_store.get_session(
+        tenant_id=TENANT_ID,
+        conversation_id=result.conversation_id,
+    )
+    assert session_after_recovery is not None
+    assert session_after_recovery.status == "draft_created"
+
+    assert fail_once.create_draft_calls == 2
+
+
+def test_packaging_fee_zero_is_not_mentioned_only_after_first_turn_through_advancement(
+    tmp_path: Path,
+) -> None:
+    # Turn 1: parser explicitly returns packaging_fee=1500.  Verify the
+    # advancement wiring stores turn_count=1 and fee=1500 in the accumulated draft.
+    # Turn 2: parser returns packaging_fee=Decimal("0") — the Pydantic default
+    # meaning "not mentioned this turn".  The prior non-zero fee must be preserved,
+    # proving len(turns) correctly maps to turn_count (1 on first inbound, 2 on
+    # second inbound) and that the heuristic only treats 0 as "not mentioned" on
+    # turns 2+.
+    turn1 = ParseResult(
+        request=DraftOrderRequest(
+            tenant_id=TENANT_ID,
+            raw_message="",
+            customer_name="",
+            packaging_fee=Decimal("1500"),
+            items=[],
+        ),
+        warnings=[],
+        model="mock",
+        latency_ms=0,
+        raw_response="{}",
+    )
+    turn2 = ParseResult(
+        request=DraftOrderRequest(
+            tenant_id=TENANT_ID,
+            raw_message="",
+            customer_name="",
+            packaging_fee=Decimal("0"),
+            items=[
+                DraftItemRequest(
+                    tenant_id=TENANT_ID,
+                    product_id=PRODUCT_ID,
+                    quantity=Decimal("2"),
+                )
+            ],
+        ),
+        warnings=[],
+        model="mock",
+        latency_ms=0,
+        raw_response="{}",
+    )
+    harness = Harness(tmp_path, parser=_SequencedParser([turn1, turn2]))
+
+    r1 = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM1",
+        from_number=FROM_NUMBER,
+        body="también con cargo de empaque",
+        received_at=BASE_TIME,
+    )
+    assert r1.outcome == ConversationAdvancementOutcome.PARSE_INCOMPLETE
+
+    draft1 = harness.conversation_state_store.get_accumulated_draft(
+        tenant_id=TENANT_ID,
+        conversation_id=r1.conversation_id,
+    )
+    assert draft1 is not None
+    assert draft1.turn_count == 1
+    assert draft1.packaging_fee == Decimal("1500")
+
+    r2 = harness.service.advance(
+        tenant_id=TENANT_ID,
+        message_sid="SM2",
+        from_number=FROM_NUMBER,
+        body="quiero 2 empanadas",
+        received_at=BASE_TIME + timedelta(seconds=30),
+    )
+    assert r2.outcome == ConversationAdvancementOutcome.DRAFT_CREATED
+
+    draft2 = harness.conversation_state_store.get_accumulated_draft(
+        tenant_id=TENANT_ID,
+        conversation_id=r2.conversation_id,
+    )
+    assert draft2 is not None
+    assert draft2.turn_count == 2
+    assert draft2.packaging_fee == Decimal("1500")
 
 
 @pytest.mark.live_postgres

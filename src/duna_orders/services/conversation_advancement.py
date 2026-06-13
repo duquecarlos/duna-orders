@@ -8,8 +8,9 @@ from enum import Enum
 
 from sqlalchemy.exc import IntegrityError
 
-from duna_orders.domain.models import DraftOrderRequest, Product
+from duna_orders.domain.models import AccumulatedDraft, DraftItemRequest, DraftOrderRequest, Product
 from duna_orders.parsing.exceptions import ParserError
+from duna_orders.services.accumulated_draft_merge import merge_parse_result_into_draft
 from duna_orders.services.orders import OrderService
 from duna_orders.services.parsing import ParsingService
 from duna_orders.services.tenant_scoped_reads import TenantScopedReadService
@@ -282,9 +283,24 @@ class ConversationAdvancementService:
                 resulting_order_id=None,
             )
 
-        request = parse_result.request
+        prior_draft = self._conversation_state_store.get_accumulated_draft(
+            tenant_id=tenant_id,
+            conversation_id=session.conversation_id,
+        )
+        accumulated = merge_parse_result_into_draft(
+            prior_draft,
+            parse_result.request,
+            conversation_id=session.conversation_id,
+            turn_count=len(turns),
+            warnings=parse_result.warnings,
+        )
+        self._conversation_state_store.save_accumulated_draft(
+            tenant_id=tenant_id,
+            conversation_id=session.conversation_id,
+            draft=accumulated,
+        )
 
-        if not _is_complete(request, products):
+        if not _accumulated_is_ready_for_draft(accumulated, products):
             return ConversationAdvancementResult(
                 outcome=ConversationAdvancementOutcome.PARSE_INCOMPLETE,
                 conversation_id=session.conversation_id,
@@ -300,21 +316,15 @@ class ConversationAdvancementService:
         if revalidation is not None:
             return revalidation
 
-        request = request.model_copy(
-            update={
-                "tenant_id": tenant_id,
-                "conversation_id": session.conversation_id,
-                "raw_message": transcript,
-                "customer_phone": session.customer_phone,
-                "items": [
-                    item.model_copy(update={"tenant_id": tenant_id})
-                    for item in request.items
-                ],
-            },
+        draft_request = _accumulated_to_draft_request(
+            accumulated,
+            tenant_id=tenant_id,
+            raw_message=transcript,
+            customer_phone=accumulated.customer_phone or session.customer_phone,
         )
 
         try:
-            order = self._order_service.create_draft(request)
+            order = self._order_service.create_draft(draft_request)
         except IntegrityError:
             recovered = self._recover_from_create_draft_conflict(
                 tenant_id=tenant_id,
@@ -371,21 +381,53 @@ def _render_transcript(turns: list[ConversationTurn]) -> str:
     )
 
 
-def _is_complete(request: DraftOrderRequest, products: list[Product]) -> bool:
-    if not request.items:
+def _accumulated_is_ready_for_draft(
+    accumulated: AccumulatedDraft,
+    products: list[Product],
+) -> bool:
+    if not accumulated.is_complete:
         return False
+    product_ids = {p.product_id for p in products}
+    return all(
+        item.product_id is not None and item.product_id in product_ids
+        for item in accumulated.items
+    )
 
-    product_ids = {product.product_id for product in products}
 
-    for item in request.items:
-        if not item.product_id:
-            return False
-        if item.quantity <= 0:
-            return False
-        if item.product_id not in product_ids:
-            return False
-
-    return True
+def _accumulated_to_draft_request(
+    accumulated: AccumulatedDraft,
+    *,
+    tenant_id: str,
+    raw_message: str,
+    customer_phone: str | None = None,
+) -> DraftOrderRequest:
+    for item in accumulated.items:
+        if item.product_id is None:
+            raise ValueError(
+                "Cannot convert accumulated draft to DraftOrderRequest: "
+                "item has product_id=None (readiness gate should have blocked this)"
+            )
+    return DraftOrderRequest(
+        tenant_id=tenant_id,
+        conversation_id=accumulated.conversation_id,
+        raw_message=raw_message,
+        customer_name=accumulated.customer_name or "",
+        customer_phone=customer_phone,
+        fulfillment_type=accumulated.fulfillment_type,
+        delivery_zone=accumulated.delivery_zone,
+        packaging_fee=accumulated.packaging_fee,
+        customer_notes=accumulated.customer_notes,
+        payment_method=accumulated.payment_method,
+        items=[
+            DraftItemRequest(
+                tenant_id=tenant_id,
+                product_id=item.product_id,
+                quantity=item.quantity,
+                modifications=item.modifications,
+            )
+            for item in accumulated.items
+        ],
+    )
 
 
 def _require_text(value: str, field_name: str) -> None:
