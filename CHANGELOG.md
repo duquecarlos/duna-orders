@@ -61,10 +61,73 @@ Implementation slice. Refactor only; no runtime behavior changed.
   `202`, or drain-on-release yet.
 * Prepares for accept-and-defer wiring in a later slice.
 
-M9.6D-fix-impl C (not started) wires the defer-write/`202` response into the
-webhook, and M9.6D-fix-impl D (not started) adds drain-on-release and the
-sweep-script backstop, per
-`docs/M9_6D_ACCEPT_AND_DEFER_CLAIM_BUSY_DESIGN.md`.
+### M9.6D-fix-impl C - defer-on-claim-busy + 202 + manual drain
+
+Implementation slice. Wires the defer-write into the claim-busy path and adds
+a manual one-shot drain; automatic drain-on-release is not part of this slice.
+
+#### Delivered
+
+* `_process_validated_inbound_message` (`src/duna_orders/web/app.py`): on
+  claim-busy (a claim was never acquired by this request), the message is now
+  durably persisted via `defer_message(...)` - storing `tenant_id`,
+  `message_sid`, the raw `From` sender, the raw inbound body, and the
+  original `received_at` - and the helper returns a new
+  `ValidatedInboundProcessingOutcome.DEFERRED`. The webhook maps `DEFERRED` to
+  HTTP `202`. `DUPLICATE` and `PROCESSED` still map to `200`.
+* `processed_messages` is not written at defer time: a deferred
+  `message_sid` remains absent from `processed_messages` until it is actually
+  processed (during manual drain or a future automatic drain).
+* Defer-write idempotency: `defer_message`'s existing
+  `INSERT ... ON CONFLICT (message_sid) DO NOTHING` means repeated claim-busy
+  deliveries for the same `MessageSid` (e.g. Twilio retries) store at most one
+  `deferred_inbound` row.
+* Defer-write failure handling: if `defer_message` itself raises, the helper
+  logs the exception and falls back to the pre-existing
+  `ValidatedInboundProcessingOutcome.CLAIM_BUSY` (-> `503`), so an unstored
+  message is never acknowledged with `202`.
+* Added `DeferredInboundStore.list_pending_for_tenant` /
+  `PostgresDeferredInboundStore.list_pending_for_tenant` (tenant-wide,
+  `received_at ASC, deferred_at ASC, message_sid ASC`, same ordering as
+  `list_pending_for_customer`) - a `DeferredInboundStore` addition, not a
+  `StorageInterface` change.
+* Added a minimal one-shot manual drain:
+  `drain_pending_deferred_inbound(app, *, tenant_id, limit=None) ->
+  DeferredInboundDrainSummary` (`src/duna_orders/web/app.py`). For each
+  tenant-scoped pending `deferred_inbound` row it re-enters
+  `_process_validated_inbound_message` as a fresh arrival, using the stored
+  raw `From`/body/`received_at` as a trusted, already-validated artifact - no
+  Twilio signature re-validation. If the claim is now free, the row is
+  processed through the normal path (parser/advance runs once,
+  `processed_messages` gets the row) and marked processed in
+  `deferred_inbound`. If the claim is still busy, the row is re-deferred
+  (idempotent no-op) and stays pending - no duplicate row, no
+  `processed_messages` write, no parser/advance call. This is manual-only:
+  there is no worker, scheduler, or automatic trigger.
+* `create_app(...)` gained a `deferred_inbound_store` kwarg
+  (`PostgresDeferredInboundStore | None`), lazily constructed via
+  `_get_deferred_inbound_store` (same pattern as the conversation customer
+  claim store).
+* Added focused tests in `tests/test_web_twilio_webhook.py` covering: the
+  `202`/deferred-row/`processed_messages`-absent path, defer idempotency
+  across repeated claim-busy deliveries, defer-write-failure ->
+  non-`202`/`503`, the `DEFERRED`/`DUPLICATE`/`PROCESSED` outcome mapping, and
+  manual drain (processed-when-free, still-pending-when-busy, and the
+  no-signature-revalidation trust boundary). Added
+  `list_pending_for_tenant` coverage to `tests/test_deferred_inbound.py`.
+
+#### Excluded
+
+* No automatic drain-on-release, `BackgroundTask`, worker, scheduler, or
+  sweep script - that remains M9.6D-fix-impl D, built on top of the same
+  `_process_validated_inbound_message` re-entry and
+  `list_pending_for_tenant`/`list_pending_for_customer` used here.
+* No `StorageInterface`, parser, or `PROMPT_VERSION` change. No migration -
+  `deferred_inbound.message_sid` (added in impl A) remains the sole primary
+  key, matching the `processed_messages` convention; Alembic head stays
+  `d60b084798e0`.
+* No UI, outbound, payment, or amendment changes. The M9.4E `strict=True`
+  xfail remains unchanged.
 
 ### M9.6D-fix - Accept-and-defer design for claim-busy (design only)
 

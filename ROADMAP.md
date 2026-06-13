@@ -543,10 +543,10 @@ M9.6C closed (production store foundation, unwired); M9.6D closed (runtime
 wiring); M9.6D-fix closed (accept-and-defer design only, replaces M9.6D's
 claim-busy-`503` strategy); M9.6D-fix-impl A closed (`deferred_inbound`
 migration + store foundation, no webhook wiring yet); M9.6D-fix-impl B closed
-(shared validated inbound processing helper extracted, no behavior change).
-M9.6D-fix-impl C (defer-write/`202` wiring), M9.6D-fix-impl D
-(drain-on-release + sweep backstop), and M9.6E (idle-expiry runtime) not
-started.
+(shared validated inbound processing helper extracted, no behavior change);
+M9.6D-fix-impl C closed (defer-on-claim-busy + `202` + manual one-shot drain).
+M9.6D-fix-impl D (automatic drain-on-release + sweep backstop) and M9.6E
+(idle-expiry runtime) not started.
 
 M9.6 delivers the prerequisite identified in
 `docs/M9_4E_IDLE_BOUNDARY_DESIGN.md` section 4: a lifecycle-spanning,
@@ -844,11 +844,62 @@ Explicitly excluded:
 * No `StorageInterface` or migration change. M9.4E `strict=True` xfail
   unchanged.
 
-M9.6D-fix-impl C (not started) wires the defer-write/`202` change into the
-webhook using this shared helper, per
-`docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md`. M9.6D-fix-impl D (drain-on-release
-+ sweep-script backstop) and M9.6E remain blocked until M9.6D-fix-impl is
-fully landed.
+### M9.6D-fix-impl C - defer-on-claim-busy + 202 + manual drain
+
+Status: closed.
+
+Scope completed:
+
+* On claim-busy (claim never acquired), `_process_validated_inbound_message`
+  now calls `defer_message(...)` - storing `tenant_id`, `message_sid`, the
+  raw `From` sender, the raw inbound body, and the original `received_at` -
+  before returning a new `ValidatedInboundProcessingOutcome.DEFERRED`. The
+  webhook maps `DEFERRED` -> `202`; `DUPLICATE`/`PROCESSED` still map to `200`.
+* `processed_messages` is not written at defer time; a deferred
+  `message_sid` stays absent from `processed_messages` until actually
+  processed via drain.
+* Defer-write is idempotent (`ON CONFLICT (message_sid) DO NOTHING`):
+  repeated claim-busy deliveries for the same `MessageSid` store at most one
+  `deferred_inbound` row. If `defer_message` itself raises, the helper falls
+  back to `CLAIM_BUSY` (-> `503`) rather than acknowledging an unstored
+  message with `202`.
+* Added `DeferredInboundStore.list_pending_for_tenant` /
+  `PostgresDeferredInboundStore.list_pending_for_tenant` (tenant-wide,
+  same ordering as `list_pending_for_customer`) - a `DeferredInboundStore`
+  addition, not a `StorageInterface` change.
+* Added a minimal one-shot manual drain,
+  `drain_pending_deferred_inbound(app, *, tenant_id, limit=None)`, which
+  re-enters `_process_validated_inbound_message` per pending row as a
+  trusted, already-validated artifact (no Twilio signature re-validation).
+  If the claim is now free, the row is processed normally and marked
+  processed; if still busy, the row is re-deferred (idempotent) and stays
+  pending with no duplicate row, no `processed_messages` write, and no
+  parser/advance call. Manual-only - no worker, scheduler, or automatic
+  trigger.
+* `create_app(...)` gained a `deferred_inbound_store` kwarg, lazily
+  constructed via `_get_deferred_inbound_store`.
+* Extended `tests/test_web_twilio_webhook.py` and
+  `tests/test_deferred_inbound.py` with focused coverage for the `202` path,
+  defer idempotency, defer-write-failure, the outcome/HTTP mapping, and
+  manual drain (processed-when-free, still-pending-when-busy, no-signature
+  trust boundary).
+
+Explicitly excluded:
+
+* No automatic drain-on-release, `BackgroundTask`, worker, scheduler, or
+  sweep script - that is M9.6D-fix-impl D, built on the same
+  `_process_validated_inbound_message` re-entry and
+  `list_pending_for_tenant`/`list_pending_for_customer` used here.
+* No `StorageInterface`, parser, or `PROMPT_VERSION` change, and no
+  migration - `deferred_inbound.message_sid` (added in impl A) remains the
+  sole primary key. Alembic head stays `d60b084798e0`.
+* No UI, outbound, payment, or amendment changes. M9.4E `strict=True` xfail
+  unchanged.
+
+M9.6D-fix-impl D (not started) adds automatic drain-on-release plus a
+sweep-script backstop on top of the manual drain above, per
+`docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md`. M9.6E remains blocked until
+M9.6D-fix-impl is fully landed.
 
 ### M9.6E - Idle-boundary expiry runtime (deferred)
 

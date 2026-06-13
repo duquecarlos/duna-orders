@@ -49,6 +49,13 @@ class DeferredInboundStore(Protocol):
         limit: int | None = None,
     ) -> list[DeferredInboundRecord]: ...
 
+    def list_pending_for_tenant(
+        self,
+        *,
+        tenant_id: str,
+        limit: int | None = None,
+    ) -> list[DeferredInboundRecord]: ...
+
     def mark_processing_started(self, *, message_sid: str) -> bool: ...
 
     def mark_processed(
@@ -140,6 +147,34 @@ class PostgresDeferredInboundStore:
             .where(
                 DeferredInboundRow.tenant_id == tenant_id,
                 DeferredInboundRow.customer_key == customer_key,
+                DeferredInboundRow.processed_at.is_(None),
+            )
+            .order_by(
+                DeferredInboundRow.received_at.asc(),
+                DeferredInboundRow.deferred_at.asc(),
+                DeferredInboundRow.message_sid.asc(),
+            )
+        )
+
+        if limit is not None:
+            stmt = stmt.limit(limit)
+
+        with session_scope(self._session_factory) as session:
+            rows = session.scalars(stmt).all()
+            return [_record_from_row(row) for row in rows]
+
+    def list_pending_for_tenant(
+        self,
+        *,
+        tenant_id: str,
+        limit: int | None = None,
+    ) -> list[DeferredInboundRecord]:
+        _require_text(tenant_id, "tenant_id")
+
+        stmt = (
+            select(DeferredInboundRow)
+            .where(
+                DeferredInboundRow.tenant_id == tenant_id,
                 DeferredInboundRow.processed_at.is_(None),
             )
             .order_by(

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import datetime, timedelta
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -31,6 +31,7 @@ from duna_orders.storage.conversation_customer_claims import (
     normalize_customer_claim_key,
 )
 from duna_orders.storage.conversation_state import PostgresConversationStateStore
+from duna_orders.storage.deferred_inbound import DeferredInboundRecord
 from duna_orders.storage.memory import InMemoryStorage
 from duna_orders.storage.postgres import PostgresStorage
 from duna_orders.storage.postgres_base import Base
@@ -40,6 +41,7 @@ from duna_orders.web.app import (
     ValidatedInboundProcessingOutcome,
     _process_validated_inbound_message,
     create_app,
+    drain_pending_deferred_inbound,
 )
 from tests._fakes import MockParser
 from tests.conftest import DEFAULT_TEST_TENANT_ID
@@ -251,6 +253,141 @@ class FakeConversationCustomerClaimStore:
         return self.held.get((tenant_id, customer_key)) == holder_id
 
 
+class FakeDeferredInboundStore:
+    """In-memory DeferredInboundStore double for webhook tests."""
+
+    def __init__(self) -> None:
+        self.records: dict[str, DeferredInboundRecord] = {}
+        self.defer_calls: list[str] = []
+        self.mark_processing_started_calls: list[str] = []
+        self.mark_processed_calls: list[str] = []
+
+    def defer_message(
+        self,
+        *,
+        message_sid: str,
+        tenant_id: str,
+        customer_key: str,
+        from_number: str,
+        raw_body: str,
+        received_at: datetime,
+    ) -> bool:
+        self.defer_calls.append(message_sid)
+
+        if message_sid in self.records:
+            return False
+
+        self.records[message_sid] = DeferredInboundRecord(
+            message_sid=message_sid,
+            tenant_id=tenant_id,
+            customer_key=customer_key,
+            from_number=from_number,
+            raw_body=raw_body,
+            received_at=received_at,
+            deferred_at=utc_now(),
+            processed_at=None,
+            processing_started_at=None,
+            attempt_count=0,
+        )
+        return True
+
+    def has_pending(self, *, tenant_id: str, customer_key: str) -> bool:
+        return any(
+            record.tenant_id == tenant_id
+            and record.customer_key == customer_key
+            and record.processed_at is None
+            for record in self.records.values()
+        )
+
+    def list_pending_for_customer(
+        self,
+        *,
+        tenant_id: str,
+        customer_key: str,
+        limit: int | None = None,
+    ) -> list[DeferredInboundRecord]:
+        records = [
+            record
+            for record in self.records.values()
+            if record.tenant_id == tenant_id
+            and record.customer_key == customer_key
+            and record.processed_at is None
+        ]
+        records.sort(key=lambda record: (record.received_at, record.deferred_at, record.message_sid))
+
+        if limit is not None:
+            records = records[:limit]
+
+        return records
+
+    def list_pending_for_tenant(
+        self,
+        *,
+        tenant_id: str,
+        limit: int | None = None,
+    ) -> list[DeferredInboundRecord]:
+        records = [
+            record
+            for record in self.records.values()
+            if record.tenant_id == tenant_id and record.processed_at is None
+        ]
+        records.sort(key=lambda record: (record.received_at, record.deferred_at, record.message_sid))
+
+        if limit is not None:
+            records = records[:limit]
+
+        return records
+
+    def mark_processing_started(self, *, message_sid: str) -> bool:
+        self.mark_processing_started_calls.append(message_sid)
+        record = self.records.get(message_sid)
+
+        if record is None or record.processed_at is not None:
+            return False
+
+        self.records[message_sid] = replace(
+            record,
+            processing_started_at=utc_now(),
+            attempt_count=record.attempt_count + 1,
+        )
+        return True
+
+    def mark_processed(
+        self,
+        *,
+        message_sid: str,
+        processed_at: datetime | None = None,
+    ) -> bool:
+        self.mark_processed_calls.append(message_sid)
+        record = self.records.get(message_sid)
+
+        if record is None or record.processed_at is not None:
+            return False
+
+        self.records[message_sid] = replace(
+            record,
+            processed_at=processed_at or utc_now(),
+        )
+        return True
+
+
+class FailingDeferredInboundStore(FakeDeferredInboundStore):
+    """DeferredInboundStore double whose defer_message always raises."""
+
+    def defer_message(
+        self,
+        *,
+        message_sid: str,
+        tenant_id: str,
+        customer_key: str,
+        from_number: str,
+        raw_body: str,
+        received_at: datetime,
+    ) -> bool:
+        self.defer_calls.append(message_sid)
+        raise RuntimeError("simulated defer_message failure")
+
+
 def _create_app(**kwargs: object) -> FastAPI:
     """Build the webhook app, defaulting an isolated claim-store double.
 
@@ -260,6 +397,7 @@ def _create_app(**kwargs: object) -> FastAPI:
     kwargs.setdefault(
         "conversation_customer_claim_store", FakeConversationCustomerClaimStore()
     )
+    kwargs.setdefault("deferred_inbound_store", FakeDeferredInboundStore())
     return create_app(**kwargs)  # type: ignore[arg-type]
 
 
@@ -1231,7 +1369,7 @@ def test_twilio_webhook_outcome_returns_200_without_outbound_and_links_order(
     assert claim_store.held == {}
 
 
-def test_twilio_webhook_claim_busy_returns_503_without_processing(
+def test_twilio_webhook_claim_busy_defers_and_returns_202(
     tmp_path: Path,
 ) -> None:
     storage = InMemoryStorage()
@@ -1239,6 +1377,7 @@ def test_twilio_webhook_claim_busy_returns_503_without_processing(
     fake_service = FakeConversationAdvancementService()
     processed_store = _processed_message_store(tmp_path)
     claim_store = FakeConversationCustomerClaimStore()
+    deferred_store = FakeDeferredInboundStore()
 
     tenant_id = DEFAULT_TEST_TENANT_ID
     customer_key = normalize_customer_claim_key(tenant_id, "+573001112233")
@@ -1255,6 +1394,7 @@ def test_twilio_webhook_claim_busy_returns_503_without_processing(
         processed_message_store=processed_store,
         conversation_advancement_service=fake_service,
         conversation_customer_claim_store=claim_store,
+        deferred_inbound_store=deferred_store,
     )
     client = TestClient(app)
 
@@ -1270,7 +1410,7 @@ def test_twilio_webhook_claim_busy_returns_503_without_processing(
         headers=_signed_headers(params),
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 202
     assert processed_store.get_message("SM_CLAIM_BUSY") is None
     assert parser.calls == []
     assert fake_service.calls == []
@@ -1280,6 +1420,115 @@ def test_twilio_webhook_claim_busy_returns_503_without_processing(
     # other holder's claim is left untouched.
     assert claim_store.release_calls == []
     assert claim_store.held[(tenant_id, customer_key)] == "other-holder"
+
+    # The message is durably persisted for later (manual) drain instead of
+    # relying on Twilio redelivery, but is not yet in processed_messages.
+    deferred = deferred_store.records["SM_CLAIM_BUSY"]
+    assert deferred.tenant_id == tenant_id
+    assert deferred.customer_key == customer_key
+    assert deferred.from_number == "whatsapp:+573001112233"
+    assert deferred.raw_body == "Buenas, una bandeja paisa"
+    assert deferred.processed_at is None
+
+
+def test_twilio_webhook_claim_busy_defer_is_idempotent_across_retries(
+    tmp_path: Path,
+) -> None:
+    storage = InMemoryStorage()
+    parser = MockParser()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    claim_store = FakeConversationCustomerClaimStore()
+    deferred_store = FakeDeferredInboundStore()
+
+    tenant_id = DEFAULT_TEST_TENANT_ID
+    customer_key = normalize_customer_claim_key(tenant_id, "+573001112233")
+    assert claim_store.try_acquire(
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+        holder_id="other-holder",
+    )
+
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        parser=parser,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+        deferred_inbound_store=deferred_store,
+    )
+    client = TestClient(app)
+
+    params = {
+        "MessageSid": "SM_CLAIM_BUSY_RETRY",
+        "From": "whatsapp:+573001112233",
+        "Body": "Buenas, una bandeja paisa",
+    }
+    headers = _signed_headers(params)
+
+    # Twilio retries the same MessageSid while the claim is still busy.
+    first = client.post(WEBHOOK_PATH, data=params, headers=headers)
+    second = client.post(WEBHOOK_PATH, data=params, headers=headers)
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+
+    # Both deliveries call defer_message, but only one row is stored.
+    assert deferred_store.defer_calls == ["SM_CLAIM_BUSY_RETRY", "SM_CLAIM_BUSY_RETRY"]
+    assert list(deferred_store.records) == ["SM_CLAIM_BUSY_RETRY"]
+    assert processed_store.get_message("SM_CLAIM_BUSY_RETRY") is None
+
+
+def test_twilio_webhook_defer_write_failure_returns_503_not_202(
+    tmp_path: Path,
+) -> None:
+    storage = InMemoryStorage()
+    parser = MockParser()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    claim_store = FakeConversationCustomerClaimStore()
+    deferred_store = FailingDeferredInboundStore()
+
+    tenant_id = DEFAULT_TEST_TENANT_ID
+    customer_key = normalize_customer_claim_key(tenant_id, "+573001112233")
+    assert claim_store.try_acquire(
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+        holder_id="other-holder",
+    )
+
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        parser=parser,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+        deferred_inbound_store=deferred_store,
+    )
+    client = TestClient(app)
+
+    params = {
+        "MessageSid": "SM_DEFER_WRITE_FAILS",
+        "From": "whatsapp:+573001112233",
+        "Body": "Buenas, una bandeja paisa",
+    }
+
+    response = client.post(
+        WEBHOOK_PATH,
+        data=params,
+        headers=_signed_headers(params),
+    )
+
+    # An unstored message must not be acknowledged with 202 - Twilio should
+    # redeliver it.
+    assert response.status_code == 503
+    assert response.status_code != 202
+    assert processed_store.get_message("SM_DEFER_WRITE_FAILS") is None
+    assert deferred_store.records == {}
+    assert parser.calls == []
+    assert fake_service.calls == []
 
 
 def test_twilio_webhook_genuine_duplicate_does_extra_claim_round_trip_without_advancing(
@@ -1427,12 +1676,14 @@ def test_process_validated_inbound_message_outcome_mapping(tmp_path: Path) -> No
     fake_service = FakeConversationAdvancementService()
     processed_store = _processed_message_store(tmp_path)
     claim_store = FakeConversationCustomerClaimStore()
+    deferred_store = FakeDeferredInboundStore()
     app = _create_app(
         app_settings=_settings(),
         storage=storage,
         processed_message_store=processed_store,
         conversation_advancement_service=fake_service,
         conversation_customer_claim_store=claim_store,
+        deferred_inbound_store=deferred_store,
     )
 
     tenant_id = DEFAULT_TEST_TENANT_ID
@@ -1440,8 +1691,9 @@ def test_process_validated_inbound_message_outcome_mapping(tmp_path: Path) -> No
     raw_sender = "whatsapp:+573001112233"
     customer_key = normalize_customer_claim_key(tenant_id, customer_phone)
 
-    # CLAIM_BUSY: another holder already holds the conversation claim, so the
-    # message is neither recorded nor advanced.
+    # DEFERRED: another holder already holds the conversation claim, so the
+    # message is durably persisted for later processing instead of being
+    # recorded or advanced now.
     assert claim_store.try_acquire(
         tenant_id=tenant_id,
         customer_key=customer_key,
@@ -1458,10 +1710,11 @@ def test_process_validated_inbound_message_outcome_mapping(tmp_path: Path) -> No
         received_at=utc_now(),
     )
 
-    assert busy_result.outcome is ValidatedInboundProcessingOutcome.CLAIM_BUSY
+    assert busy_result.outcome is ValidatedInboundProcessingOutcome.DEFERRED
     assert processed_store.get_message("SM_HELPER_BUSY") is None
     assert fake_service.calls == []
     assert claim_store.held[(tenant_id, customer_key)] == "other-holder"
+    assert deferred_store.records["SM_HELPER_BUSY"].processed_at is None
 
     claim_store.release(
         tenant_id=tenant_id,
@@ -1498,3 +1751,187 @@ def test_process_validated_inbound_message_outcome_mapping(tmp_path: Path) -> No
     assert duplicate_result.outcome is ValidatedInboundProcessingOutcome.DUPLICATE
     assert len(fake_service.calls) == 1
     assert claim_store.held == {}
+
+
+DRAIN_RECEIVED_AT = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+
+
+def _seed_deferred_record(
+    store: FakeDeferredInboundStore,
+    *,
+    message_sid: str,
+    tenant_id: str,
+    customer_key: str,
+    from_number: str = "whatsapp:+573001112233",
+    raw_body: str = "Buenas, una bandeja paisa",
+    received_at: datetime = DRAIN_RECEIVED_AT,
+) -> None:
+    store.records[message_sid] = DeferredInboundRecord(
+        message_sid=message_sid,
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+        from_number=from_number,
+        raw_body=raw_body,
+        received_at=received_at,
+        deferred_at=received_at,
+        processed_at=None,
+        processing_started_at=None,
+        attempt_count=0,
+    )
+
+
+def test_drain_pending_deferred_inbound_processes_pending_row_when_claim_free(
+    tmp_path: Path,
+) -> None:
+    storage = InMemoryStorage()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    claim_store = FakeConversationCustomerClaimStore()
+    deferred_store = FakeDeferredInboundStore()
+
+    tenant_id = DEFAULT_TEST_TENANT_ID
+    customer_phone = "+573001112233"
+    customer_key = normalize_customer_claim_key(tenant_id, customer_phone)
+
+    _seed_deferred_record(
+        deferred_store,
+        message_sid="SM_DRAIN_OK",
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+    )
+
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+        deferred_inbound_store=deferred_store,
+    )
+
+    summary = drain_pending_deferred_inbound(app, tenant_id=tenant_id)
+
+    assert summary.processed_message_sids == ["SM_DRAIN_OK"]
+    assert summary.still_pending_message_sids == []
+    assert summary.failed_message_sids == []
+
+    # The deferred row is marked processed and the message is now recorded
+    # exactly as a freshly-processed inbound message would be.
+    assert deferred_store.records["SM_DRAIN_OK"].processed_at is not None
+    assert deferred_store.mark_processing_started_calls == ["SM_DRAIN_OK"]
+    assert deferred_store.mark_processed_calls == ["SM_DRAIN_OK"]
+    assert processed_store.get_message("SM_DRAIN_OK") is not None
+
+    # The advancement service runs once, using the original received_at and
+    # the customer phone re-derived from the stored raw From value.
+    assert len(fake_service.calls) == 1
+    call = fake_service.calls[0]
+    assert call.message_sid == "SM_DRAIN_OK"
+    assert call.from_number == customer_phone
+    assert call.body == "Buenas, una bandeja paisa"
+    assert call.received_at == DRAIN_RECEIVED_AT
+
+    # The claim is acquired and released exactly once during the drain.
+    assert len(claim_store.acquire_calls) == 1
+    assert len(claim_store.release_calls) == 1
+    assert claim_store.held == {}
+
+
+def test_drain_pending_deferred_inbound_leaves_row_pending_when_claim_still_busy(
+    tmp_path: Path,
+) -> None:
+    storage = InMemoryStorage()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    claim_store = FakeConversationCustomerClaimStore()
+    deferred_store = FakeDeferredInboundStore()
+
+    tenant_id = DEFAULT_TEST_TENANT_ID
+    customer_phone = "+573001112233"
+    customer_key = normalize_customer_claim_key(tenant_id, customer_phone)
+
+    _seed_deferred_record(
+        deferred_store,
+        message_sid="SM_DRAIN_BUSY",
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+    )
+
+    assert claim_store.try_acquire(
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+        holder_id="other-holder",
+    )
+
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+        deferred_inbound_store=deferred_store,
+    )
+
+    summary = drain_pending_deferred_inbound(app, tenant_id=tenant_id)
+
+    assert summary.processed_message_sids == []
+    assert summary.still_pending_message_sids == ["SM_DRAIN_BUSY"]
+    assert summary.failed_message_sids == []
+
+    # The row stays pending - no duplicate row, no processed mark, and no
+    # processed_messages write.
+    assert list(deferred_store.records) == ["SM_DRAIN_BUSY"]
+    assert deferred_store.records["SM_DRAIN_BUSY"].processed_at is None
+    assert deferred_store.mark_processed_calls == []
+    assert processed_store.get_message("SM_DRAIN_BUSY") is None
+
+    # Nothing was advanced or parsed, and the other holder's claim is
+    # untouched.
+    assert fake_service.calls == []
+    assert claim_store.held[(tenant_id, customer_key)] == "other-holder"
+
+
+def test_drain_pending_deferred_inbound_does_not_require_twilio_signature(
+    tmp_path: Path,
+) -> None:
+    # No twilio_auth_token / twilio_webhook_public_url is configured, so the
+    # webhook route could never validate a Twilio signature for this app -
+    # yet the manual drain still processes the deferred row, because it
+    # re-enters processing as a trusted, already-validated artifact and never
+    # calls validate_twilio_signature.
+    app_settings = Settings(
+        duna_storage_backend="memory",
+        webhook_tenant_id=DEFAULT_TEST_TENANT_ID,
+    )
+
+    storage = InMemoryStorage()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    claim_store = FakeConversationCustomerClaimStore()
+    deferred_store = FakeDeferredInboundStore()
+
+    tenant_id = DEFAULT_TEST_TENANT_ID
+    customer_phone = "+573001112233"
+    customer_key = normalize_customer_claim_key(tenant_id, customer_phone)
+
+    _seed_deferred_record(
+        deferred_store,
+        message_sid="SM_DRAIN_TRUSTED",
+        tenant_id=tenant_id,
+        customer_key=customer_key,
+    )
+
+    app = _create_app(
+        app_settings=app_settings,
+        storage=storage,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+        deferred_inbound_store=deferred_store,
+    )
+
+    summary = drain_pending_deferred_inbound(app, tenant_id=tenant_id)
+
+    assert summary.processed_message_sids == ["SM_DRAIN_TRUSTED"]
+    assert summary.failed_message_sids == []
+    assert deferred_store.records["SM_DRAIN_TRUSTED"].processed_at is not None

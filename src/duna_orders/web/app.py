@@ -22,6 +22,7 @@ from duna_orders.storage.conversation_customer_claims import (
 )
 from duna_orders.storage.conversation_orders import PostgresConversationOrderLookup
 from duna_orders.storage.conversation_state import PostgresConversationStateStore
+from duna_orders.storage.deferred_inbound import PostgresDeferredInboundStore
 from duna_orders.storage.factory import build_storage
 from duna_orders.storage.processed_messages import PostgresProcessedMessageStore
 from duna_orders.storage.postgres_session import get_or_create_session_factory
@@ -40,6 +41,7 @@ class ValidatedInboundProcessingOutcome(Enum):
     PROCESSED = "processed"
     DUPLICATE = "duplicate"
     CLAIM_BUSY = "claim_busy"
+    DEFERRED = "deferred"
 
 
 @dataclass(frozen=True)
@@ -67,13 +69,36 @@ def _process_validated_inbound_message(
         holder_id=holder_id,
     ):
         logger.info(
-            "Conversation claim busy for tenant_id=%s customer_key=%s; "
-            "returning 503 for redelivery",
+            "Conversation claim busy for tenant_id=%s customer_key=%s "
+            "message_sid=%s; deferring for later processing",
             tenant_id,
             customer_key,
+            message_sid,
         )
+
+        try:
+            _get_deferred_inbound_store(app).defer_message(
+                message_sid=message_sid,
+                tenant_id=tenant_id,
+                customer_key=customer_key,
+                from_number=raw_sender,
+                raw_body=inbound_body,
+                received_at=received_at,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to defer claim-busy message_sid=%s for tenant_id=%s "
+                "customer_key=%s; returning 503 for redelivery",
+                message_sid,
+                tenant_id,
+                customer_key,
+            )
+            return ValidatedInboundProcessingResult(
+                outcome=ValidatedInboundProcessingOutcome.CLAIM_BUSY
+            )
+
         return ValidatedInboundProcessingResult(
-            outcome=ValidatedInboundProcessingOutcome.CLAIM_BUSY
+            outcome=ValidatedInboundProcessingOutcome.DEFERRED
         )
 
     try:
@@ -132,6 +157,7 @@ def create_app(
     order_lifecycle_store: OrderLifecycleStore | None = None,
     conversation_advancement_service: ConversationAdvancementService | None = None,
     conversation_customer_claim_store: PostgresConversationCustomerClaimStore | None = None,
+    deferred_inbound_store: PostgresDeferredInboundStore | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Duna Orders Webhook")
     app.state.settings = app_settings
@@ -141,6 +167,7 @@ def create_app(
     app.state.order_lifecycle_store = order_lifecycle_store
     app.state.conversation_advancement_service = conversation_advancement_service
     app.state.conversation_customer_claim_store = conversation_customer_claim_store
+    app.state.deferred_inbound_store = deferred_inbound_store
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -193,6 +220,9 @@ def create_app(
 
         if result.outcome is ValidatedInboundProcessingOutcome.CLAIM_BUSY:
             return Response(status_code=503)
+
+        if result.outcome is ValidatedInboundProcessingOutcome.DEFERRED:
+            return Response(status_code=202)
 
         return Response(status_code=200)
 
@@ -254,6 +284,24 @@ def _get_conversation_customer_claim_store(app: FastAPI) -> PostgresConversation
 
     return store
 
+
+def _get_deferred_inbound_store(app: FastAPI) -> PostgresDeferredInboundStore:
+    store = app.state.deferred_inbound_store
+
+    if store is None:
+        database_url = app.state.settings.database_url
+
+        if not database_url:
+            raise RuntimeError("DATABASE_URL is required for deferred inbound storage.")
+
+        store = PostgresDeferredInboundStore(
+            get_or_create_session_factory(database_url)
+        )
+        app.state.deferred_inbound_store = store
+
+    return store
+
+
 def _get_order_lifecycle_store(app: FastAPI) -> OrderLifecycleStore | None:
     store = app.state.order_lifecycle_store
 
@@ -295,6 +343,84 @@ def _get_conversation_advancement_service(app: FastAPI) -> ConversationAdvanceme
     app.state.conversation_advancement_service = service
 
     return service
+
+
+@dataclass(frozen=True)
+class DeferredInboundDrainSummary:
+    processed_message_sids: list[str]
+    still_pending_message_sids: list[str]
+    failed_message_sids: list[str]
+
+
+def drain_pending_deferred_inbound(
+    app: FastAPI,
+    *,
+    tenant_id: str,
+    limit: int | None = None,
+) -> DeferredInboundDrainSummary:
+    """Manually reprocess pending deferred_inbound rows for one tenant.
+
+    One-shot, manual-only: re-enters _process_validated_inbound_message as a
+    fresh arrival for each pending row, using the trusted stored
+    post-validation artifact (no signature re-validation). Rows whose claim
+    is still busy are re-deferred (idempotent) and remain pending.
+    """
+    deferred_store = _get_deferred_inbound_store(app)
+    pending = deferred_store.list_pending_for_tenant(tenant_id=tenant_id, limit=limit)
+
+    processed: list[str] = []
+    still_pending: list[str] = []
+    failed: list[str] = []
+
+    for record in pending:
+        customer_phone = _twilio_whatsapp_sender_to_phone(record.from_number)
+
+        if not customer_phone:
+            logger.warning(
+                "Skipping deferred message_sid=%s for tenant_id=%s: could not "
+                "derive customer phone from stored from_number",
+                record.message_sid,
+                tenant_id,
+            )
+            failed.append(record.message_sid)
+            continue
+
+        deferred_store.mark_processing_started(message_sid=record.message_sid)
+
+        try:
+            result = _process_validated_inbound_message(
+                app=app,
+                tenant_id=record.tenant_id,
+                message_sid=record.message_sid,
+                raw_sender=record.from_number,
+                customer_phone=customer_phone,
+                inbound_body=record.raw_body,
+                received_at=record.received_at,
+            )
+        except Exception:
+            logger.exception(
+                "Manual drain failed to reprocess deferred message_sid=%s "
+                "for tenant_id=%s",
+                record.message_sid,
+                tenant_id,
+            )
+            failed.append(record.message_sid)
+            continue
+
+        if result.outcome in (
+            ValidatedInboundProcessingOutcome.PROCESSED,
+            ValidatedInboundProcessingOutcome.DUPLICATE,
+        ):
+            deferred_store.mark_processed(message_sid=record.message_sid)
+            processed.append(record.message_sid)
+        else:
+            still_pending.append(record.message_sid)
+
+    return DeferredInboundDrainSummary(
+        processed_message_sids=processed,
+        still_pending_message_sids=still_pending,
+        failed_message_sids=failed,
+    )
 
 
 app = create_app()

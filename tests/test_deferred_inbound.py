@@ -150,6 +150,78 @@ def test_list_pending_for_customer_filters_by_tenant_and_customer(tmp_path: Path
     assert [record.message_sid for record in records] == ["SM_MATCH"]
 
 
+def test_list_pending_for_tenant_spans_customers_and_excludes_other_tenants_and_processed(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+
+    store.defer_message(
+        message_sid="SM_TENANT_CUSTOMER_A",
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        customer_key="+573001112233",
+        from_number="whatsapp:+573001112233",
+        raw_body="customer a",
+        received_at=RECEIVED_AT,
+    )
+    store.defer_message(
+        message_sid="SM_TENANT_CUSTOMER_B",
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        customer_key="+573009998877",
+        from_number="whatsapp:+573009998877",
+        raw_body="customer b, same tenant",
+        received_at=RECEIVED_AT + timedelta(minutes=1),
+    )
+    store.defer_message(
+        message_sid="SM_TENANT_PROCESSED",
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        customer_key="+573001112233",
+        from_number="whatsapp:+573001112233",
+        raw_body="already drained",
+        received_at=RECEIVED_AT + timedelta(minutes=2),
+    )
+    store.mark_processed(message_sid="SM_TENANT_PROCESSED")
+    store.defer_message(
+        message_sid="SM_OTHER_TENANT",
+        tenant_id="tenant_other",
+        customer_key="+573001112233",
+        from_number="whatsapp:+573001112233",
+        raw_body="other tenant",
+        received_at=RECEIVED_AT,
+    )
+
+    records = store.list_pending_for_tenant(tenant_id=DEFAULT_TEST_TENANT_ID)
+
+    assert [record.message_sid for record in records] == [
+        "SM_TENANT_CUSTOMER_A",
+        "SM_TENANT_CUSTOMER_B",
+    ]
+
+
+def test_list_pending_for_tenant_respects_limit(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+
+    store.defer_message(
+        message_sid="SM_LIMIT_A",
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        customer_key="+573001112233",
+        from_number="whatsapp:+573001112233",
+        raw_body="first",
+        received_at=RECEIVED_AT,
+    )
+    store.defer_message(
+        message_sid="SM_LIMIT_B",
+        tenant_id=DEFAULT_TEST_TENANT_ID,
+        customer_key="+573009998877",
+        from_number="whatsapp:+573009998877",
+        raw_body="second",
+        received_at=RECEIVED_AT + timedelta(minutes=1),
+    )
+
+    records = store.list_pending_for_tenant(tenant_id=DEFAULT_TEST_TENANT_ID, limit=1)
+
+    assert [record.message_sid for record in records] == ["SM_LIMIT_A"]
+
+
 def test_list_pending_for_customer_excludes_processed_rows(tmp_path: Path) -> None:
     store = _store(tmp_path)
 
