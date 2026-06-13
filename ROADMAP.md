@@ -6,6 +6,49 @@ Detailed completed work belongs in `CHANGELOG.md`. This file only keeps mileston
 
 ## High priority
 
+## M10 - Stateful parser and conversation accumulation
+
+Status: closed through M10.3B. Baseline: `5ee9ea4`. Alembic head: `f4c8b2a9e1d3`.
+
+M10 adds true persisted conversation accumulation: a deterministic, inspectable
+`AccumulatedDraft` stored between turns and updated by deterministic service code,
+not by the LLM re-interpreting a growing transcript.
+
+### M10.0/M10.1A — Design lock
+
+Status: closed. Chose Option B (snapshot-diff + deterministic merge). LLM receives
+full transcript on every turn and returns a complete snapshot; service code diffs
+against prior `AccumulatedDraft` and owns the merge. Design locked in
+`docs/M10_STATEFUL_PARSER_DESIGN.md`.
+
+### M10.1B — Accumulated draft store
+
+Status: closed. Added `AccumulatedDraft` / `AccumulatedDraftItem` Pydantic v2 domain
+models. Extended `ConversationStateStore` Protocol with `get_accumulated_draft` /
+`save_accumulated_draft`. Migration `f4c8b2a9e1d3` adds `conversation_accumulated_drafts`
+(FK to `conversation_sessions` ON DELETE CASCADE, tenant-scoped index).
+
+### M10.2 — Deterministic merge
+
+Status: closed. Pure `merge_parse_result_into_draft` (no I/O). Full-transcript
+invariant, scalar preservation, `packaging_fee=0` "not mentioned" heuristic, conflict
+detection when a prior item is absent from the snapshot, and conflict resolution when
+it reappears.
+
+### M10.3B — Advancement wiring
+
+Status: closed. `_advance_open_session` now loads/merges/saves `AccumulatedDraft` on
+each successful parse. Parser errors do not mutate draft state. Old `_is_complete`
+replaced by `_accumulated_is_ready_for_draft` (preserves catalog membership validation
+before draft creation). Drafts created from accumulated state via
+`_accumulated_to_draft_request` using authoritative `tenant_id` from the service call.
+`create_draft` failure after accumulated save is recoverable on next inbound; tripwire
+in `DECISIONS.md`.
+
+Deferred follow-ups:
+
+* M10.5 — Outbound/bot replies: separate milestone, not part of M10.
+
 ## M9 - Conversation state architecture
 
 Status: closed. M9.3A closed; M9.4A closed; M9.4B closed; M9.4C closed;

@@ -1,6 +1,61 @@
 # Changelog
 ## Unreleased
 
+### M10 - Stateful parser and conversation accumulation (M10.0–M10.3B)
+
+Status: closed through M10.3B. No parser prompt, `PROMPT_VERSION`,
+`StorageInterface`, outbound, UI, payment, amendment, customer-registry,
+comprobante, or reconciliation changes.
+
+Design locked in `docs/M10_STATEFUL_PARSER_DESIGN.md`.
+
+#### Delivered
+
+* **M10.0/M10.1A — Design lock**: Chose Option B (snapshot-diff + deterministic
+  merge). LLM receives full transcript on every turn and returns a complete
+  `DraftOrderRequest` snapshot; deterministic service code diffs against prior
+  `AccumulatedDraft` and owns the merge. Locked in
+  `docs/M10_STATEFUL_PARSER_DESIGN.md` before any implementation.
+* **M10.1B — Accumulated draft store**: Added `AccumulatedDraft` and
+  `AccumulatedDraftItem` Pydantic v2 domain models (`extra="forbid"`). Extended
+  `ConversationStateStore` Protocol with `get_accumulated_draft` /
+  `save_accumulated_draft`. Added Alembic migration `f4c8b2a9e1d3` creating
+  `conversation_accumulated_drafts` (`conversation_id` PK + FK to
+  `conversation_sessions` ON DELETE CASCADE, `tenant_id`, `accumulated_json`
+  TEXT, `turn_count` INT, `version` INT, `updated_at` DATETIME; tenant-scoped
+  index). Alembic head: `f4c8b2a9e1d3`.
+* **M10.2 — Deterministic merge**: Added pure `merge_parse_result_into_draft`
+  (no I/O). Full-transcript invariant: LLM sees complete history on every turn;
+  a prior item missing from the snapshot is a parser omission (conflict), not a
+  customer retraction. Scalar merge preserves non-empty prior values;
+  `packaging_fee=0` from parser treated as "not mentioned" on turns 2+.
+  Duplicate item keys combined with warning. Conflicts clear when missing item
+  reappears in a later snapshot.
+* **M10.3B — Advancement wiring**: Wired merge into `_advance_open_session`.
+  Each successful parse loads prior `AccumulatedDraft`, merges the
+  full-transcript snapshot, saves accumulated state, and creates a draft from
+  accumulated state when ready. Parser errors do not mutate accumulated draft
+  state. Old `_is_complete` completeness check replaced by
+  `_accumulated_is_ready_for_draft` (preserves catalog membership validation
+  before draft creation). `_accumulated_to_draft_request` uses authoritative
+  `tenant_id` from the service call (not from accumulated state) and
+  `session.customer_phone` as fallback. `create_draft` failure after accumulated
+  save is safely recoverable on the next inbound turn; tripwire documented in
+  `DECISIONS.md`.
+
+#### Excluded
+
+* No parser prompt or `PROMPT_VERSION` change.
+* No `StorageInterface` change.
+* No outbound/bot replies, UI, payment, amendment, customer-registry,
+  comprobante, or reconciliation changes.
+* M10.5 (outbound/bot replies) is a separate future milestone.
+
+#### Verification
+
+* 170 passed, 7 deselected (`live_postgres` skipped) in post-push verification.
+* Baseline: `5ee9ea4`. Alembic head: `f4c8b2a9e1d3`.
+
 ### M9.6D-fix-impl A - deferred_inbound migration + store foundation
 
 Implementation slice. Adds the durable persistence foundation for the
