@@ -16,6 +16,7 @@ from duna_orders.storage.schema import (
     CONVERSATION_SESSIONS_TAB,
     CONVERSATION_TURNS_TAB,
     DEFERRED_INBOUND_TAB,
+    CONVERSATION_ACCUMULATED_DRAFTS_TAB,
 )
 
 POSTGRES_ONLY_TABLES = {
@@ -26,6 +27,7 @@ POSTGRES_ONLY_TABLES = {
     "conversation_turns",
     "conversation_customer_claims",
     "deferred_inbound",
+    "conversation_accumulated_drafts",
 }
 PRIMARY_ID_COLUMNS = {
     PRODUCTS_TAB: "product_id",
@@ -39,6 +41,7 @@ PRIMARY_ID_COLUMNS = {
     CONVERSATION_SESSIONS_TAB: "conversation_id",
     CONVERSATION_TURNS_TAB: "turn_id",
     DEFERRED_INBOUND_TAB: "message_sid",
+    CONVERSATION_ACCUMULATED_DRAFTS_TAB: "conversation_id",
 }
 
 
@@ -418,3 +421,53 @@ def test_deferred_inbound_pending_index_exists() -> None:
         "deferred_at",
         "message_sid",
     ]
+
+
+def test_conversation_accumulated_drafts_table_is_postgres_only() -> None:
+    load_postgres_models()
+
+    table = Base.metadata.tables[CONVERSATION_ACCUMULATED_DRAFTS_TAB]
+
+    assert [column.name for column in table.columns] == [
+        "conversation_id",
+        "tenant_id",
+        "accumulated_json",
+        "turn_count",
+        "version",
+        "updated_at",
+    ]
+    assert CONVERSATION_ACCUMULATED_DRAFTS_TAB not in TABS
+    assert table.c.conversation_id.primary_key is True
+    assert table.c.tenant_id.nullable is False
+    assert table.c.accumulated_json.nullable is False
+    assert table.c.turn_count.nullable is False
+    assert table.c.version.nullable is False
+    assert table.c.updated_at.nullable is False
+    assert isinstance(table.c.accumulated_json.type, Text)
+    assert isinstance(table.c.turn_count.type, Integer)
+    assert isinstance(table.c.version.type, Integer)
+    assert isinstance(table.c.updated_at.type, DateTime)
+
+
+def test_conversation_accumulated_drafts_fk_references_sessions_with_cascade() -> None:
+    load_postgres_models()
+
+    table = Base.metadata.tables[CONVERSATION_ACCUMULATED_DRAFTS_TAB]
+    sessions = Base.metadata.tables[CONVERSATION_SESSIONS_TAB]
+    foreign_keys = table.c.conversation_id.foreign_keys
+
+    assert len(foreign_keys) == 1
+
+    fk = next(iter(foreign_keys))
+
+    assert fk.column is sessions.c.conversation_id
+    assert fk.ondelete == "CASCADE"
+
+
+def test_conversation_accumulated_drafts_index_exists() -> None:
+    load_postgres_models()
+
+    table = Base.metadata.tables[CONVERSATION_ACCUMULATED_DRAFTS_TAB]
+    indexes = {index.name for index in table.indexes}
+
+    assert "ix_conversation_accumulated_drafts_tenant_id_conversation_id" in indexes

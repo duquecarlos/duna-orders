@@ -33,6 +33,7 @@ from duna_orders.storage.schema import (
     CONVERSATION_TURNS_TAB,
     CONVERSATION_CUSTOMER_CLAIMS_TAB,
     DEFERRED_INBOUND_TAB,
+    CONVERSATION_ACCUMULATED_DRAFTS_TAB,
 )
 
 
@@ -445,6 +446,32 @@ class ConversationCustomerClaimRow(Base):
     acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ConversationAccumulatedDraftRow(Base):
+    __tablename__ = CONVERSATION_ACCUMULATED_DRAFTS_TAB
+
+    conversation_id: Mapped[str] = mapped_column(
+        String(ID_LENGTH),
+        ForeignKey(
+            f"{CONVERSATION_SESSIONS_TAB}.conversation_id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+    tenant_id: Mapped[str] = mapped_column(String(TENANT_ID_LENGTH), nullable=False)
+    accumulated_json: Mapped[str] = mapped_column(Text, nullable=False)
+    turn_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_conversation_accumulated_drafts_tenant_id_conversation_id",
+            "tenant_id",
+            "conversation_id",
+        ),
+    )
 
 
 class DeferredInboundRow(Base):

@@ -12,7 +12,7 @@ from alembic.config import Config
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from duna_orders.domain.models import Order, OrderItem
+from duna_orders.domain.models import AccumulatedDraft, AccumulatedDraftItem, Order, OrderItem
 from duna_orders.config import settings
 from duna_orders.storage.conversation_state import PostgresConversationStateStore
 from duna_orders.storage.conversation_orders import PostgresConversationOrderLookup
@@ -781,6 +781,173 @@ def test_store_does_not_import_parser_order_service_or_webhook() -> None:
     assert "OrderService" not in source
     assert "create_draft" not in source
     assert "webhook" not in source
+
+
+def test_get_accumulated_draft_returns_none_when_not_set(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+
+    result = store.get_accumulated_draft(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+    )
+
+    assert result is None
+
+
+def test_save_and_get_accumulated_draft_roundtrip(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    draft = AccumulatedDraft(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        turn_count=1,
+        items=[
+            AccumulatedDraftItem(product_id="sku-001", quantity=Decimal("2")),
+        ],
+        customer_name="Ana",
+        is_complete=False,
+    )
+
+    store.save_accumulated_draft(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        draft=draft,
+    )
+    result = store.get_accumulated_draft(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+    )
+
+    assert result is not None
+    assert result.tenant_id == TENANT_A
+    assert result.conversation_id == session.conversation_id
+    assert result.turn_count == 1
+    assert result.customer_name == "Ana"
+    assert len(result.items) == 1
+    assert result.items[0].product_id == "sku-001"
+    assert result.items[0].quantity == Decimal("2")
+    assert result.is_complete is False
+
+
+def test_save_accumulated_draft_updates_existing(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    first_draft = AccumulatedDraft(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        turn_count=1,
+        items=[AccumulatedDraftItem(product_id="sku-001", quantity=Decimal("1"))],
+    )
+    second_draft = AccumulatedDraft(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        turn_count=2,
+        items=[
+            AccumulatedDraftItem(product_id="sku-001", quantity=Decimal("3")),
+            AccumulatedDraftItem(product_id="sku-002", quantity=Decimal("1")),
+        ],
+        is_complete=True,
+    )
+
+    store.save_accumulated_draft(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        draft=first_draft,
+    )
+    store.save_accumulated_draft(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        draft=second_draft,
+    )
+    result = store.get_accumulated_draft(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+    )
+
+    assert result is not None
+    assert result.turn_count == 2
+    assert len(result.items) == 2
+    assert result.items[0].quantity == Decimal("3")
+    assert result.is_complete is True
+
+
+def test_accumulated_draft_roundtrip_with_null_product_id(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    draft = AccumulatedDraft(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        turn_count=1,
+        items=[AccumulatedDraftItem(product_id=None, quantity=Decimal("2"), modifications="sin sal")],
+    )
+
+    store.save_accumulated_draft(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+        draft=draft,
+    )
+    result = store.get_accumulated_draft(
+        tenant_id=TENANT_A,
+        conversation_id=session.conversation_id,
+    )
+
+    assert result is not None
+    assert len(result.items) == 1
+    assert result.items[0].product_id is None
+    assert result.items[0].modifications == "sin sal"
+
+
+def test_accumulated_draft_tenant_scoping(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    session_a = store.get_or_create_open_session(
+        tenant_id=TENANT_A,
+        customer_phone=CUSTOMER_PHONE,
+        received_at=BASE_TIME,
+    )
+    draft = AccumulatedDraft(
+        tenant_id=TENANT_A,
+        conversation_id=session_a.conversation_id,
+        turn_count=1,
+    )
+    store.save_accumulated_draft(
+        tenant_id=TENANT_A,
+        conversation_id=session_a.conversation_id,
+        draft=draft,
+    )
+
+    result = store.get_accumulated_draft(
+        tenant_id=TENANT_B,
+        conversation_id=session_a.conversation_id,
+    )
+
+    assert result is None
 
 
 @pytest.mark.live_postgres

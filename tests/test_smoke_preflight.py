@@ -11,7 +11,7 @@ from duna_orders.config import Settings
 from scripts import smoke_preflight
 
 
-ALEMBIC_HEAD_REVISION = "d60b084798e0"
+ALEMBIC_HEAD_REVISION = "f4c8b2a9e1d3"
 
 
 def make_settings(database_url: str, **overrides: object) -> Settings:

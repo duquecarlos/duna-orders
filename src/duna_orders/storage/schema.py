@@ -11,6 +11,7 @@ CONVERSATION_SESSIONS_TAB = "conversation_sessions"
 CONVERSATION_TURNS_TAB = "conversation_turns"
 CONVERSATION_CUSTOMER_CLAIMS_TAB = "conversation_customer_claims"
 DEFERRED_INBOUND_TAB = "deferred_inbound"
+CONVERSATION_ACCUMULATED_DRAFTS_TAB = "conversation_accumulated_drafts"
 
 ORDER_STATUSES = (
     "draft",

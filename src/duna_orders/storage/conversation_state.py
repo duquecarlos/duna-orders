@@ -9,9 +9,13 @@ from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from duna_orders.domain.models import utc_now
+from duna_orders.domain.models import AccumulatedDraft, utc_now
 from duna_orders.ids import new_id
-from duna_orders.storage.postgres_models import ConversationSessionRow, ConversationTurnRow
+from duna_orders.storage.postgres_models import (
+    ConversationAccumulatedDraftRow,
+    ConversationSessionRow,
+    ConversationTurnRow,
+)
 from duna_orders.storage.postgres_session import session_scope
 
 
@@ -116,6 +120,23 @@ class ConversationStateStore(Protocol):
         *,
         tenant_id: str,
         conversation_id: str,
+    ) -> None:
+        ...
+
+    def get_accumulated_draft(
+        self,
+        *,
+        tenant_id: str,
+        conversation_id: str,
+    ) -> AccumulatedDraft | None:
+        ...
+
+    def save_accumulated_draft(
+        self,
+        *,
+        tenant_id: str,
+        conversation_id: str,
+        draft: AccumulatedDraft,
     ) -> None:
         ...
 
@@ -303,6 +324,59 @@ class PostgresConversationStateStore:
             row.status = "expired"
             row.version += 1
             row.updated_at = utc_now()
+            session.flush()
+
+    def get_accumulated_draft(
+        self,
+        *,
+        tenant_id: str,
+        conversation_id: str,
+    ) -> AccumulatedDraft | None:
+        _require_text(tenant_id, "tenant_id")
+        _require_text(conversation_id, "conversation_id")
+
+        with session_scope(self._session_factory) as session:
+            row = session.scalar(
+                select(ConversationAccumulatedDraftRow)
+                .where(ConversationAccumulatedDraftRow.tenant_id == tenant_id)
+                .where(ConversationAccumulatedDraftRow.conversation_id == conversation_id)
+            )
+            if row is None:
+                return None
+            return AccumulatedDraft.model_validate_json(row.accumulated_json)
+
+    def save_accumulated_draft(
+        self,
+        *,
+        tenant_id: str,
+        conversation_id: str,
+        draft: AccumulatedDraft,
+    ) -> None:
+        _require_text(tenant_id, "tenant_id")
+        _require_text(conversation_id, "conversation_id")
+
+        with session_scope(self._session_factory) as session:
+            row = session.scalar(
+                select(ConversationAccumulatedDraftRow)
+                .where(ConversationAccumulatedDraftRow.tenant_id == tenant_id)
+                .where(ConversationAccumulatedDraftRow.conversation_id == conversation_id)
+                .with_for_update()
+            )
+            if row is None:
+                row = ConversationAccumulatedDraftRow(
+                    conversation_id=conversation_id,
+                    tenant_id=tenant_id,
+                    accumulated_json=draft.model_dump_json(),
+                    turn_count=draft.turn_count,
+                    version=1,
+                    updated_at=utc_now(),
+                )
+                session.add(row)
+            else:
+                row.accumulated_json = draft.model_dump_json()
+                row.turn_count = draft.turn_count
+                row.version += 1
+                row.updated_at = utc_now()
             session.flush()
 
     def mark_draft_created(

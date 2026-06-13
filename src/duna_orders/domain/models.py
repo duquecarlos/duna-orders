@@ -215,3 +215,29 @@ class ParseLogEntry(BaseModel):
     latency_ms: int
     success: bool
     error: str | None = None
+
+
+class AccumulatedDraftItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    product_id: str | None = None
+    quantity: Decimal
+    modifications: str | None = None
+
+
+class AccumulatedDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schema_version: str = "1"
+    tenant_id: str
+    conversation_id: str
+    turn_count: int
+    items: list[AccumulatedDraftItem] = Field(default_factory=list)
+    customer_name: str | None = None
+    customer_phone: str | None = None
+    fulfillment_type: str | None = None
+    delivery_zone: str | None = None
+    packaging_fee: Decimal = Decimal("0")
+    customer_notes: str | None = None
+    payment_method: str | None = None
+    is_complete: bool = False
+    conflicts: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
