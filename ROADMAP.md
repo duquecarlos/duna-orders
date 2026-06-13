@@ -943,6 +943,12 @@ Explicitly excluded:
 * No UI, outbound, payment, amendment, or idle-expiry changes. M9.4E
   `strict=True` xfail unchanged.
 
+Live smoke (Option A — manual claim row, 2026-06-13, baseline `66c2ab6`):
+claim-busy defer + manual drain passed against a real Twilio sandbox message
+and a throwaway Neon branch. Full evidence in
+`docs/SMOKE_CLAIM_BUSY_ACCEPT_AND_DEFER.md`. Automatic drain-on-release was
+not exercised by Option A; it is covered by the passing unit test suite.
+
 M9.6E remains blocked until M9.6D-fix-impl is fully landed.
 
 ### M9.6E - Idle-boundary expiry runtime (deferred)

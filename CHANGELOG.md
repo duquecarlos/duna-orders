@@ -204,6 +204,60 @@ drain after claim release, without adding a worker, scheduler, or replay daemon.
 * No sweep script (`scripts/drain_deferred_inbound.py`): the
   `drain_pending_deferred_inbound` callable is the manual backstop.
 
+### M9.6D live smoke — Option A manual-claim (2026-06-13)
+
+Live/manual smoke of the M9.6D-fix-impl accept-and-defer path. Proves
+claim-busy defer + manual drain against a real Twilio WhatsApp sandbox message
+and a live Postgres (throwaway Neon branch) database.
+
+#### Environment
+
+Baseline `66c2ab6`, Alembic head `d60b084798e0`. Throwaway Neon branch.
+`DUNA_OUTBOUND_ENABLED=false` in the running Uvicorn process.
+`WEBHOOK_TENANT_ID=el-fogon-colombiano`. No secrets printed, no code edits,
+no commit, no push.
+
+#### Proven
+
+* Claim-busy message (`MessageSid SMc480bf527d5f5c81e3a43014e70c4210`,
+  body `smoke claim busy test`, sender `whatsapp:+573223454241`) was durably
+  persisted to `deferred_inbound` with all required fields (`tenant_id`,
+  `customer_key`, `from_number`, `raw_body`, `received_at`, `deferred_at`).
+  The durable row proves the `202` / DEFERRED branch ran (the `503` fallback
+  fires only when `defer_message` itself raises, leaving no row).
+* `processed_messages` absent at defer time (0 rows for the `MessageSid`).
+* No parser / advance / order / session mutation at defer time.
+* Duplicate defer is idempotent: a second signed local webhook `POST` with
+  the same `MessageSid` while the claim was still held returned `202` and left
+  exactly one `deferred_inbound` row; `processed_messages` remained empty.
+* Manual `drain_pending_deferred_inbound(app, tenant_id='el-fogon-colombiano')`
+  callable processed the row exactly once: drain summary
+  `processed=['SMc480...'], still_pending=[], failed=[]`.
+* `deferred_inbound.processed_at` populated after drain; `attempt_count = 1`.
+* `processed_messages` row written only after successful drain replay —
+  exactly one row, `resulting_order_id NULL` (body was intentionally
+  non-ordering).
+* Original `received_at` preserved through drain: the conversation turn
+  appended with `received_at = 2026-06-13 02:26:51 UTC` (defer time), not
+  the drain replay time.
+
+#### Not proven
+
+Automatic drain-on-release was not exercised. The manual claim row was deleted
+directly via SQL, not released through `_process_validated_inbound_message`'s
+`finally` block, so the automatic `drain_pending_deferred_inbound_for_customer`
+call in `finally` was never triggered. Option A proves manual drain; the
+automatic path is covered by the passing unit tests. A live Option B smoke
+(two back-to-back real WhatsApp messages) would be the timing-dependent
+end-to-end proof; it was not attempted in this session.
+
+#### Verification
+
+`pytest tests/test_web_twilio_webhook.py -q` → 41 passed.
+`pytest tests/test_deferred_inbound.py tests/test_processed_messages.py
+tests/test_conversation_customer_claim_store.py -q` → 26 passed, 10 deselected.
+`git status --short` clean. `git diff --check` clean.
+
 ### M9.6D-fix - Accept-and-defer design for claim-busy (design only)
 
 Documented. Design only; no runtime/migration/StorageInterface changes.

@@ -20,12 +20,23 @@ a throwaway Neon branch.
   the `DECISIONS.md` entry "M9.6D-fix - Accept-and-defer replaces
   claim-busy-via-503 (design only)". Phase 3a below reproduces the procedure
   that produced that result, for reference.
-* **Accept-and-defer verification (M9.6D-fix-impl)**: **not yet runnable**.
-  M9.6D-fix-impl (the `deferred_inbound` table, defer-write, `202` response,
-  drain-on-release, sweep backstop - see
-  `docs/M9_6D_ACCEPT_AND_DEFER_CLAIM_BUSY_DESIGN.md`) has not been
-  implemented. Phase 3b and Phases 4-5 below document the procedure to run
-  once it has.
+* **Accept-and-defer verification (M9.6D-fix-impl)**: **PASSED** — Option A
+  (manual claim row) smoke run on baseline `66c2ab6`
+  (`feat(web): drain deferred inbound after claim release`), Alembic head
+  `d60b084798e0`, throwaway Neon branch, `DUNA_OUTBOUND_ENABLED=false` in the
+  running Uvicorn process. `MessageSid SMc480bf527d5f5c81e3a43014e70c4210`
+  deferred with a durable `deferred_inbound` row (`processed_at NULL`,
+  `processed_messages` absent at defer time), then processed to completion by
+  manual `drain_pending_deferred_inbound(...)` callable after manual claim
+  deletion. Full evidence in Smoke Verdict Table and "Live Smoke Evidence"
+  section below.
+  **Limitation**: Option A proves manual claim-busy defer + manual drain. It
+  does not prove automatic drain-on-release because the claim was manually
+  deleted, not released through `_process_validated_inbound_message`'s
+  `finally` block. Automatic drain-on-release is covered by the passing unit
+  test suite (`test_twilio_webhook_auto_drain_on_release_*`). A live Option B
+  smoke (two back-to-back real WhatsApp messages) would be needed for
+  timing-dependent end-to-end proof of the automatic path.
 
 ## Background
 
@@ -276,8 +287,8 @@ DELETE FROM conversation_customer_claims WHERE holder_id = 'manual-smoke-claim-b
 | Check | Result | Evidence |
 | --- | --- | --- |
 | Phase 3a: claim-busy returns `503`, `sid_rows = 0` (baseline, already run) | FAILED (message permanently lost - see `DECISIONS.md`) | `MessageSid SMea149d267f55a8183b3452883b140abb`, first `503` at `2026-06-12 19:01:22 UTC`, no redelivery by `2026-06-12 19:29:12 UTC` |
-| Phase 3b: claim-busy returns `202`, `deferred_inbound` row present, `sid_rows = 0` | NOT YET RUN (M9.6D-fix-impl not implemented) | |
-| Phase 4-5: drain processes the deferred row, `processed_messages` row created, ordering preserved | NOT YET RUN (M9.6D-fix-impl not implemented) | |
+| Phase 3b: claim-busy defers durably, `deferred_inbound` row present, `processed_messages` absent | PASSED (Option A, 2026-06-13) | `MessageSid SMc480bf527d5f5c81e3a43014e70c4210`; `deferred_inbound` row written with `processed_at NULL`; duplicate signed POST with same sid returned `202` with exactly one row remaining; `processed_messages` count = 0 at defer time |
+| Phase 4-5: drain processes the deferred row, `processed_messages` row created, ordering preserved | PASSED (Option A, 2026-06-13) | Manual `drain_pending_deferred_inbound(...)` callable; summary `processed=['SMc480...']`, `still_pending=[]`, `failed=[]`; `processed_at` populated; `processed_messages` row exists (count = 1); `attempt_count = 1`; conversation turn appended with original `received_at` preserved |
 
 ## Notes / Observations
 
@@ -295,3 +306,108 @@ Phase 3a's expected "FAIL" (message lost) is the documented baseline this
 smoke exists to move past - it is not a new finding each time this phase is
 re-run before M9.6D-fix-impl lands.
 ```
+
+## Live Smoke Evidence — Option A (2026-06-13)
+
+**Baseline**: `66c2ab6 feat(web): drain deferred inbound after claim release`
+**Alembic head**: `d60b084798e0`
+**Method**: Option A — manual `conversation_customer_claims` row
+(`holder_id='manual-smoke'`, `lease_expires_at = now() + 30 minutes`) inserted
+before the WhatsApp send; deleted before invoking the drain.
+
+### Environment
+
+| Setting | Value |
+| --- | --- |
+| `DUNA_STORAGE_BACKEND` | `postgres` |
+| Throwaway Neon branch | Confirmed |
+| `DUNA_OUTBOUND_ENABLED` | `false` in running Uvicorn process |
+| `WEBHOOK_TENANT_ID` | `el-fogon-colombiano` |
+| Secrets printed | None |
+| Code edits | None |
+| Commit / push | None |
+
+### Defer-path evidence (before drain)
+
+**Message sent**: body `smoke claim busy test`, sender `whatsapp:+573223454241`.
+
+The durable `deferred_inbound` row is proof the defer path ran and the webhook
+returned `202`. (The `202` branch is the only branch that calls
+`defer_message(...)` successfully; the `503` fallback fires only when
+`defer_message` itself raises, which would leave no row.)
+
+| Field | Value |
+| --- | --- |
+| `message_sid` | `SMc480bf527d5f5c81e3a43014e70c4210` |
+| `tenant_id` | `el-fogon-colombiano` |
+| `customer_key` | `+573223454241` |
+| `from_number` | `whatsapp:+573223454241` |
+| `raw_body` | `smoke claim busy test` |
+| `received_at` | `2026-06-13 02:26:51 UTC` |
+| `deferred_at` | `2026-06-13 02:26:57 UTC` |
+| `processed_at` | NULL |
+| `processing_started_at` | NULL |
+| `attempt_count` | 0 |
+
+**`processed_messages` at defer time**: 0 rows for this `MessageSid`. ✓
+
+**Parser / advance / order / session mutations at defer time**: None. No new
+conversation session, no new orders, no new conversation turns for
+`+573223454241`. ✓
+
+**Duplicate defer idempotency**: A second signed local webhook `POST` with the
+same `MessageSid` while the manual claim was still held returned `202` and left
+exactly one `deferred_inbound` row (`attempt_count` still 0).
+`processed_messages` remained empty. ✓
+
+### Drain evidence
+
+**Drain method**: manual callable —
+`drain_pending_deferred_inbound(app, tenant_id='el-fogon-colombiano')` invoked
+directly after manual claim row deletion via `DELETE FROM
+conversation_customer_claims WHERE holder_id = 'manual-smoke'`.
+
+**Drain summary**:
+```
+processed:     ['SMc480bf527d5f5c81e3a43014e70c4210']
+still_pending: []
+failed:        []
+```
+
+### Post-drain evidence
+
+| Check | Result |
+| --- | --- |
+| `deferred_inbound.processed_at` | `2026-06-13 02:32:06 UTC` — populated ✓ |
+| `deferred_inbound.processing_started_at` | `2026-06-13 02:31:36 UTC` ✓ |
+| `deferred_inbound.attempt_count` | 1 ✓ |
+| `processed_messages` row count for sid | exactly 1 ✓ |
+| `processed_messages.from_number` | `whatsapp:+573223454241` ✓ |
+| `processed_messages.raw_body` | `smoke claim busy test` ✓ |
+| `processed_messages.resulting_order_id` | NULL (body was intentionally non-ordering) ✓ |
+| Conversation turn appended | Yes — `sequence_number=4`, `received_at=2026-06-13 02:26:51 UTC` (original, not drain time) ✓ |
+| New orders since smoke start | 0 ✓ |
+| Remaining pending `deferred_inbound` rows for tenant | 0 ✓ |
+
+### Post-smoke verification
+
+| Command | Result |
+| --- | --- |
+| `git status --short` | Clean |
+| `alembic heads` | `d60b084798e0 (head)` |
+| `pytest tests/test_web_twilio_webhook.py -q` | 41 passed |
+| `pytest tests/test_deferred_inbound.py tests/test_processed_messages.py tests/test_conversation_customer_claim_store.py -q` | 26 passed, 10 deselected |
+| `git diff --check` | Clean |
+
+### What was not proven
+
+Automatic drain-on-release was not exercised. The manual claim was deleted
+directly via SQL, not released through `_process_validated_inbound_message`'s
+`finally` block, so the `drain_pending_deferred_inbound_for_customer(...)` call
+wired into `finally` was never reached. This is an inherent limitation of
+Option A. The automatic path is covered by six passing unit tests
+(`test_twilio_webhook_auto_drain_on_release_*`). A live Option B smoke — two
+real WhatsApp messages back-to-back, with the second arriving while the first
+message's `advance()` call is still in flight — would provide timing-dependent
+end-to-end proof; it was not attempted in this session due to timing
+reliability concerns.
