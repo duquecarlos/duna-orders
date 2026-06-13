@@ -2367,3 +2367,40 @@ def test_twilio_webhook_auto_drain_on_release_failure_does_not_affect_original_o
 
     # The drain failure is logged rather than silently swallowed.
     assert "Automatic drain-on-release failed" in caplog.text
+
+
+def test_process_validated_inbound_message_logs_suppressed_drain(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    storage = InMemoryStorage()
+    fake_service = FakeConversationAdvancementService()
+    processed_store = _processed_message_store(tmp_path)
+    claim_store = FakeConversationCustomerClaimStore()
+    deferred_store = FakeDeferredInboundStore()
+
+    app = _create_app(
+        app_settings=_settings(),
+        storage=storage,
+        processed_message_store=processed_store,
+        conversation_advancement_service=fake_service,
+        conversation_customer_claim_store=claim_store,
+        deferred_inbound_store=deferred_store,
+    )
+
+    tenant_id = DEFAULT_TEST_TENANT_ID
+    customer_phone = "+573001112233"
+
+    with caplog.at_level(logging.INFO, logger="duna_orders.web.app"):
+        _process_validated_inbound_message(
+            app=app,
+            tenant_id=tenant_id,
+            message_sid="SM_SUPPRESS_LOG",
+            raw_sender="whatsapp:+573001112233",
+            customer_phone=customer_phone,
+            inbound_body="Buenas",
+            received_at=utc_now(),
+            auto_drain_after_release=False,
+        )
+
+    assert "deferred inbound auto-drain suppressed after claim release" in caplog.text

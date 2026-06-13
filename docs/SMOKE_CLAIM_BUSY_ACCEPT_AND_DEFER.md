@@ -411,3 +411,400 @@ real WhatsApp messages back-to-back, with the second arriving while the first
 message's `advance()` call is still in flight — would provide timing-dependent
 end-to-end proof; it was not attempted in this session due to timing
 reliability concerns.
+
+---
+
+## Option B — Automatic drain-on-release (live webhook `finally` path)
+
+### Purpose and scope
+
+Prove that `_process_validated_inbound_message`'s `finally` block
+automatically drains pending deferred rows for a customer after the real code
+path releases the claim. Option A proved the defer path and manual drain;
+Option B proves the automatic path.
+
+**Option B does not use a manual claim row.** The claim is held naturally by a
+live call to `advance()`, which makes a real Anthropic API call and holds the
+claim for approximately 2–5 s. Deferred messages are sent as signed local
+httpx POSTs while `advance()` is blocking; the automatic drain fires in the
+`finally` block when the real claim is released.
+
+### Prerequisites — confirm before every Option B run
+
+- [ ] All Phase 0 and Phase 1 steps complete: throwaway Neon branch,
+  `DUNA_OUTBOUND_ENABLED=false` in the running Uvicorn process, uvicorn
+  listening on `127.0.0.1:8000`, cloudflared tunnel active,
+  `TWILIO_WEBHOOK_PUBLIC_URL` set to the tunnel URL, `TWILIO_AUTH_TOKEN`
+  available in the environment.
+- [ ] `TWILIO_WEBHOOK_PUBLIC_URL` is the **tunnel URL**, not localhost. The
+  signature validator computes the HMAC against this URL even though the HTTP
+  POST goes to localhost. If the URL is wrong, every signed local POST receives
+  `403`.
+- [ ] No existing pending `deferred_inbound` rows for the test customer_key:
+
+```sql
+SELECT message_sid, processed_at
+FROM deferred_inbound
+WHERE tenant_id = 'el-fogon-colombiano'
+  AND customer_key = '+573223454241'
+  AND processed_at IS NULL;
+-- expected: 0 rows
+```
+
+- [ ] No existing `conversation_customer_claims` row for the test customer_key:
+
+```sql
+SELECT holder_id, lease_expires_at
+FROM conversation_customer_claims
+WHERE tenant_id = 'el-fogon-colombiano' AND customer_key = '+573223454241';
+-- expected: 0 rows
+```
+
+**Hard stops — abort and resolve before proceeding:**
+
+1. If any pending `deferred_inbound` row exists for this customer_key: drain
+   or delete it first, or use a different customer phone number.
+2. If `DUNA_OUTBOUND_ENABLED=true` in the running process: abort immediately.
+   Option B triggers `advance()`, which would send a real outbound WhatsApp
+   message to the customer.
+3. If `TWILIO_WEBHOOK_PUBLIC_URL` is unset or points to localhost: the
+   signature check rejects every signed local POST. Reconfigure and restart
+   uvicorn before proceeding.
+4. If a `conversation_customer_claims` row already exists for this
+   customer_key: delete it or wait for its lease to expire before starting.
+
+### Signed local POST helper
+
+Messages B (and C in B2) are sent as signed local httpx POSTs. Message A may
+also be sent this way — the Anthropic API latency comes from `advance()`, not
+from Twilio delivery overhead. Open a Python REPL and paste this helper once:
+
+```python
+import os, httpx
+from twilio.request_validator import RequestValidator
+
+AUTH_TOKEN = os.environ["TWILIO_AUTH_TOKEN"]
+PUBLIC_URL = os.environ["TWILIO_WEBHOOK_PUBLIC_URL"]   # must be tunnel URL
+LOCAL_URL  = "http://127.0.0.1:8000/webhooks/twilio/whatsapp"
+
+def signed_post(message_sid: str, body: str, timeout: float = 10.0) -> int:
+    params = {
+        "From":          "whatsapp:+573223454241",
+        "To":            "whatsapp:+14155238886",   # Twilio sandbox number
+        "Body":          body,
+        "MessageSid":    message_sid,
+        "SmsMessageSid": message_sid,
+        "NumMedia":      "0",
+        "AccountSid":    os.environ.get("TWILIO_ACCOUNT_SID", "AC_smoke"),
+    }
+    sig = RequestValidator(AUTH_TOKEN).compute_signature(PUBLIC_URL, params)
+    resp = httpx.post(
+        LOCAL_URL, data=params,
+        headers={"X-Twilio-Signature": sig},
+        timeout=timeout,
+    )
+    print(f"  {message_sid}: HTTP {resp.status_code}")
+    return resp.status_code
+```
+
+Replace the `"To"` value with your sandbox's actual Twilio WhatsApp number if
+it differs from `+14155238886`.
+
+---
+
+### B1 — Two-message automatic drain
+
+**Goal**: A (parseable body) triggers `advance()` and holds the claim. B
+arrives for the same customer_key while A is blocking. B defers (202).
+A's `finally` block releases the claim and automatically drains B. No manual
+drain is called.
+
+#### B1 setup — verify SIDs are clean
+
+```python
+SID_A = "SM_OPT_B1_A_001"
+SID_B = "SM_OPT_B1_B_001"
+```
+
+```sql
+SELECT message_sid FROM processed_messages
+WHERE message_sid IN ('SM_OPT_B1_A_001', 'SM_OPT_B1_B_001');
+-- expected: 0 rows
+
+SELECT message_sid FROM deferred_inbound
+WHERE message_sid IN ('SM_OPT_B1_A_001', 'SM_OPT_B1_B_001');
+-- expected: 0 rows
+```
+
+If either SID already exists: choose different SID strings.
+
+#### B1 dispatch — send A then B
+
+Paste into the same Python REPL where `signed_post` is defined:
+
+```python
+import threading, time
+
+def send_a():
+    status = signed_post(SID_A, "Un bandeja paisa por favor", timeout=30)
+    print(f"A returned: HTTP {status}")
+
+t_a = threading.Thread(target=send_a, daemon=True)
+t_a.start()
+
+# Brief yield — enough for A to reach try_acquire and advance()
+time.sleep(0.5)
+
+# Send B while A's advance() is blocking
+status_b = signed_post(SID_B, "Y una limonada", timeout=10)
+print(f"B returned: HTTP {status_b}")   # must be 202
+
+t_a.join()
+print("A thread joined; automatic drain has already fired in the finally block")
+```
+
+**Timing constraint**: B must arrive while A's `advance()` is blocking. The
+Anthropic API call inside `advance()` takes approximately 2–5 s, so the 0.5 s
+yield before sending B provides sufficient margin under normal conditions.
+
+**If the timing window is missed** — A returns before B is dispatched, so B
+finds the claim free and is PROCESSED (not DEFERRED): the test is **invalid**.
+Discard both SIDs, choose fresh ones, and repeat from B1 setup. The symptom is
+`status_b != 202` or no `deferred_inbound` row for B.
+
+#### B1 mid-run check — confirm B deferred (after B's POST returns, before A's thread joins)
+
+```sql
+SELECT message_sid, deferred_at, processed_at, attempt_count
+FROM deferred_inbound
+WHERE message_sid = 'SM_OPT_B1_B_001';
+-- expected: 1 row, processed_at IS NULL
+```
+
+```sql
+SELECT count(*) AS pm_count FROM processed_messages
+WHERE message_sid = 'SM_OPT_B1_B_001';
+-- expected: 0
+```
+
+#### B1 post-drain evidence — collect after `t_a.join()` returns
+
+A's `finally` block has fired: `release` freed the claim, then
+`drain_pending_deferred_inbound_for_customer(limit=5)` replayed B.
+
+```sql
+-- B must now be marked processed
+SELECT message_sid, processed_at, attempt_count
+FROM deferred_inbound
+WHERE message_sid = 'SM_OPT_B1_B_001';
+-- expected: processed_at IS NOT NULL, attempt_count = 1
+```
+
+```sql
+-- B must have a processed_messages row
+SELECT message_sid, received_at, resulting_order_id
+FROM processed_messages
+WHERE message_sid = 'SM_OPT_B1_B_001';
+-- expected: 1 row
+```
+
+```sql
+-- A must also have a processed_messages row
+SELECT message_sid, received_at, resulting_order_id
+FROM processed_messages
+WHERE message_sid = 'SM_OPT_B1_A_001';
+-- expected: 1 row
+```
+
+```sql
+-- No pending rows remaining for this customer
+SELECT count(*) AS still_pending
+FROM deferred_inbound
+WHERE tenant_id = 'el-fogon-colombiano'
+  AND customer_key = '+573223454241'
+  AND processed_at IS NULL;
+-- expected: 0
+```
+
+**Uvicorn log evidence**: confirm `"Automatic drain-on-release failed"` does
+**not** appear in the log. That error line is only emitted when the drain
+raises an unhandled exception; its absence confirms the drain completed
+without error. The drain runs synchronously in the `finally` block before A's
+response is delivered to the HTTP client, so A's `"202 Accepted"` access log
+line appears only after B's drain is complete.
+
+#### B1 PASS/FAIL
+
+| Check | Expected |
+| --- | --- |
+| `status_b` (B POST return code) | `202` |
+| `deferred_inbound` row for B before `t_a.join()` | present, `processed_at IS NULL` |
+| `deferred_inbound.processed_at` for B after `t_a.join()` | `NOT NULL` |
+| `deferred_inbound.attempt_count` for B | `1` |
+| `processed_messages` row for B | exactly 1 |
+| `processed_messages` row for A | exactly 1 |
+| `still_pending` count for customer | `0` |
+| `"Automatic drain-on-release failed"` in Uvicorn log | absent |
+| Manual drain called | No |
+
+**FAIL if** any of: `status_b != 202`; `deferred_inbound.processed_at` for B
+remains NULL after A's thread returns; `processed_messages` count for B is 0
+or > 1; the failure log line appears; `still_pending > 0`.
+
+---
+
+### B2 — Three-message multi-pending and reentrancy guard
+
+B2 requires **positive evidence** that the reentrancy guard fired — that when
+the drain-triggered replay of B releases B's claim, the inner call to
+`drain_pending_deferred_inbound_for_customer` is suppressed rather than
+recursing. This prevents unbounded nesting (B draining C, C draining D, …).
+
+**The guard is implemented structurally**: `_replay_deferred_records` always
+passes `auto_drain_after_release=False` to every `_process_validated_inbound_message`
+replay call. In the `finally` block of each replayed call the suppression path
+emits an `INFO`-level log line:
+
+```python
+else:
+    logger.info(
+        "deferred inbound auto-drain suppressed after claim release "
+        "(auto_drain_after_release=False) for tenant_id=%s customer_key=%s",
+        tenant_id,
+        customer_key,
+    )
+```
+
+This is visible at the default `LOG_LEVEL=INFO` with no configuration change.
+A unit test (`test_process_validated_inbound_message_logs_suppressed_drain`)
+verifies the line is emitted.
+
+**Hard stop**: if the expected `INFO` suppression lines do **not** appear in
+the Uvicorn log after A's request completes, stop. The running process may not
+have the current code. Restart uvicorn from the updated source and rerun B2.
+
+#### B2 setup
+
+Assign three fresh SIDs:
+
+```python
+SID_A = "SM_OPT_B2_A_001"
+SID_B = "SM_OPT_B2_B_001"
+SID_C = "SM_OPT_B2_C_001"
+```
+
+```sql
+SELECT message_sid FROM processed_messages
+WHERE message_sid IN ('SM_OPT_B2_A_001', 'SM_OPT_B2_B_001', 'SM_OPT_B2_C_001');
+-- expected: 0 rows
+
+SELECT message_sid FROM deferred_inbound
+WHERE message_sid IN ('SM_OPT_B2_A_001', 'SM_OPT_B2_B_001', 'SM_OPT_B2_C_001');
+-- expected: 0 rows
+```
+
+#### B2 dispatch — send A, then B and C while A holds the claim
+
+```python
+import threading, time
+
+def send_a():
+    status = signed_post(SID_A, "Un bandeja paisa por favor", timeout=30)
+    print(f"A returned: HTTP {status}")
+
+t_a = threading.Thread(target=send_a, daemon=True)
+t_a.start()
+
+time.sleep(0.5)   # A reaches advance()
+
+status_b = signed_post(SID_B, "Y una limonada", timeout=10)
+print(f"B returned: HTTP {status_b}")   # must be 202
+
+status_c = signed_post(SID_C, "Con arepa", timeout=10)
+print(f"C returned: HTTP {status_c}")   # must be 202
+
+t_a.join()
+print("A thread joined; B and C should both be drained")
+```
+
+B and C are sent in rapid succession while A's `advance()` is blocking. Both
+should defer. After A's `finally` block fires, `_replay_deferred_records`
+processes B then C in `received_at` order, passing `auto_drain_after_release=False`
+to each replay — causing the instrumentation log line to appear exactly twice.
+
+#### B2 post-drain evidence queries
+
+```sql
+-- B and C must both be marked processed
+SELECT message_sid, processed_at, attempt_count
+FROM deferred_inbound
+WHERE message_sid IN ('SM_OPT_B2_B_001', 'SM_OPT_B2_C_001')
+ORDER BY processed_at;
+-- expected: 2 rows, both processed_at IS NOT NULL, attempt_count = 1 each
+```
+
+```sql
+-- All three have processed_messages rows
+SELECT message_sid FROM processed_messages
+WHERE message_sid IN ('SM_OPT_B2_A_001', 'SM_OPT_B2_B_001', 'SM_OPT_B2_C_001');
+-- expected: 3 rows
+```
+
+```sql
+-- No pending rows remain
+SELECT count(*) AS still_pending
+FROM deferred_inbound
+WHERE tenant_id = 'el-fogon-colombiano'
+  AND customer_key = '+573223454241'
+  AND processed_at IS NULL;
+-- expected: 0
+```
+
+**Guard-suppression positive evidence**: grep the Uvicorn log for the
+suppression line. It must appear **exactly twice** after A's request completes
+— once for B's replay, once for C's replay:
+
+```
+INFO     duna_orders.web.app:app.py - deferred inbound auto-drain suppressed after claim release (auto_drain_after_release=False) for tenant_id=el-fogon-colombiano customer_key=+573223454241
+INFO     duna_orders.web.app:app.py - deferred inbound auto-drain suppressed after claim release (auto_drain_after_release=False) for tenant_id=el-fogon-colombiano customer_key=+573223454241
+```
+
+(Log format may vary slightly by uvicorn configuration; the required phrase is
+`deferred inbound auto-drain suppressed after claim release`.)
+
+Exactly two lines: one per deferred message replayed. Zero lines means the
+running process does not have the current code — restart uvicorn and retry.
+More than two lines indicates unexpected recursion.
+
+#### B2 PASS/FAIL
+
+| Check | Expected |
+| --- | --- |
+| `status_b` and `status_c` | `202` each |
+| `deferred_inbound` rows for B and C before `t_a.join()` | present, `processed_at IS NULL` |
+| `deferred_inbound.processed_at` for B and C after `t_a.join()` | `NOT NULL` for both |
+| `deferred_inbound.attempt_count` for B and C | `1` each |
+| `processed_messages` rows for A, B, C | exactly 1 each |
+| `still_pending` count for customer | `0` |
+| `"Automatic drain-on-release failed"` in Uvicorn log | absent |
+| Guard-suppression `INFO` lines in Uvicorn log | exactly 2 |
+| Manual drain called | No |
+
+**FAIL if** any of: either B or C has `processed_at IS NULL` after A's thread
+returns; `processed_messages` count for B or C is 0 or > 1; the drain-failure
+error line appears; `still_pending > 0`; guard-suppression `INFO` lines are 0
+(process not running current code) or > 2 (recursion detected).
+
+---
+
+### Option B teardown
+
+Same as the Teardown section. No manual claim row was inserted in Option B,
+so the `DELETE FROM conversation_customer_claims` step is optional. Verify the
+claim was released automatically:
+
+```sql
+SELECT * FROM conversation_customer_claims
+WHERE tenant_id = 'el-fogon-colombiano' AND customer_key = '+573223454241';
+-- expected: 0 rows
+```

@@ -173,6 +173,13 @@ def _process_validated_inbound_message(
                     tenant_id,
                     customer_key,
                 )
+        else:
+            logger.info(
+                "deferred inbound auto-drain suppressed after claim release "
+                "(auto_drain_after_release=False) for tenant_id=%s customer_key=%s",
+                tenant_id,
+                customer_key,
+            )
 
 
 def create_app(
