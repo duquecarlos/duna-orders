@@ -1,5 +1,21 @@
 # Architectural Decisions
 
+## M10.3B — create_draft must remain side-effect-free on failure for next-turn recovery
+
+The advancement path saves `AccumulatedDraft` before calling `create_draft`. If
+`create_draft` raises, the accumulated draft is already persisted and the session
+stays open. The next inbound turn loads that draft, re-derives the
+`DraftOrderRequest`, and retries `create_draft`. This recovery is proven safe and
+non-duplicating by `test_create_draft_failure_after_accumulated_save_recovers_on_next_inbound`.
+
+**Tripwire:** this recovery path assumes `create_draft` is side-effect-free on
+failure — it either commits the order row or fails cleanly with no observable
+side effects. If `create_draft` ever gains a non-idempotent side effect that fires
+before or during the DB write (e.g. outbound notification, stock decrement,
+external API call — analogous to the known `confirm_order` gap), the retry on the
+next turn will duplicate that side effect. Revisit the save/create boundary and
+consider wrapping both in a single transaction at that point.
+
 ## M10.2 — packaging_fee Decimal("0") treated as "not mentioned" is a magic-value heuristic
 
 Decision:
