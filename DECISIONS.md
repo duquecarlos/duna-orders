@@ -1,4 +1,39 @@
 # Architectural Decisions
+
+## M10.2 — packaging_fee Decimal("0") treated as "not mentioned" is a magic-value heuristic
+
+Decision:
+`merge_parse_result_into_draft` treats `parsed.packaging_fee == Decimal("0")` as
+"field not mentioned in this turn" and keeps the prior accumulated value instead
+of overwriting it with zero. `Decimal("0")` is the Pydantic default for
+`DraftOrderRequest.packaging_fee`, so the parser returns zero both when the fee
+is genuinely zero and when the fee was simply not referenced in the latest turn.
+
+This heuristic is safe for the current parser because packaging fee is rarely
+set once and then explicitly zeroed out. On the first turn (prior is None), zero
+is accepted as the initial value so a legitimately zero-fee session is not broken.
+
+Revisit when: the parser gains an explicit field-presence signal (e.g., a separate
+`packaging_fee_mentioned: bool` field, or a structured output schema that
+distinguishes null-because-absent from null-because-zero). At that point, replace
+the `!= Decimal("0")` heuristic with the explicit presence flag.
+
+## M10.2 — accumulation authority and LLM drift detection
+
+M10 accumulation authority is the LLM full-transcript snapshot: on each parsed
+turn, the parser receives the complete conversation history and returns a complete
+`DraftOrderRequest` snapshot for the order as currently understood.
+
+The deterministic merge layer does not treat a missing prior item as customer
+removal. Under full-transcript semantics, a prior item missing from the latest
+parsed snapshot is treated as potential LLM omission/drift and recorded as a
+blocking conflict.
+
+Conflict rate on long orders is the reliability signal to watch. Longer orders
+depend more heavily on the LLM reproducing the full order on every turn, so
+rising missing-item conflicts should be treated as evidence that the snapshot
+strategy needs prompt, model, or architecture review.
+
 ## M9.6E - Idle threshold source is deferred from lifecycle config
 
 Decision:
